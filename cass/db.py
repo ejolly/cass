@@ -10,7 +10,7 @@ from .config import get_config
 from .models import Assignment, Grade, Student, Submission
 
 DB_FILENAME = "cass.db"
-_SCHEMA_VERSION = 4
+_SCHEMA_VERSION = 5
 
 _conn: duckdb.DuckDBPyConnection | None = None
 
@@ -76,6 +76,7 @@ def _init_schema(conn: duckdb.DuckDBPyConnection) -> None:
             github_username TEXT NOT NULL DEFAULT '',
             github_id TEXT NOT NULL DEFAULT '',
             name TEXT NOT NULL DEFAULT '',
+            email TEXT NOT NULL DEFAULT '',
             canvas_id TEXT NOT NULL DEFAULT '',
             excluded BOOLEAN NOT NULL DEFAULT false
         )
@@ -89,7 +90,9 @@ def _init_schema(conn: duckdb.DuckDBPyConnection) -> None:
             canvas_id INTEGER NOT NULL DEFAULT 0,
             deadline TIMESTAMPTZ,
             points_possible DOUBLE NOT NULL DEFAULT 0,
-            accepted INTEGER NOT NULL DEFAULT 0
+            accepted INTEGER NOT NULL DEFAULT 0,
+            submissions_count INTEGER NOT NULL DEFAULT 0,
+            passing_count INTEGER NOT NULL DEFAULT 0
         )
     """)
     conn.execute("""
@@ -103,6 +106,9 @@ def _init_schema(conn: duckdb.DuckDBPyConnection) -> None:
             lateness_seconds INTEGER NOT NULL DEFAULT 0,
             repo_name TEXT NOT NULL DEFAULT '',
             commits_after_deadline INTEGER NOT NULL DEFAULT 0,
+            commit_count INTEGER NOT NULL DEFAULT 0,
+            passing BOOLEAN NOT NULL DEFAULT false,
+            gh_autograder_score TEXT NOT NULL DEFAULT '',
             score DOUBLE,
             workflow_state TEXT NOT NULL DEFAULT '',
             fetched_at DOUBLE NOT NULL,
@@ -131,6 +137,7 @@ _STUDENT_COLS = (
     "github_username",
     "github_id",
     "name",
+    "email",
     "canvas_id",
     "excluded",
 )
@@ -143,6 +150,8 @@ _ASSIGNMENT_COLS = (
     "deadline",
     "points_possible",
     "accepted",
+    "submissions_count",
+    "passing_count",
 )
 _SUBMISSION_COLS = (
     "student_id",
@@ -154,6 +163,9 @@ _SUBMISSION_COLS = (
     "lateness_seconds",
     "repo_name",
     "commits_after_deadline",
+    "commit_count",
+    "passing",
+    "gh_autograder_score",
     "score",
     "workflow_state",
 )
@@ -176,14 +188,15 @@ def save_students(students: list[Student]) -> int:
     if not students:
         return 0
     conn.executemany(
-        "INSERT INTO students (identifier, github_username, github_id, name, canvas_id, excluded) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO students (identifier, github_username, github_id, name, email, canvas_id, excluded) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
         [
             (
                 s.identifier,
                 s.github_username,
                 s.github_id,
                 s.name,
+                s.email,
                 s.canvas_id,
                 s.excluded,
             )
@@ -223,8 +236,9 @@ def save_assignments(assignments: list[Assignment]) -> int:
     if not assignments:
         return 0
     conn.executemany(
-        "INSERT INTO assignments (id, source, title, slug, canvas_id, deadline, points_possible, accepted) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO assignments (id, source, title, slug, canvas_id, deadline, "
+        "points_possible, accepted, submissions_count, passing_count) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             (
                 a.id,
@@ -235,6 +249,8 @@ def save_assignments(assignments: list[Assignment]) -> int:
                 a.deadline,
                 a.points_possible,
                 a.accepted,
+                a.submissions_count,
+                a.passing_count,
             )
             for a in assignments
         ],
@@ -264,8 +280,9 @@ def save_submissions(submissions: list[Submission]) -> int:
     conn.executemany(
         "INSERT OR REPLACE INTO submissions "
         "(student_id, assignment_id, source, submitted, submitted_at, late, "
-        "lateness_seconds, repo_name, commits_after_deadline, score, workflow_state, fetched_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "lateness_seconds, repo_name, commits_after_deadline, commit_count, "
+        "passing, gh_autograder_score, score, workflow_state, fetched_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             (
                 s.student_id,
@@ -277,6 +294,9 @@ def save_submissions(submissions: list[Submission]) -> int:
                 s.lateness_seconds,
                 s.repo_name,
                 s.commits_after_deadline,
+                s.commit_count,
+                s.passing,
+                s.gh_autograder_score,
                 s.score,
                 s.workflow_state,
                 now,

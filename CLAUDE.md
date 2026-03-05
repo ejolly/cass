@@ -64,6 +64,12 @@ cass fetch hw-01                          # download student files
 cass fetch all --force                    # re-download existing
 cass query "SELECT * FROM students"       # raw DuckDB SQL query
 cass query                                # interactive DuckDB REPL
+cass db                                   # interactive DuckDB REPL (alias)
+cass db clean                             # clear api_cache for git commits
+cass export grades --csv grades.csv       # export table to CSV
+cass export students --md roster.md       # export table to markdown
+cass import grades.csv                    # import CSV into DB (auto-detects table)
+cass import data.csv --table students     # import with explicit table target
 ```
 
 ### Common flags on view commands
@@ -84,9 +90,10 @@ Python package (`cass/`) with Typer CLI, DuckDB storage, msgspec models, and Ric
 | File | Purpose |
 |------|---------|
 | `cass/__init__.py` | Package version |
-| `cass/models.py` | msgspec.Struct types: Student, GHStudentInfo, Assignment, Submission, Grade + compute_grade() |
+| `cass/models/` | msgspec.Struct types split into domain.py, github_api.py, canvas_api.py, grading.py |
 | `cass/config.py` | Config discovery (finds `cass.toml`), `has_classroom`/`has_canvas` properties |
-| `cass/cli.py` | Typer app (status, init, students, assignments, submissions, grades, fetch, query) |
+| `cass/cli.py` | Typer app (status, init, students, assignments, submissions, grades, fetch, query, db, export, import) |
+| `cass/github_client.py` | Async httpx GitHub API client with caching and concurrency control |
 | `cass/pull.py` | Pull orchestration: students, assignments, submissions, grades, fetch phases |
 | `cass/db.py` | DuckDB database: schema, CRUD for all models, cache, raw query |
 | `cass/gh.py` | Subprocess wrapper for `gh api` with inline cache |
@@ -101,13 +108,13 @@ Python package (`cass/`) with Typer CLI, DuckDB storage, msgspec models, and Ric
 
 Per-project DuckDB file (`cass.db`) in the project root. Auto-created on first use.
 
-Schema version 3. Tables:
+Schema version 5. Tables:
 - `meta` — schema version tracking
-- `api_cache` — API responses with TTL
-- `students` — roster (identifier, github_username, github_id, name, canvas_id, excluded)
-- `assignments` — unified metadata (id, source, title, slug, canvas_id, deadline, points_possible)
-- `submissions` — unified GH+Canvas (student_id, assignment_id, source, submitted, late, lateness_seconds, repo_name, commits_after, score, workflow_state)
-- `grades` — computed grades (student_id, assignment_id, grade, numeric, source)
+- `api_cache` — API responses with TTL (ephemeral, cleared by `cass db clean`)
+- `students` — roster (identifier, github_username, github_id, name, email, canvas_id, excluded)
+- `assignments` — unified metadata (id, source, title, slug, canvas_id, deadline, points_possible, accepted, submissions_count, passing_count)
+- `submissions` — unified GH+Canvas (student_id, assignment_id, source, submitted, late, lateness_seconds, repo_name, commits_after_deadline, commit_count, passing, gh_autograder_score, score, workflow_state)
+- `grades` — computed grades (student_id, assignment_id, grade, numeric_score, source)
 
 All tables are queryable via `cass query "SQL"`, the interactive REPL (`cass query`), or directly with the `duckdb` CLI:
 
@@ -134,9 +141,37 @@ Prefer `duckdb` CLI over Python for quick inspection, ad-hoc queries, and data c
 
 ---
 
+## Collaborative Workflow
+
+`cass.db` is the shared source of truth — commit it to git. The `api_cache` table is ephemeral (~2MB of API responses); clear it before committing to keep the file small.
+
+```bash
+# TA grades hw-02, pushes
+git pull
+cass pull --grades
+cass db clean
+git add cass.db && git commit -m "grade hw-02" && git push
+
+# Instructor pulls, reviews, pushes to Canvas
+git pull
+cass grades
+cass grades push --post
+
+# Manual edit flow
+cass export grades --csv grades.csv
+# edit in Excel/Numbers
+cass import grades.csv
+cass db clean
+git add cass.db && git commit -m "manual grade adjustments" && git push
+```
+
+At this scale (15 students, <20 assignments), concurrent edits are unlikely. If a binary conflict occurs, last pusher re-pulls and re-applies.
+
+---
+
 ## Grading Logic
 
-`compute_grade()` in `cass/models.py`:
+`compute_grade()` in `cass/models/grading.py`:
 
 **GitHub submissions:**
 - No repo → `0` (numeric: 0)
@@ -179,8 +214,8 @@ Team: **Ejolly** (EJO). Issues are prefixed `EJO-NNN`.
 
 | Issue | Title | Priority | Dependencies |
 |-------|-------|----------|------------|
-| EJO-319 | Refactor data models: human-readable, self-documenting API + domain types | Urgent | — (start here) |
-| EJO-320 | Data storage & collaboration: single .db as git-shared source of truth | Urgent | Blocked by 319 |
+| EJO-319 | Refactor data models: human-readable, self-documenting API + domain types | Urgent | Done |
+| EJO-320 | Data storage & collaboration: single .db as git-shared source of truth | Urgent | Done |
 | EJO-321 | User-friendly CLI commands for common data operations | High | Blocked by 319, 320 |
 | EJO-322 | Canvas API compliance: User-Agent, rate limiting, 429 retry | High | Independent |
 | EJO-323 | Documentation: README, CLI help, Google-style docstrings, pdoc | Medium | Blocked by 319, 320 |

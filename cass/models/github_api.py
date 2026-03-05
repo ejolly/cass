@@ -11,6 +11,7 @@ class GHStudentInfo(msgspec.Struct):
     login: str
     id: str = ""
     name: str = ""
+    email: str = ""
 
 
 class GHAssignment(msgspec.Struct):
@@ -19,6 +20,8 @@ class GHAssignment(msgspec.Struct):
     title: str
     deadline: str | None = None
     accepted: int = 0
+    submissions: int = 0
+    passing: int = 0
 
 
 class GHStudent(msgspec.Struct):
@@ -35,11 +38,16 @@ class GHAcceptedAssignment(msgspec.Struct):
     id: int
     students: list[GHStudent] = []
     repository: GHRepository | None = None
+    commit_count: int = 0
+    submitted: bool = False
+    passing: bool = False
+    grade: str | None = None
 
 
 class GHProfile(msgspec.Struct):
     login: str
     name: str | None = None
+    email: str | None = None
 
 
 class GHCommitter(msgspec.Struct):

@@ -85,6 +85,7 @@ async def pull_students(
                     github_username=gh_s.login,
                     github_id=gh_s.id,
                     name=gh_s.name,
+                    email=gh_s.email,
                     canvas_id=str(cid) if cid else "",
                 )
             )

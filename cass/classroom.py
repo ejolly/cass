@@ -74,6 +74,8 @@ async def fetch_assignments(
                 deadline=deadline,
                 points_possible=1.0,
                 accepted=a.accepted,
+                submissions_count=a.submissions,
+                passing_count=a.passing,
             )
         )
     return sorted(assignments, key=lambda a: a.id)
@@ -122,6 +124,7 @@ async def fetch_all_students(
             )
             profile = msgspec.convert(profile_data, GHProfile)
             s.name = profile.name or ""
+            s.email = profile.email or ""
         except Exception:
             pass
 
@@ -150,20 +153,24 @@ async def fetch_submissions(
     )
     accepted = msgspec.convert(data, list[GHAcceptedAssignment])
 
-    repo_by_handle: dict[str, dict[str, str]] = {}
+    # Build per-student info from accepted_assignments (includes free fields)
+    student_repo_info: dict[str, dict] = {}
     for entry in accepted:
         repo_name = entry.repository.full_name if entry.repository else ""
         for student in entry.students:
             handle = student.login.lower()
             if handle and repo_name:
-                repo_by_handle[handle] = {
+                student_repo_info[handle] = {
                     "repo_name": repo_name,
                     "repo_short": repo_name.split("/")[-1],
+                    "commit_count": entry.commit_count,
+                    "passing": entry.passing,
+                    "grade": entry.grade or "",
                 }
 
     async def check_student(student: Student) -> Submission:
-        repo_info = repo_by_handle.get(student.handle_lower)
-        if not repo_info:
+        info = student_repo_info.get(student.handle_lower)
+        if not info:
             return Submission(
                 student_id=student.handle_lower or student.identifier,
                 assignment_id=assignment.id,
@@ -171,7 +178,8 @@ async def fetch_submissions(
                 submitted=False,
             )
 
-        repo_short = repo_info["repo_short"]
+        repo_short = info["repo_short"]
+        commit_count = info["commit_count"]
         submitted = True
         on_time = False
         commits_after_deadline = 0
@@ -179,37 +187,37 @@ async def fetch_submissions(
         lateness_seconds = 0
 
         if assignment.deadline:
-            dl = assignment.deadline.isoformat()
-            before = await client.get_cached(
-                f"/repos/{cfg.org}/{repo_short}/commits?until={dl}&per_page=1",
-                ttl_hours=ttl_hours,
-                force_refresh=force_refresh,
-            )
-            on_time = len(before) > 0
+            # If commit_count is 0, no commits exist — skip API calls
+            if commit_count == 0:
+                on_time = False
+            else:
+                dl = assignment.deadline.isoformat()
+                before = await client.get_cached(
+                    f"/repos/{cfg.org}/{repo_short}/commits?until={dl}&per_page=1",
+                    ttl_hours=ttl_hours,
+                    force_refresh=force_refresh,
+                )
+                on_time = len(before) > 0
 
-            after_data = await client.get_cached(
-                f"/repos/{cfg.org}/{repo_short}/commits?since={dl}",
-                ttl_hours=ttl_hours,
-                force_refresh=force_refresh,
-                paginate=True,
-            )
-            after = msgspec.convert(after_data, list[GHCommit])
-            commits_after_deadline = len(after)
+                after_data = await client.get_cached(
+                    f"/repos/{cfg.org}/{repo_short}/commits?since={dl}",
+                    ttl_hours=ttl_hours,
+                    force_refresh=force_refresh,
+                    paginate=True,
+                )
+                after = msgspec.convert(after_data, list[GHCommit])
+                commits_after_deadline = len(after)
 
-            if not on_time and after:
-                late = True
-                date_str = after[0].commit.committer.date
-                if date_str:
-                    dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
-                    delta = dt - assignment.deadline
-                    lateness_seconds = max(0, int(delta.total_seconds()))
+                if not on_time and after:
+                    late = True
+                    date_str = after[0].commit.committer.date
+                    if date_str:
+                        dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+                        delta = dt - assignment.deadline
+                        lateness_seconds = max(0, int(delta.total_seconds()))
         else:
-            commits = await client.get_cached(
-                f"/repos/{cfg.org}/{repo_short}/commits?per_page=1",
-                ttl_hours=ttl_hours,
-                force_refresh=force_refresh,
-            )
-            on_time = len(commits) > 0
+            # No deadline: commit_count > 0 means submitted — no API call needed
+            on_time = commit_count > 0
 
         return Submission(
             student_id=student.handle_lower or student.identifier,
@@ -218,8 +226,11 @@ async def fetch_submissions(
             submitted=submitted,
             late=late,
             lateness_seconds=lateness_seconds,
-            repo_name=repo_info["repo_name"],
+            repo_name=info["repo_name"],
             commits_after_deadline=commits_after_deadline,
+            commit_count=commit_count,
+            passing=info["passing"],
+            gh_autograder_score=info["grade"],
         )
 
     submissions = await asyncio.gather(*(check_student(s) for s in roster))
