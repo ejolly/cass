@@ -6,17 +6,17 @@ from cass.models import (
     Assignment,
     Student,
     Submission,
-    _format_lateness,
     compute_grade,
     numeric_grade,
 )
+from cass.models.grading import _format_lateness
 
 
 # --- compute_grade: GitHub ---
 
 
 @pytest.mark.parametrize(
-    "submitted, late, lateness_seconds, commits_after, expected_grade, expected_numeric",
+    "submitted, late, lateness_seconds, commits_after_deadline, expected_grade, expected_numeric",
     [
         # not submitted
         (False, False, 0, 0, "0", 0.0),
@@ -38,7 +38,12 @@ from cass.models import (
     ],
 )
 def test_compute_grade_github(
-    submitted, late, lateness_seconds, commits_after, expected_grade, expected_numeric
+    submitted,
+    late,
+    lateness_seconds,
+    commits_after_deadline,
+    expected_grade,
+    expected_numeric,
 ):
     sub = Submission(
         student_id="alice",
@@ -47,12 +52,12 @@ def test_compute_grade_github(
         submitted=submitted,
         late=late,
         lateness_seconds=lateness_seconds,
-        commits_after=commits_after,
+        commits_after_deadline=commits_after_deadline,
     )
     assign = Assignment(id="hw-01", source="github", title="HW 01", points_possible=1.0)
     g = compute_grade(sub, assign)
     assert g.grade == expected_grade
-    assert g.numeric == expected_numeric
+    assert g.numeric_score == expected_numeric
 
 
 # --- compute_grade: Canvas ---
@@ -91,7 +96,7 @@ def test_compute_grade_canvas(
     )
     g = compute_grade(sub, assign)
     assert g.grade == expected_grade
-    assert g.numeric == expected_numeric
+    assert g.numeric_score == expected_numeric
 
 
 def test_compute_grade_canvas_no_points():
@@ -107,7 +112,7 @@ def test_compute_grade_canvas_no_points():
     )
     g = compute_grade(sub, assign)
     assert g.grade == "10"
-    assert g.numeric == 10.0
+    assert g.numeric_score == 10.0
 
 
 # --- _format_lateness ---

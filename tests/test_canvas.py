@@ -3,14 +3,13 @@
 import pytest
 
 from cass.canvas import (
-    CanvasStudent,
     _normalize,
     _slugify,
     find_candidates,
     mapping_from_roster,
     match_students,
 )
-from cass.models import GHStudentInfo, Student
+from cass.models import CanvasStudent, GHStudentInfo, Student
 
 
 # --- _normalize ---

@@ -14,62 +14,16 @@ import msgspec
 from . import gh
 from .config import get_config
 from .github_client import GitHubClient
-from .models import Assignment, GHStudentInfo, Student, Submission
-
-
-# --- GitHub API response types ---
-
-
-class GHAssignment(msgspec.Struct):
-    id: int
-    slug: str
-    title: str
-    deadline: str | None = None
-    accepted: int = 0
-
-
-class GHStudent(msgspec.Struct):
-    id: int
-    login: str
-
-
-class GHRepository(msgspec.Struct):
-    id: int
-    full_name: str
-
-
-class GHAcceptedAssignment(msgspec.Struct):
-    id: int
-    students: list[GHStudent] = []
-    repository: GHRepository | None = None
-
-
-class GHProfile(msgspec.Struct):
-    login: str
-    name: str | None = None
-
-
-class GHCommitter(msgspec.Struct):
-    date: str = ""
-
-
-class GHCommitInfo(msgspec.Struct):
-    committer: GHCommitter = msgspec.field(default_factory=GHCommitter)
-
-
-class GHCommit(msgspec.Struct):
-    commit: GHCommitInfo = msgspec.field(default_factory=GHCommitInfo)
-
-
-class GHContentItem(msgspec.Struct):
-    type: str = ""
-    name: str = ""
-    download_url: str | None = None
-
-
-def _decode(data: dict | list, tp: type) -> object:
-    """Decode already-parsed JSON data into a msgspec Struct type."""
-    return msgspec.json.decode(msgspec.json.encode(data), type=tp)
+from .models import (
+    Assignment,
+    GHAcceptedAssignment,
+    GHAssignment,
+    GHCommit,
+    GHProfile,
+    GHStudentInfo,
+    Student,
+    Submission,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -85,7 +39,7 @@ async def _resolve_gh_id(client: GitHubClient, assignment: Assignment) -> int:
         ttl_hours=24,
         paginate=True,
     )
-    items: list[GHAssignment] = _decode(data, list[GHAssignment])  # type: ignore[assignment]
+    items = msgspec.convert(data, list[GHAssignment])
     for a in items:
         if a.slug == assignment.slug:
             return a.id
@@ -105,7 +59,7 @@ async def fetch_assignments(
         force_refresh=force_refresh,
         paginate=True,
     )
-    items: list[GHAssignment] = _decode(data, list[GHAssignment])  # type: ignore[assignment]
+    items = msgspec.convert(data, list[GHAssignment])
     assignments = []
     for a in items:
         deadline = None
@@ -147,7 +101,7 @@ async def fetch_all_students(
             force_refresh=force_refresh,
             paginate=True,
         )
-        accepted: list[GHAcceptedAssignment] = _decode(data, list[GHAcceptedAssignment])  # type: ignore[assignment]
+        accepted = msgspec.convert(data, list[GHAcceptedAssignment])
         for entry in accepted:
             for student in entry.students:
                 if student.login and student.login.lower() not in seen:
@@ -166,7 +120,7 @@ async def fetch_all_students(
                 ttl_hours=ttl_hours,
                 force_refresh=force_refresh,
             )
-            profile: GHProfile = _decode(profile_data, GHProfile)  # type: ignore[assignment]
+            profile = msgspec.convert(profile_data, GHProfile)
             s.name = profile.name or ""
         except Exception:
             pass
@@ -194,7 +148,7 @@ async def fetch_submissions(
         force_refresh=force_refresh,
         paginate=True,
     )
-    accepted: list[GHAcceptedAssignment] = _decode(data, list[GHAcceptedAssignment])  # type: ignore[assignment]
+    accepted = msgspec.convert(data, list[GHAcceptedAssignment])
 
     repo_by_handle: dict[str, dict[str, str]] = {}
     for entry in accepted:
@@ -220,7 +174,7 @@ async def fetch_submissions(
         repo_short = repo_info["repo_short"]
         submitted = True
         on_time = False
-        commits_after = 0
+        commits_after_deadline = 0
         late = False
         lateness_seconds = 0
 
@@ -239,8 +193,8 @@ async def fetch_submissions(
                 force_refresh=force_refresh,
                 paginate=True,
             )
-            after: list[GHCommit] = _decode(after_data, list[GHCommit])  # type: ignore[assignment]
-            commits_after = len(after)
+            after = msgspec.convert(after_data, list[GHCommit])
+            commits_after_deadline = len(after)
 
             if not on_time and after:
                 late = True
@@ -265,7 +219,7 @@ async def fetch_submissions(
             late=late,
             lateness_seconds=lateness_seconds,
             repo_name=repo_info["repo_name"],
-            commits_after=commits_after,
+            commits_after_deadline=commits_after_deadline,
         )
 
     submissions = await asyncio.gather(*(check_student(s) for s in roster))
@@ -289,7 +243,7 @@ async def fetch_file_submissions(
         force_refresh=force_refresh,
         paginate=True,
     )
-    accepted: list[GHAcceptedAssignment] = _decode(data, list[GHAcceptedAssignment])  # type: ignore[assignment]
+    accepted = msgspec.convert(data, list[GHAcceptedAssignment])
 
     repo_by_handle: dict[str, str] = {}
     for entry in accepted:
@@ -340,7 +294,7 @@ def _resolve_gh_id_sync(assignment: Assignment) -> int:
         force_refresh=False,
         paginate=True,
     )
-    items: list[GHAssignment] = _decode(data, list[GHAssignment])  # type: ignore[assignment]
+    items = msgspec.convert(data, list[GHAssignment])
     for a in items:
         if a.slug == assignment.slug:
             return a.id
@@ -360,7 +314,7 @@ def build_repo_map(
         force_refresh=force_refresh,
         paginate=True,
     )
-    accepted: list[GHAcceptedAssignment] = _decode(data, list[GHAcceptedAssignment])  # type: ignore[assignment]
+    accepted = msgspec.convert(data, list[GHAcceptedAssignment])
     repo_map: dict[str, str] = {}
     for entry in accepted:
         repo_name = entry.repository.full_name if entry.repository else ""

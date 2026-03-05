@@ -14,13 +14,12 @@ from . import classroom, db
 from . import fetch as fetch_mod
 from .config import Config
 from .github_client import GitHubClient
-from .models import (
-    FINAL_PROJECT_SLUG,
-    PROPOSAL_FILE,
-    REPORT_FILE,
-    Student,
-    compute_grade,
-)
+from .models import Student, compute_grade
+
+# Course-specific constants for final project handling
+FINAL_PROJECT_SLUG = "final-project"
+PROPOSAL_FILE = "pdfs/proposal.pdf"
+REPORT_FILE = "pdfs/final-report.pdf"
 
 
 async def pull_students(
