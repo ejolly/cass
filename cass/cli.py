@@ -825,6 +825,34 @@ def import_csv(
     console.print(f"[green]Imported {len(rows)} rows into {table}.[/green]")
 
 
+@app.command()
+def view() -> None:
+    """Open the database in Dataflare (GUI viewer)."""
+    import subprocess
+
+    from . import db
+
+    db_file = Path(db.db_path())
+    if not db_file.exists():
+        console.print(
+            "[yellow]No database yet. Run [bold]cass pull[/bold] first.[/yellow]"
+        )
+        raise typer.Exit(code=1)
+
+    # Check if Dataflare is installed
+    result = subprocess.run(
+        ["open", "-Ra", "Dataflare"], capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        console.print("[red]Dataflare is not installed.[/red]")
+        console.print("Install it with: [bold]brew install --cask dataflare[/bold]")
+        console.print("Or download from: https://dataflare.app/")
+        raise typer.Exit(code=1)
+
+    console.print(f"Opening [bold]{db_file.name}[/bold] in Dataflare...")
+    subprocess.run(["open", "-a", "Dataflare", str(db_file.resolve())])
+
+
 @db_app.callback()
 def db_callback(ctx: typer.Context) -> None:
     """Database operations (clean, REPL)."""
