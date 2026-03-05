@@ -1,0 +1,427 @@
+"""Tests for cass.canvas_api — CanvasClient typed API client."""
+
+import httpx
+import msgspec
+import pytest
+
+from cass.models.canvas_api import (
+    CanvasAnnouncement,
+    CanvasAssignment,
+    CanvasAssignmentGroup,
+    CanvasCourse,
+    CanvasFile,
+    CanvasFolder,
+    CanvasModule,
+    CanvasModuleItem,
+    CanvasQuiz,
+    CanvasTab,
+    CanvasUser,
+)
+
+
+# --- Model decoding tests ---
+
+
+class TestModels:
+    """Ensure all Canvas API structs decode from representative JSON."""
+
+    def test_canvas_course(self):
+        data = {
+            "id": 123,
+            "name": "Intro to Psych",
+            "course_code": "PSYC-101",
+            "workflow_state": "available",
+            "default_view": "modules",
+            "enrollment_term_id": 5,
+            "total_students": 42,
+            "time_zone": "America/Los_Angeles",
+            "extra_field": "ignored",
+        }
+        c = msgspec.convert(data, CanvasCourse, strict=False)
+        assert c.id == 123
+        assert c.name == "Intro to Psych"
+        assert c.total_students == 42
+
+    def test_canvas_user_with_enrollments(self):
+        data = {
+            "id": 1,
+            "name": "Alice Smith",
+            "sortable_name": "Smith, Alice",
+            "email": "alice@ucsd.edu",
+            "enrollments": [
+                {
+                    "id": 10,
+                    "user_id": 1,
+                    "type": "StudentEnrollment",
+                    "enrollment_state": "active",
+                    "role": "StudentEnrollment",
+                }
+            ],
+        }
+        u = msgspec.convert(data, CanvasUser, strict=False)
+        assert u.name == "Alice Smith"
+        assert len(u.enrollments) == 1
+        assert u.enrollments[0].role == "StudentEnrollment"
+
+    def test_canvas_module(self):
+        data = {
+            "id": 50,
+            "name": "Week 1",
+            "position": 1,
+            "published": True,
+            "items_count": 3,
+            "items_url": "https://canvas.example.com/api/v1/courses/1/modules/50/items",
+        }
+        m = msgspec.convert(data, CanvasModule, strict=False)
+        assert m.name == "Week 1"
+        assert m.published is True
+        assert m.items_count == 3
+
+    def test_canvas_module_item(self):
+        data = {
+            "id": 100,
+            "title": "Lecture Slides",
+            "type": "File",
+            "content_id": 999,
+            "position": 2,
+            "published": True,
+            "module_id": 50,
+        }
+        mi = msgspec.convert(data, CanvasModuleItem, strict=False)
+        assert mi.type == "File"
+        assert mi.content_id == 999
+
+    def test_canvas_assignment_expanded(self):
+        data = {
+            "id": 200,
+            "name": "Homework 1",
+            "points_possible": 10.0,
+            "due_at": "2026-01-20T23:59:59Z",
+            "published": True,
+            "submission_types": ["online_url"],
+            "grading_type": "points",
+            "assignment_group_id": 5,
+            "position": 1,
+            "html_url": "https://canvas.example.com/courses/1/assignments/200",
+            "description": "<p>Submit your work</p>",
+            "has_submitted_submissions": True,
+            "workflow_state": "published",
+        }
+        a = msgspec.convert(data, CanvasAssignment, strict=False)
+        assert a.published is True
+        assert a.submission_types == ["online_url"]
+        assert a.grading_type == "points"
+        assert a.assignment_group_id == 5
+
+    def test_canvas_assignment_group(self):
+        data = {
+            "id": 5,
+            "name": "Homework",
+            "position": 1,
+            "group_weight": 30.0,
+            "rules": {"drop_lowest": 1},
+        }
+        g = msgspec.convert(data, CanvasAssignmentGroup, strict=False)
+        assert g.group_weight == 30.0
+        assert g.rules == {"drop_lowest": 1}
+
+    def test_canvas_quiz(self):
+        data = {
+            "id": 300,
+            "title": "Midterm Quiz",
+            "quiz_type": "assignment",
+            "published": True,
+            "time_limit": 60,
+            "question_count": 20,
+            "points_possible": 100.0,
+            "assignment_id": 200,
+        }
+        q = msgspec.convert(data, CanvasQuiz, strict=False)
+        assert q.time_limit == 60
+        assert q.question_count == 20
+
+    def test_canvas_file(self):
+        data = {
+            "id": 400,
+            "display_name": "slides.pdf",
+            "filename": "slides.pdf",
+            "size": 1048576,
+            "content-type": "application/pdf",
+            "url": "https://canvas.example.com/files/400/download",
+            "folder_id": 10,
+            "created_at": "2026-01-15T10:00:00Z",
+            "updated_at": "2026-01-15T10:00:00Z",
+        }
+        f = msgspec.convert(data, CanvasFile, strict=False)
+        assert f.display_name == "slides.pdf"
+        assert f.size == 1048576
+
+    def test_canvas_folder(self):
+        data = {
+            "id": 10,
+            "name": "slides",
+            "full_name": "course files/slides",
+            "parent_folder_id": 1,
+            "files_count": 5,
+            "folders_count": 0,
+        }
+        f = msgspec.convert(data, CanvasFolder, strict=False)
+        assert f.full_name == "course files/slides"
+
+    def test_canvas_announcement(self):
+        data = {
+            "id": 500,
+            "title": "Welcome!",
+            "message": "<p>Hello class</p>",
+            "posted_at": "2026-01-10T08:00:00Z",
+            "user_name": "Dr. Smith",
+        }
+        a = msgspec.convert(data, CanvasAnnouncement, strict=False)
+        assert a.user_name == "Dr. Smith"
+
+    def test_canvas_tab(self):
+        data = {
+            "id": "modules",
+            "label": "Modules",
+            "type": "internal",
+            "position": 2,
+            "visibility": "public",
+            "hidden": False,
+        }
+        t = msgspec.convert(data, CanvasTab, strict=False)
+        assert t.id == "modules"  # string ID
+        assert t.hidden is False
+
+
+# --- CanvasClient unit tests (mocked HTTP) ---
+
+
+class _MockTransport(httpx.BaseTransport):
+    """Transport that returns pre-configured responses."""
+
+    def __init__(self):
+        self.responses: list[httpx.Response] = []
+        self.requests: list[httpx.Request] = []
+        self._idx = 0
+
+    def add(
+        self, status: int = 200, json_data: object = None, headers: dict | None = None
+    ):
+        resp = httpx.Response(
+            status,
+            json=json_data,
+            headers=headers or {},
+        )
+        self.responses.append(resp)
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        if self._idx >= len(self.responses):
+            return httpx.Response(500, json={"error": "no more mocked responses"})
+        resp = self.responses[self._idx]
+        self._idx += 1
+        return resp
+
+
+@pytest.fixture
+def mock_client(monkeypatch):
+    """Return a CanvasClient with mocked HTTP transport."""
+    from cass.canvas_api import CanvasClient
+
+    transport = _MockTransport()
+    client = CanvasClient.__new__(CanvasClient)
+    client._base_url = "https://canvas.example.com/api/v1"
+    client._token = "test-token"
+    client.course_id = 1
+    client._http = httpx.Client(
+        base_url="https://canvas.example.com/api/v1",
+        headers={
+            "Authorization": "Bearer test-token",
+            "User-Agent": "cass-cli/test",
+        },
+        transport=transport,
+        timeout=5.0,
+    )
+    return client, transport
+
+
+class TestCanvasClient:
+    def test_get_course(self, mock_client):
+        client, transport = mock_client
+        transport.add(
+            json_data={
+                "id": 1,
+                "name": "Test Course",
+                "course_code": "TST-101",
+                "workflow_state": "available",
+            }
+        )
+        course = client.get_course()
+        assert course.name == "Test Course"
+        assert "include[]=total_students" in str(transport.requests[0].url)
+
+    def test_list_modules(self, mock_client):
+        client, transport = mock_client
+        transport.add(
+            json_data=[
+                {
+                    "id": 1,
+                    "name": "Week 1",
+                    "position": 1,
+                    "published": True,
+                    "items_count": 2,
+                },
+                {
+                    "id": 2,
+                    "name": "Week 2",
+                    "position": 2,
+                    "published": False,
+                    "items_count": 0,
+                },
+            ]
+        )
+        modules = client.list_modules()
+        assert len(modules) == 2
+        assert modules[0].name == "Week 1"
+
+    def test_list_assignments(self, mock_client):
+        client, transport = mock_client
+        transport.add(
+            json_data=[
+                {"id": 10, "name": "HW1", "points_possible": 10, "published": True},
+            ]
+        )
+        assignments = client.list_assignments()
+        assert len(assignments) == 1
+        assert assignments[0].published is True
+
+    def test_list_quizzes(self, mock_client):
+        client, transport = mock_client
+        transport.add(
+            json_data=[
+                {
+                    "id": 20,
+                    "title": "Quiz 1",
+                    "quiz_type": "assignment",
+                    "published": True,
+                },
+            ]
+        )
+        quizzes = client.list_quizzes()
+        assert len(quizzes) == 1
+        assert quizzes[0].title == "Quiz 1"
+
+    def test_list_announcements(self, mock_client):
+        client, transport = mock_client
+        transport.add(
+            json_data=[
+                {
+                    "id": 30,
+                    "title": "Welcome",
+                    "message": "<p>Hi</p>",
+                    "user_name": "Prof",
+                },
+            ]
+        )
+        anns = client.list_announcements()
+        assert len(anns) == 1
+        assert anns[0].user_name == "Prof"
+
+    def test_list_tabs(self, mock_client):
+        client, transport = mock_client
+        transport.add(
+            json_data=[
+                {"id": "home", "label": "Home", "type": "internal", "position": 1},
+            ]
+        )
+        tabs = client.list_tabs()
+        assert len(tabs) == 1
+        assert tabs[0].id == "home"
+
+    def test_create_module(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data={"id": 99, "name": "New Module", "position": 5})
+        mod = client.create_module("New Module", position=5)
+        assert mod.id == 99
+        req = transport.requests[0]
+        assert req.method == "POST"
+
+    def test_create_assignment(self, mock_client):
+        client, transport = mock_client
+        transport.add(
+            json_data={
+                "id": 88,
+                "name": "HW2",
+                "points_possible": 20,
+                "published": False,
+            }
+        )
+        a = client.create_assignment("HW2", points_possible=20)
+        assert a.id == 88
+        assert transport.requests[0].method == "POST"
+
+    def test_delete_module(self, mock_client):
+        client, transport = mock_client
+        transport.add(status=200, json_data={})
+        client.delete_module(99)
+        assert transport.requests[0].method == "DELETE"
+
+    def test_publish(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data={"id": 1, "published": True})
+        client.publish("modules", 1)
+        req = transport.requests[0]
+        assert req.method == "PUT"
+
+    def test_resolve_module_by_id(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data={"id": 5, "name": "Week 5", "position": 5})
+        mod = client.resolve_module("5")
+        assert mod.id == 5
+        # Should use get_module (direct ID lookup)
+        assert "/modules/5" in str(transport.requests[0].url)
+
+    def test_resolve_module_by_name(self, mock_client):
+        client, transport = mock_client
+        transport.add(
+            json_data=[
+                {"id": 1, "name": "Week 1", "position": 1},
+                {"id": 2, "name": "Week 2", "position": 2},
+            ]
+        )
+        mod = client.resolve_module("week 2")
+        assert mod.id == 2
+
+    def test_resolve_module_not_found(self, mock_client):
+        client, transport = mock_client
+        transport.add(
+            json_data=[
+                {"id": 1, "name": "Week 1", "position": 1},
+            ]
+        )
+        with pytest.raises(RuntimeError, match="Module not found"):
+            client.resolve_module("nonexistent")
+
+    def test_pagination(self, mock_client):
+        """Verify pagination via Link header."""
+        client, transport = mock_client
+        # Page 1 with Link header
+        transport.add(
+            json_data=[{"id": 1, "name": "M1", "position": 1}],
+            headers={
+                "link": '<https://canvas.example.com/api/v1/courses/1/modules?page=2&per_page=100>; rel="next"'
+            },
+        )
+        # Page 2 with no next link
+        transport.add(
+            json_data=[{"id": 2, "name": "M2", "position": 2}],
+        )
+        modules = client.list_modules()
+        assert len(modules) == 2
+        assert len(transport.requests) == 2
+
+    def test_context_manager(self, mock_client):
+        client, transport = mock_client
+        with client:
+            assert not client._http.is_closed
+        assert client._http.is_closed
