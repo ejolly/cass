@@ -9,10 +9,30 @@ __docformat__ = "google"
 import os
 import shutil
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 CONFIG_FILENAME = "cass.toml"
+
+
+@dataclass
+class CanvasModuleSpec:
+    """Desired state for a Canvas module declared in cass.toml."""
+
+    name: str
+    published: bool = False
+
+
+@dataclass
+class CanvasAssignmentSpec:
+    """Desired state for a Canvas assignment declared in cass.toml."""
+
+    name: str
+    points: float = 0.0
+    submission_types: list[str] = field(default_factory=lambda: ["online_url"])
+    due_at: str = ""
+    published: bool = False
+    group: str = ""
 
 
 @dataclass
@@ -22,6 +42,8 @@ class Config:
     org: str = ""
     canvas_base_url: str = ""
     canvas_course_id: int = 0
+    canvas_modules: list[CanvasModuleSpec] = field(default_factory=list)
+    canvas_assignments: list[CanvasAssignmentSpec] = field(default_factory=list)
 
     @property
     def has_classroom(self) -> bool:
@@ -80,12 +102,36 @@ def _load_config() -> Config:
             f"Invalid config: {path} must have at least a [classroom] or [canvas] section."
         )
 
+    # Parse [[canvas.modules]] and [[canvas.assignments]] if present
+    module_specs = [
+        CanvasModuleSpec(
+            name=m["name"],
+            published=m.get("published", False),
+        )
+        for m in canvas.get("modules", [])
+        if "name" in m
+    ]
+    assignment_specs = [
+        CanvasAssignmentSpec(
+            name=a["name"],
+            points=a.get("points", 0.0),
+            submission_types=a.get("submission_types", ["online_url"]),
+            due_at=a.get("due_at", ""),
+            published=a.get("published", False),
+            group=a.get("group", ""),
+        )
+        for a in canvas.get("assignments", [])
+        if "name" in a
+    ]
+
     return Config(
         root=root,
         classroom_id=cc.get("id", 0),
         org=cc.get("org", ""),
         canvas_base_url=canvas.get("base_url", ""),
         canvas_course_id=canvas.get("course_id", 0),
+        canvas_modules=module_specs,
+        canvas_assignments=assignment_specs,
     )
 
 

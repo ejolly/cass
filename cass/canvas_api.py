@@ -2,7 +2,9 @@
 
 Provides ``CanvasClient``, a typed httpx client with ``course_id`` baked in.
 All methods return msgspec.Struct instances, never raw dicts.
-Uses ``_RetryTransport`` from ``canvas.py`` for 429 retry and throttling.
+
+Also contains the HTTP transport layer (``_RetryTransport``) and token
+management used by the rest of the Canvas integration.
 """
 
 from __future__ import annotations
@@ -10,12 +12,15 @@ from __future__ import annotations
 __docformat__ = "google"
 
 import logging
+import os
 import re
+import time
 
 import httpx
 import msgspec
+from rich.console import Console
 
-from .canvas import _RetryTransport, get_token
+from . import __version__
 from .config import get_config
 from .models import (
     CanvasAnnouncement,
@@ -27,12 +32,105 @@ from .models import (
     CanvasModule,
     CanvasModuleItem,
     CanvasQuiz,
+    CanvasStudent,
+    CanvasSubmission,
     CanvasTab,
     CanvasUser,
 )
-from . import __version__
 
+_console = Console(stderr=True)
 _log = logging.getLogger(__name__)
+
+# --- Token management ---
+
+MAX_RETRIES = 3
+THROTTLE_THRESHOLD = 50.0
+THROTTLE_DELAY = 1.0
+
+
+def get_token() -> str:
+    """Read Canvas API token from file or environment.
+
+    Looks for ``canvas-token.txt`` in the project root first, then
+    falls back to the ``CANVAS_TOKEN`` environment variable.
+
+    Raises:
+        SystemExit: If no token is found.
+    """
+    cfg = get_config()
+    token_path = cfg.root / "canvas-token.txt"
+    if token_path.exists():
+        token = token_path.read_text().strip()
+        if token:
+            return token
+    token = os.environ.get("CANVAS_TOKEN", "")
+    if not token:
+        raise SystemExit(
+            "Canvas token not found. Create canvas-token.txt in the project root "
+            "or set the CANVAS_TOKEN environment variable."
+        )
+    return token
+
+
+def save_token(token: str) -> None:
+    """Write a Canvas API token to ``canvas-token.txt``."""
+    cfg = get_config()
+    token_path = cfg.root / "canvas-token.txt"
+    token_path.write_text(token.strip() + "\n")
+
+
+# --- HTTP transport ---
+
+
+class _RetryTransport(httpx.BaseTransport):
+    """Wraps HTTPTransport with 429 retry, backoff, and proactive throttling."""
+
+    def __init__(self, *, retries: int = 0) -> None:
+        self._wrapped = httpx.HTTPTransport(retries=retries)
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        for attempt in range(MAX_RETRIES + 1):
+            response = self._wrapped.handle_request(request)
+
+            if response.status_code == 429:
+                if attempt == MAX_RETRIES:
+                    return response  # let raise_for_status handle it
+                retry_after = response.headers.get("Retry-After")
+                wait = float(retry_after) if retry_after else 2**attempt
+                _console.print(
+                    f"[yellow]Canvas rate limit hit, retrying in {wait:.0f}s…[/yellow]"
+                )
+                time.sleep(wait)
+                continue
+
+            # Proactive throttle when remaining quota is low
+            remaining = response.headers.get("X-Rate-Limit-Remaining")
+            if remaining:
+                try:
+                    if float(remaining) < THROTTLE_THRESHOLD:
+                        _log.debug(
+                            "Rate limit remaining %.1f, throttling", float(remaining)
+                        )
+                        time.sleep(THROTTLE_DELAY)
+                except ValueError:
+                    pass
+
+            # Log request cost at debug level
+            cost = response.headers.get("X-Request-Cost")
+            if cost:
+                _log.debug("Request cost: %s", cost)
+
+            return response
+
+        # Should not reach here, but satisfy the type checker
+        raise RuntimeError("Canvas API rate limit exceeded after retries")
+
+    def close(self) -> None:
+        self._wrapped.close()
+
+
+# --- Client ---
+
 _LINK_NEXT_RE = re.compile(r'<([^>]+)>;\s*rel="next"')
 
 
@@ -141,6 +239,17 @@ class CanvasClient:
             path += f"&enrollment_type[]={enrollment_type}"
         data = self._get_paginated(path)
         return msgspec.convert(data, list[CanvasUser], strict=False)
+
+    def list_students(self) -> list[CanvasStudent]:
+        """List students enrolled in the course.
+
+        Returns:
+            Students sorted by Canvas enrollment order.
+        """
+        data = self._get_paginated(
+            self._course("/users?enrollment_type[]=student&include[]=email")
+        )
+        return msgspec.convert(data, list[CanvasStudent], strict=False)
 
     # --- Modules ---
 
@@ -337,6 +446,50 @@ class CanvasClient:
         data = self._get_paginated(self._course("/assignment_groups"))
         return msgspec.convert(data, list[CanvasAssignmentGroup], strict=False)
 
+    # --- Submissions ---
+
+    def list_submissions(self, assignment_id: int) -> list[CanvasSubmission]:
+        """List submissions for an assignment.
+
+        Args:
+            assignment_id: Canvas assignment ID.
+
+        Returns:
+            All submissions for the assignment.
+        """
+        data = self._get_paginated(
+            self._course(f"/assignments/{assignment_id}/submissions")
+        )
+        return msgspec.convert(data, list[CanvasSubmission], strict=False)
+
+    def push_grade(
+        self, assignment_id: int, student_canvas_id: int, grade: str
+    ) -> bool:
+        """Push a single grade to Canvas.
+
+        Args:
+            assignment_id: Canvas assignment ID.
+            student_canvas_id: Student's Canvas user ID.
+            grade: Grade string to post.
+
+        Returns:
+            True on success, False on failure.
+        """
+        try:
+            resp = self._client.put(
+                self._course(
+                    f"/assignments/{assignment_id}/submissions/{student_canvas_id}"
+                ),
+                data={"submission[posted_grade]": grade},
+            )
+            resp.raise_for_status()
+            return True
+        except (httpx.HTTPStatusError, RuntimeError) as exc:
+            _log.warning(
+                "Failed to push grade for student %s: %s", student_canvas_id, exc
+            )
+            return False
+
     # --- Quizzes ---
 
     def list_quizzes(self) -> list[CanvasQuiz]:
@@ -454,10 +607,10 @@ class CanvasClient:
         Returns:
             The uploaded file metadata.
         """
-        import os
+        import os as _os
 
-        filename = os.path.basename(local_path)
-        size = os.path.getsize(local_path)
+        filename = _os.path.basename(local_path)
+        size = _os.path.getsize(local_path)
 
         # Step 1: notify Canvas
         params: dict = {
