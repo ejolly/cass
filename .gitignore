@@ -1,0 +1,13 @@
+.venv/
+proposals/
+__pycache__/
+*.py[oc]
+canvas-token.txt
+canvas_mapping.json
+classroom_roster.csv
+cass.db
+grade-data/
+.ruff_cache/
+.pytest_cache/
+cass.db.wal
+cass.toml
