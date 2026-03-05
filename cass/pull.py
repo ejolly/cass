@@ -6,6 +6,8 @@ Canvas calls remain synchronous (fewer calls, not the bottleneck).
 
 from __future__ import annotations
 
+__docformat__ = "google"
+
 import typer
 from rich.console import Console
 
@@ -29,7 +31,18 @@ async def pull_students(
     ttl: float,
     no_cache: bool,
 ) -> None:
-    """Fetch students from GitHub Classroom and/or Canvas."""
+    """Fetch students from GitHub Classroom and/or Canvas.
+
+    In combined mode, automatically matches GitHub and Canvas students by
+    name, with interactive resolution for ambiguous cases.
+
+    Args:
+        client: Async GitHub API client (None if Classroom not configured).
+        cfg: Project configuration.
+        console: Rich console for status output.
+        ttl: Cache TTL in hours.
+        no_cache: Bypass cache if True.
+    """
     students_list: list[Student] = []
     if cfg.has_classroom:
         assert client is not None
@@ -118,7 +131,15 @@ async def pull_assignments(
     ttl: float,
     no_cache: bool,
 ) -> None:
-    """Fetch assignments from GitHub Classroom and/or Canvas."""
+    """Fetch assignments from GitHub Classroom and/or Canvas.
+
+    Args:
+        client: Async GitHub API client (None if Classroom not configured).
+        cfg: Project configuration.
+        console: Rich console for status output.
+        ttl: Cache TTL in hours.
+        no_cache: Bypass cache if True.
+    """
     all_assignments = []
     if cfg.has_classroom:
         assert client is not None
@@ -150,6 +171,14 @@ async def pull_submissions(
     """Fetch submissions for all assignments.
 
     GitHub submissions are fetched with parallel per-student commit checks.
+    Canvas submissions use synchronous paginated API calls.
+
+    Args:
+        client: Async GitHub API client (None if Classroom not configured).
+        cfg: Project configuration.
+        console: Rich console for status output.
+        ttl: Cache TTL in hours.
+        no_cache: Bypass cache if True.
     """
     if not db.students_exist():
         console.print("[yellow]No roster. Pull students first.[/yellow]")

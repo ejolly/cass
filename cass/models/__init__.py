@@ -1,5 +1,7 @@
 """cass data models — domain types, API response types, and grading logic."""
 
+__docformat__ = "google"
+
 from .canvas_api import (
     CanvasAssignment,
     CanvasStudent,

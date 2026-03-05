@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+__docformat__ = "google"
+
 import time
 
 import duckdb
@@ -20,6 +22,11 @@ def db_path() -> str:
 
 
 def get_db() -> duckdb.DuckDBPyConnection:
+    """Return the shared DuckDB connection, creating it on first call.
+
+    The connection is cached as a module-level singleton. The schema is
+    auto-initialized (or migrated) on first access.
+    """
     global _conn
     if _conn is not None:
         return _conn
@@ -183,6 +190,14 @@ def _rows_to_structs(rows: list[tuple], cols: tuple[str, ...], struct_type: type
 
 
 def save_students(students: list[Student]) -> int:
+    """Replace the students table with a new roster.
+
+    Args:
+        students: Full roster to persist (replaces all existing rows).
+
+    Returns:
+        Number of students saved.
+    """
     conn = get_db()
     conn.execute("DELETE FROM students")
     if not students:
@@ -207,6 +222,14 @@ def save_students(students: list[Student]) -> int:
 
 
 def load_students(include_excluded: bool = False) -> list[Student]:
+    """Load the student roster from the database.
+
+    Args:
+        include_excluded: If True, also return students marked as excluded.
+
+    Returns:
+        Students sorted by identifier (case-insensitive).
+    """
     conn = get_db()
     where = "" if include_excluded else "WHERE excluded = false"
     cols = _STUDENT_COLS
@@ -231,6 +254,14 @@ def students_exist() -> bool:
 
 
 def save_assignments(assignments: list[Assignment]) -> int:
+    """Replace all assignments in the database.
+
+    Args:
+        assignments: Full assignment list (replaces all existing rows).
+
+    Returns:
+        Number of assignments saved.
+    """
     conn = get_db()
     conn.execute("DELETE FROM assignments")
     if not assignments:
@@ -259,6 +290,7 @@ def save_assignments(assignments: list[Assignment]) -> int:
 
 
 def load_assignments() -> list[Assignment]:
+    """Load all assignments from the database, sorted by ID."""
     conn = get_db()
     cols = _ASSIGNMENT_COLS
     rows = conn.execute(
@@ -273,6 +305,16 @@ def load_assignments() -> list[Assignment]:
 
 
 def save_submissions(submissions: list[Submission]) -> int:
+    """Upsert submissions into the database.
+
+    Uses ``INSERT OR REPLACE`` keyed on ``(student_id, assignment_id)``.
+
+    Args:
+        submissions: Submissions to persist.
+
+    Returns:
+        Number of submissions saved.
+    """
     conn = get_db()
     now = time.time()
     if not submissions:
@@ -308,6 +350,14 @@ def save_submissions(submissions: list[Submission]) -> int:
 
 
 def load_submissions(assignment_id: str | None = None) -> list[Submission]:
+    """Load submissions, optionally filtered by assignment.
+
+    Args:
+        assignment_id: If provided, only return submissions for this assignment.
+
+    Returns:
+        Submissions sorted by ``(assignment_id, student_id)``.
+    """
     conn = get_db()
     cols = _SUBMISSION_COLS
     select = f"SELECT {', '.join(cols)} FROM submissions"
@@ -327,6 +377,16 @@ def load_submissions(assignment_id: str | None = None) -> list[Submission]:
 
 
 def save_grades(grades: list[Grade]) -> int:
+    """Upsert grades into the database.
+
+    Uses ``INSERT OR REPLACE`` keyed on ``(student_id, assignment_id)``.
+
+    Args:
+        grades: Grades to persist.
+
+    Returns:
+        Number of grades saved.
+    """
     conn = get_db()
     now = time.time()
     if not grades:
@@ -344,6 +404,14 @@ def save_grades(grades: list[Grade]) -> int:
 
 
 def load_grades(assignment_id: str | None = None) -> list[Grade]:
+    """Load grades, optionally filtered by assignment.
+
+    Args:
+        assignment_id: If provided, only return grades for this assignment.
+
+    Returns:
+        Grades sorted by ``(assignment_id, student_id)``.
+    """
     conn = get_db()
     cols = _GRADE_COLS
     select = f"SELECT {', '.join(cols)} FROM grades"

@@ -187,6 +187,54 @@ At this scale (15 students, <20 assignments), concurrent edits are unlikely. If 
 
 ---
 
+## Coding Style
+
+### Module structure
+Every `.py` file follows this order:
+1. Module docstring (always present)
+2. `from __future__ import annotations` (if needed)
+3. `__docformat__ = "google"`
+4. Stdlib imports → third-party imports → relative imports
+
+### Docstrings
+- **Google-style** with `Args:`, `Returns:`, `Raises:` sections
+- All public functions and classes get docstrings
+- Skip docstrings on trivial one-liners where the signature is self-documenting
+- `msgspec.Struct` classes get a one-line class docstring describing their role
+
+### Type annotations
+- All function signatures have return types
+- Use `X | None` union syntax, not `Optional[X]`
+- Use `list[X]`, `dict[K, V]` lowercase generics, not `List`/`Dict`
+
+### Naming
+- `snake_case` for functions and variables
+- `PascalCase` for classes
+- `UPPER_CASE` for module-level constants
+- `_prefixed` for private/internal functions
+- API response types: `GH`-prefixed (GitHub) or `Canvas`-prefixed
+- Domain types: unprefixed (`Student`, `Assignment`, `Submission`, `Grade`)
+
+### Error handling
+- `SystemExit` for user-facing config/setup errors (missing token, no config file)
+- `RuntimeError` for API/logic failures (assignment not found, rate limit exceeded)
+- `typer.Exit(code=1)` in the CLI layer for user-visible errors
+- `typer.Abort()` for user-cancelled operations
+
+### CLI patterns
+- **Lazy imports** inside command functions to keep startup fast
+- Typer sub-apps for grouped commands (`grades_app`, `db_app`)
+- Rich markup for console output: `[bold]`, `[red]`, `[green]`, `[dim]`, `[yellow]`
+- `--where` flags include inline examples in help text
+
+### Data layer
+- `msgspec.Struct` for all data models (zero-copy decode from JSON)
+- DuckDB singleton connection via `db.get_db()`
+- Cache pattern: DuckDB-backed with TTL (`cache_load`/`cache_save`)
+- Async: `asyncio.gather()` for parallel work, `asyncio.Semaphore` for concurrency control
+
+---
+
 ## Dev
 
 Task runner: [poethepoet](https://poethepoet.naber.me/) (dev dependency).
@@ -194,6 +242,8 @@ Task runner: [poethepoet](https://poethepoet.naber.me/) (dev dependency).
 ```bash
 uv run poe lint            # format (ruff) + lint (ruff) + type check (ty)
 uv run poe test            # run pytest suite
+uv run poe docs            # generate API docs to docs/api/
+uv run poe docs-serve      # live-preview API docs
 uv build                   # build wheel + sdist
 uv publish                 # publish to PyPI
 ```
@@ -218,9 +268,9 @@ Team: **Ejolly** (EJO). Issues are prefixed `EJO-NNN`.
 | EJO-319 | Refactor data models: human-readable, self-documenting API + domain types | Urgent | Done |
 | EJO-320 | Data storage & collaboration: single .db as git-shared source of truth | Urgent | Done |
 | EJO-321 | User-friendly CLI commands for common data operations | High | Blocked by 319, 320 |
-| EJO-322 | Canvas API compliance: User-Agent, rate limiting, 429 retry | High | Independent |
-| EJO-323 | Documentation: README, CLI help, Google-style docstrings, pdoc | Medium | Blocked by 319, 320 |
-| EJO-324 | Recommend Dataflare as interactive DB viewer/editor + CLI launcher | Low | Related to 320, 321, 323 |
+| EJO-322 | Canvas API compliance: User-Agent, rate limiting, 429 retry | High | Done |
+| EJO-323 | Documentation: README, CLI help, Google-style docstrings, pdoc | Medium | Done |
+| EJO-324 | Recommend Dataflare as interactive DB viewer/editor + CLI launcher | Low | Done |
 
 Execution order:
 ```

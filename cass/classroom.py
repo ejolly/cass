@@ -6,6 +6,8 @@ Sync _build_repo_map is used by fetch.py for file downloads.
 
 from __future__ import annotations
 
+__docformat__ = "google"
+
 import asyncio
 from datetime import datetime
 
@@ -51,7 +53,16 @@ async def fetch_assignments(
     ttl_hours: float = 6,
     force_refresh: bool = False,
 ) -> list[Assignment]:
-    """GET /classrooms/{id}/assignments — list all assignments."""
+    """Fetch all assignments from GitHub Classroom.
+
+    Args:
+        client: Async GitHub API client.
+        ttl_hours: Cache TTL in hours.
+        force_refresh: Bypass cache if True.
+
+    Returns:
+        Domain ``Assignment`` objects sorted by slug ID.
+    """
     cfg = get_config()
     data = await client.get_cached(
         f"/classrooms/{cfg.classroom_id}/assignments",
@@ -88,7 +99,16 @@ async def fetch_all_students(
 ) -> list[GHStudentInfo]:
     """Aggregate unique students across all assignments.
 
-    Profile lookups are parallelized (up to MAX_CONCURRENCY).
+    Iterates every assignment's accepted list to discover students, then
+    fetches GitHub profiles in parallel to fill in name/email.
+
+    Args:
+        client: Async GitHub API client.
+        ttl_hours: Cache TTL in hours.
+        force_refresh: Bypass cache if True.
+
+    Returns:
+        De-duplicated students sorted by login (lowercase).
     """
     assignments = await fetch_assignments(
         client, ttl_hours=ttl_hours, force_refresh=force_refresh
@@ -139,9 +159,21 @@ async def fetch_submissions(
     ttl_hours: float = 6,
     force_refresh: bool = False,
 ) -> list[Submission]:
-    """Fetch per-student submission data for an assignment.
+    """Fetch per-student submission data for a GitHub Classroom assignment.
 
-    Per-student commit checks are parallelized (up to MAX_CONCURRENCY).
+    For each student, checks commit timestamps against the deadline to
+    determine on-time/late status. Per-student commit checks are
+    parallelized (up to ``MAX_CONCURRENCY``).
+
+    Args:
+        client: Async GitHub API client.
+        assignment: The assignment to fetch submissions for.
+        roster: Students to check (skips students without repos).
+        ttl_hours: Cache TTL in hours.
+        force_refresh: Bypass cache if True.
+
+    Returns:
+        Submissions sorted by student_id.
     """
     cfg = get_config()
     gh_id = await _resolve_gh_id(client, assignment)
@@ -245,7 +277,20 @@ async def fetch_file_submissions(
     ttl_hours: float = 6,
     force_refresh: bool = False,
 ) -> list[Submission]:
-    """Check if a specific file exists in each student's repo (parallel)."""
+    """Check if a specific file exists in each student's repo (parallel).
+
+    Args:
+        client: Async GitHub API client.
+        assignment: The assignment whose repos to check.
+        roster: Students to check.
+        file_path: Path within the repo to look for (e.g. ``pdfs/proposal.pdf``).
+        ttl_hours: Cache TTL in hours.
+        force_refresh: Bypass cache if True.
+
+    Returns:
+        Submissions sorted by student_id, with ``submitted=True`` if
+        the file exists.
+    """
     cfg = get_config()
     gh_id = await _resolve_gh_id(client, assignment)
     data = await client.get_cached(
@@ -317,7 +362,18 @@ def build_repo_map(
     ttl_hours: float = 6,
     force_refresh: bool = False,
 ) -> dict[str, str]:
-    """Return {handle_lower: repo_short_name} for an assignment (sync)."""
+    """Return ``{handle_lower: repo_short_name}`` for an assignment.
+
+    Sync version used by ``fetch.py`` for file downloads.
+
+    Args:
+        assignment: Assignment to look up repos for.
+        ttl_hours: Cache TTL in hours.
+        force_refresh: Bypass cache if True.
+
+    Returns:
+        Mapping from lowercase GitHub handle to short repo name.
+    """
     gh_id = _resolve_gh_id_sync(assignment)
     data = gh.api_cached(
         f"/assignments/{gh_id}/accepted_assignments",

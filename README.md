@@ -123,6 +123,16 @@ cass grades  → reads from DB → renders Rich tables
 cass query   → direct SQL access for custom analysis
 ```
 
+### Combined mode
+
+When both `[classroom]` and `[canvas]` are configured, `cass pull` will:
+
+1. Discover students from GitHub Classroom accepted assignments
+2. Fetch the Canvas course roster
+3. Auto-match GitHub ↔ Canvas students by name (with interactive resolution for ambiguous cases)
+4. Store both GitHub and Canvas assignments/submissions in a unified schema
+5. `cass grades push` maps GitHub assignment grades to their Canvas counterparts by name-token overlap
+
 ### Grading logic
 
 **GitHub submissions** (binary: did you submit on time?)
@@ -142,12 +152,100 @@ cass query   → direct SQL access for custom analysis
 | Submitted, not graded | `?` | — |
 | Graded | `42/50` | 42 |
 
+## Architecture
+
+| Module | Purpose |
+|--------|---------|
+| `cli.py` | Typer CLI — all commands, flags, and output |
+| `config.py` | Config discovery (`cass.toml`), prerequisite checks |
+| `pull.py` | Orchestrates the students → assignments → submissions → grades pipeline |
+| `classroom.py` | GitHub Classroom API — async with parallel per-student fetching |
+| `canvas.py` | Canvas LMS API — httpx client, roster matching, grade sync |
+| `github_client.py` | Async httpx GitHub API client with caching and concurrency control |
+| `gh.py` | Subprocess wrapper for `gh api` (used by fetch.py) |
+| `db.py` | DuckDB database — schema, CRUD, cache, raw queries |
+| `fetch.py` | Download student files from GitHub repos |
+| `report.py` | Output formatting — Rich tables, CSV, and markdown |
+| `models/` | msgspec.Struct types split into domain, github_api, canvas_api, grading |
+
+## Database schema
+
+The `cass.db` file contains these tables (schema version 5):
+
+| Table | Description | Key columns |
+|-------|-------------|-------------|
+| `students` | Course roster | `identifier`, `github_username`, `canvas_id`, `excluded` |
+| `assignments` | Unified assignment metadata | `id` (PK), `source`, `title`, `deadline`, `points_possible` |
+| `submissions` | Per-student submission data | `(student_id, assignment_id)` PK, `submitted`, `late`, `score` |
+| `grades` | Computed/manual grades | `(student_id, assignment_id)` PK, `grade`, `numeric_score` |
+| `api_cache` | Ephemeral API response cache | `endpoint` (PK), `data`, `fetched_at` |
+| `meta` | Schema version tracking | `key`, `value` |
+
+Example queries:
+
+```sql
+-- Students matched to Canvas
+SELECT identifier, github_username, canvas_id FROM students WHERE canvas_id != '';
+
+-- Late submissions
+SELECT student_id, assignment_id, lateness_seconds FROM submissions WHERE late = true;
+
+-- Average score per Canvas assignment
+SELECT assignment_id, AVG(numeric_score) FROM grades WHERE source = 'auto' GROUP BY 1;
+```
+
+## Collaborative workflow
+
+`cass.db` is the shared source of truth — commit it to git. Clear the `api_cache` table before committing to keep the file small.
+
+```bash
+# TA grades hw-02, pushes
+git pull
+cass pull --grades
+cass db clean                 # clear api_cache (~2MB of API responses)
+git add cass.db && git commit -m "grade hw-02" && git push
+
+# Instructor pulls, reviews, pushes to Canvas
+git pull
+cass grades
+cass grades push --post
+```
+
+For manual edits (adjustments, overrides):
+
+```bash
+cass export grades --csv grades.csv
+# Edit in Excel/Numbers
+cass import grades.csv
+cass db clean
+git add cass.db && git commit -m "manual grade adjustments" && git push
+```
+
+## Troubleshooting
+
+**`gh auth` fails or `gh` not found**
+Install the [GitHub CLI](https://cli.github.com/) and run `gh auth login`. Verify with `gh auth status`.
+
+**Canvas token not found**
+Create `canvas-token.txt` in the project root containing your API token, or set the `CANVAS_TOKEN` environment variable. Generate a token in Canvas under Account → Settings → Approved Integrations.
+
+**Students missing from roster**
+GitHub Classroom only discovers students who have accepted at least one assignment. Run `cass pull --students` after students accept. For Canvas-only mode, all enrolled students are pulled automatically.
+
+**Name matching failures (combined mode)**
+When GitHub and Canvas names don't match automatically, `cass pull --students` will prompt for interactive resolution. Matched pairs are saved to the database — you only need to resolve once.
+
+**Stale data**
+Use `--no-cache` to bypass the API cache, or `--ttl 0` for immediate expiry. Run `cass db clean` to clear all cached API responses.
+
 ## Development
 
 ```bash
 uv sync                       # install all dependencies
 uv run poe lint               # format + lint + type check
 uv run poe test               # run test suite
+uv run poe docs               # generate API docs to docs/api/
+uv run poe docs-serve         # live-preview API docs
 ```
 
 ## License
