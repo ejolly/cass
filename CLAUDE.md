@@ -184,12 +184,14 @@ Team: **Ejolly** (EJO). Issues are prefixed `EJO-NNN`.
 | EJO-321 | User-friendly CLI commands for common data operations | High | Blocked by 319, 320 |
 | EJO-322 | Canvas API compliance: User-Agent, rate limiting, 429 retry | High | Independent |
 | EJO-323 | Documentation: README, CLI help, Google-style docstrings, pdoc | Medium | Blocked by 319, 320 |
+| EJO-324 | Recommend Dataflare as interactive DB viewer/editor + CLI launcher | Low | Related to 320, 321, 323 |
 
 Execution order:
 ```
 EJO-319 (models) ──→ EJO-320 (storage) ──→ EJO-321 (CLI commands)
                                         ──→ EJO-323 (docs)
 EJO-322 (Canvas API) — anytime, independent
+EJO-324 (Dataflare)  — anytime, independent (small standalone PR)
 ```
 
 ### Linear CLI essentials
