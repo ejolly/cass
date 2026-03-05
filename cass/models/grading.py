@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+__docformat__ = "google"
+
 from .domain import Assignment, Grade, Submission
 
 

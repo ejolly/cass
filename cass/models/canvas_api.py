@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+__docformat__ = "google"
+
 import msgspec
 
 from .github_api import GHStudentInfo

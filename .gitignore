@@ -11,3 +11,4 @@ grade-data/
 .pytest_cache/
 cass.db.wal
 cass.toml
+docs/api/

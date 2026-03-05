@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+__docformat__ = "google"
+
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -17,13 +19,13 @@ app = typer.Typer(
 grades_app = typer.Typer(
     invoke_without_command=True,
     no_args_is_help=False,
-    help="Gradebook matrix and grade sync.",
+    help="Show the gradebook as a student x assignment matrix, or push grades to Canvas.",
 )
 app.add_typer(grades_app, name="grades")
 db_app = typer.Typer(
     invoke_without_command=True,
     no_args_is_help=False,
-    help="Database operations.",
+    help="Database tools: interactive REPL and cache management.",
 )
 app.add_typer(db_app, name="db")
 
@@ -267,7 +269,11 @@ def pull(
     do_fetch: bool = typer.Option(False, "--fetch", help="Also download student files"),
     limit: int = typer.Option(0, "--limit", help="Limit number of students (0 = all)"),
 ) -> None:
-    """Fetch from APIs, update database."""
+    """Fetch from APIs and update the local database.
+
+    Pipeline order: students → assignments → submissions → grades.
+    Use flags to run individual phases.
+    """
     import asyncio
 
     from . import pull as pull_mod
@@ -318,7 +324,9 @@ def students(
         False, "--all", help="Show all students including excluded"
     ),
     save: str = typer.Option("", "--save", help="Save output as markdown file"),
-    where: str = typer.Option("", "--where", help="SQL WHERE clause to filter results"),
+    where: str = typer.Option(
+        "", "--where", help="SQL WHERE filter (e.g. --where \"source='github'\")"
+    ),
     csv_out: str = typer.Option("", "--csv", help="Export as CSV file"),
 ) -> None:
     """Show the student roster."""
@@ -357,7 +365,9 @@ def students(
 @app.command()
 def assignments(
     save: str = typer.Option("", "--save", help="Save output as markdown file"),
-    where: str = typer.Option("", "--where", help="SQL WHERE clause to filter results"),
+    where: str = typer.Option(
+        "", "--where", help="SQL WHERE filter (e.g. --where \"source='github'\")"
+    ),
     csv_out: str = typer.Option("", "--csv", help="Export as CSV file"),
 ) -> None:
     """Show assignment metadata."""
@@ -387,10 +397,12 @@ def assignments(
 def submissions(
     slug: str = typer.Argument("", help="Assignment slug to filter (or empty for all)"),
     save: str = typer.Option("", "--save", help="Save output as markdown file"),
-    where: str = typer.Option("", "--where", help="SQL WHERE clause to filter results"),
+    where: str = typer.Option(
+        "", "--where", help="SQL WHERE filter (e.g. --where \"source='github'\")"
+    ),
     csv_out: str = typer.Option("", "--csv", help="Export as CSV file"),
 ) -> None:
-    """View submission status."""
+    """View submission status (student, assignment, on-time, late, score)."""
     from . import db, report
 
     conn = db.get_db()
@@ -426,10 +438,12 @@ def submissions(
 def grades_callback(
     ctx: typer.Context,
     save: str = typer.Option("", "--save", help="Save output as markdown file"),
-    where: str = typer.Option("", "--where", help="SQL WHERE clause to filter results"),
+    where: str = typer.Option(
+        "", "--where", help="SQL WHERE filter (e.g. --where \"source='github'\")"
+    ),
     csv_out: str = typer.Option("", "--csv", help="Export as CSV file"),
 ) -> None:
-    """Gradebook matrix."""
+    """Show the gradebook as a student x assignment matrix with computed grades."""
     if ctx.invoked_subcommand is not None:
         return
 
@@ -481,7 +495,7 @@ def push(
         False, "--post", help="Actually push grades (default: dry-run)"
     ),
 ) -> None:
-    """Push grades to Canvas."""
+    """Sync grades to Canvas LMS (dry-run by default, use --post to submit)."""
     from . import canvas as canvas_mod
     from . import db
     from .config import get_config
@@ -855,7 +869,7 @@ def view() -> None:
 
 @db_app.callback()
 def db_callback(ctx: typer.Context) -> None:
-    """Database operations (clean, REPL)."""
+    """Open an interactive DuckDB REPL against the project database."""
     if ctx.invoked_subcommand is None:
         _run_repl()
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+__docformat__ = "google"
+
 import subprocess
 from pathlib import Path
 
@@ -68,7 +70,20 @@ def fetch_assignment(
     ttl_hours: float = 6,
     force_refresh: bool = False,
 ) -> None:
-    """Download files for one assignment across all students."""
+    """Download files for one assignment across all students.
+
+    Downloads code files (``.py``, ``.qmd``) from repo roots, or PDFs
+    from ``pdfs/`` for the final project. Files are saved under
+    ``students/{student}/{assignment}/``.
+
+    Args:
+        assignment: The assignment whose repos to fetch from.
+        students: Roster of students to download for.
+        force: Re-download files that already exist locally.
+        limit: Max students to process (0 = all).
+        ttl_hours: Cache TTL for GitHub API calls.
+        force_refresh: Bypass API cache if True.
+    """
     repo_map = build_repo_map(
         assignment, ttl_hours=ttl_hours, force_refresh=force_refresh
     )

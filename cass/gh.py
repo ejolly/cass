@@ -1,5 +1,7 @@
 """Subprocess wrapper for the GitHub CLI (`gh api`)."""
 
+__docformat__ = "google"
+
 import json
 import shutil
 import subprocess

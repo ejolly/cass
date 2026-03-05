@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+__docformat__ = "google"
+
 import logging
 import os
 import re
@@ -153,6 +155,14 @@ def _get_paginated(client: httpx.Client, path: str) -> list[dict]:
 
 
 def fetch_students(course_id: int) -> list[CanvasStudent]:
+    """Fetch all students enrolled in a Canvas course.
+
+    Args:
+        course_id: Canvas course ID.
+
+    Returns:
+        Students sorted by Canvas enrollment order.
+    """
     with _client() as c:
         data = _get_paginated(
             c, f"/courses/{course_id}/users?enrollment_type[]=student&include[]=email"
@@ -161,6 +171,17 @@ def fetch_students(course_id: int) -> list[CanvasStudent]:
 
 
 def fetch_assignments(course_id: int) -> list[Assignment]:
+    """Fetch all assignments from a Canvas course.
+
+    Converts Canvas API responses to domain ``Assignment`` objects with
+    slugified IDs and parsed deadlines.
+
+    Args:
+        course_id: Canvas course ID.
+
+    Returns:
+        Assignments sorted by slug ID.
+    """
     with _client() as c:
         data = _get_paginated(c, f"/courses/{course_id}/assignments")
     raw = msgspec.convert(data, list[CanvasAssignment])
@@ -191,6 +212,20 @@ def fetch_submissions(
     assignment_id: int,
     students: list[Student],
 ) -> list[Submission]:
+    """Fetch submission data for a Canvas assignment.
+
+    Retrieves all submissions via paginated Canvas API calls and maps
+    them to known students by ``canvas_id``.
+
+    Args:
+        course_id: Canvas course ID.
+        assignment_id: Canvas assignment ID.
+        students: Roster to match submissions against.
+
+    Returns:
+        Submissions sorted by student_id. Students not in the roster
+        are silently skipped.
+    """
     with _client() as c:
         data = _get_paginated(
             c, f"/courses/{course_id}/assignments/{assignment_id}/submissions"
@@ -272,6 +307,19 @@ def match_students(
     gh_students: list[GHStudentInfo],
     canvas_students: list[CanvasStudent],
 ) -> MatchResult:
+    """Match GitHub students to Canvas students by normalized name.
+
+    Uses exact normalized-name matching first, then falls back to
+    token-subset matching for partial name overlaps.
+
+    Args:
+        gh_students: Students discovered from GitHub Classroom.
+        canvas_students: Students enrolled in the Canvas course.
+
+    Returns:
+        A ``MatchResult`` with matched pairs, unmatched GitHub students,
+        and unmatched Canvas students.
+    """
     canvas_by_name: dict[str, CanvasStudent] = {}
     for cs in canvas_students:
         for field in (cs.name, cs.sortable_name):
@@ -320,6 +368,17 @@ def find_candidates(
     gh_student: GHStudentInfo,
     canvas_pool: list[CanvasStudent],
 ) -> list[CanvasStudent]:
+    """Rank Canvas students by name similarity to a GitHub student.
+
+    Used during interactive resolution of unmatched students.
+
+    Args:
+        gh_student: The unmatched GitHub student.
+        canvas_pool: Remaining unmatched Canvas students to search.
+
+    Returns:
+        Canvas students sorted by descending name-token overlap.
+    """
     gh_name = gh_student.name or gh_student.login
     gh_tokens = set(_normalize(gh_name).split())
     if not gh_tokens:
@@ -337,6 +396,15 @@ def find_candidates(
 
 
 def mapping_from_roster(students: list[Student]) -> dict[str, int]:
+    """Build a GitHub-username-to-Canvas-ID mapping from the roster.
+
+    Args:
+        students: The full student roster.
+
+    Returns:
+        Dict mapping ``github_username`` to ``canvas_id`` for students
+        that have both fields populated.
+    """
     mapping: dict[str, int] = {}
     for s in students:
         if s.canvas_id and s.github_username:

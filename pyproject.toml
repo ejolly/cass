@@ -31,6 +31,7 @@ dependencies = [
 [project.urls]
 Homepage = "https://github.com/ejolly/cass"
 Repository = "https://github.com/ejolly/cass"
+Documentation = "https://ejolly.github.io/cass"
 
 [dependency-groups]
 dev = [
@@ -38,6 +39,7 @@ dev = [
     "ty>=0.0.20",
     "pytest>=9.0.2",
     "poethepoet>=0.42.1",
+    "pdoc>=15.0",
 ]
 
 [build-system]
@@ -61,3 +63,11 @@ sequence = [
 [tool.poe.tasks.test]
 help = "Run test suite"
 cmd = "pytest tests/ -v"
+
+[tool.poe.tasks.docs]
+help = "Generate API docs to docs/api/"
+cmd = "pdoc cass/ --docformat google -o docs/api/"
+
+[tool.poe.tasks.docs-serve]
+help = "Live-preview API docs"
+cmd = "pdoc cass/ --docformat google"
