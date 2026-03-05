@@ -13,6 +13,7 @@ def test_students_roundtrip(db_conn):
             github_username="alice-gh",
             github_id="1",
             name="Alice Smith",
+            email="alice@example.com",
             canvas_id="100",
         ),
         Student(
@@ -36,7 +37,9 @@ def test_students_roundtrip(db_conn):
     assert loaded[0].identifier == "alice"
     assert loaded[0].github_username == "alice-gh"
     assert loaded[0].name == "Alice Smith"
+    assert loaded[0].email == "alice@example.com"
     assert loaded[0].canvas_id == "100"
+    assert loaded[1].email == ""  # default
     assert loaded[2].identifier == "charlie"
 
 
@@ -69,6 +72,8 @@ def test_assignments_roundtrip(db_conn):
             slug="hw-01",
             points_possible=1.0,
             accepted=25,
+            submissions_count=20,
+            passing_count=18,
         ),
         Assignment(
             id="quiz-1",
@@ -85,9 +90,13 @@ def test_assignments_roundtrip(db_conn):
     assert loaded[0].id == "hw-01"
     assert loaded[0].source == "github"
     assert loaded[0].accepted == 25
+    assert loaded[0].submissions_count == 20
+    assert loaded[0].passing_count == 18
     assert loaded[1].id == "quiz-1"
     assert loaded[1].canvas_id == 42
     assert loaded[1].points_possible == 50.0
+    assert loaded[1].submissions_count == 0  # default
+    assert loaded[1].passing_count == 0  # default
 
 
 def test_submissions_roundtrip(db_conn):
@@ -98,6 +107,9 @@ def test_submissions_roundtrip(db_conn):
             source="github",
             submitted=True,
             commits_after_deadline=2,
+            commit_count=15,
+            passing=True,
+            gh_autograder_score="10/10",
         ),
         Submission(
             student_id="bob",
@@ -118,8 +130,13 @@ def test_submissions_roundtrip(db_conn):
     assert len(hw01) == 2
     assert hw01[0].student_id == "alice"
     assert hw01[0].commits_after_deadline == 2
+    assert hw01[0].commit_count == 15
+    assert hw01[0].passing is True
+    assert hw01[0].gh_autograder_score == "10/10"
     assert hw01[1].student_id == "bob"
     assert hw01[1].late is True
+    assert hw01[1].commit_count == 0  # default
+    assert hw01[1].passing is False  # default
 
 
 def test_grades_roundtrip(db_conn):
@@ -157,3 +174,11 @@ def test_cache_roundtrip(db_conn):
     )
     result = db.cache_load("test-key", ttl_hours=1)
     assert result is None
+
+
+def test_cache_clear(db_conn):
+    db.cache_save("key-1", '{"a": 1}')
+    db.cache_save("key-2", '{"b": 2}')
+    assert db.cache_count() == 2
+    db.cache_clear()
+    assert db.cache_count() == 0

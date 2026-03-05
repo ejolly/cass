@@ -19,6 +19,7 @@ class Student(msgspec.Struct):
     github_username: str = ""
     github_id: str = ""
     name: str = ""
+    email: str = ""
     canvas_id: str = ""
     excluded: bool = False
 
@@ -42,6 +43,8 @@ class Assignment(msgspec.Struct):
     deadline: datetime | None = None
     points_possible: float = 0.0
     accepted: int = 0
+    submissions_count: int = 0
+    passing_count: int = 0
 
 
 class Submission(msgspec.Struct):
@@ -56,6 +59,9 @@ class Submission(msgspec.Struct):
     lateness_seconds: int = 0
     repo_name: str = ""
     commits_after_deadline: int = 0
+    commit_count: int = 0
+    passing: bool = False
+    gh_autograder_score: str = ""
     score: float | None = None
     workflow_state: str = ""
 

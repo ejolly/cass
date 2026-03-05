@@ -20,6 +20,12 @@ grades_app = typer.Typer(
     help="Gradebook matrix and grade sync.",
 )
 app.add_typer(grades_app, name="grades")
+db_app = typer.Typer(
+    invoke_without_command=True,
+    no_args_is_help=False,
+    help="Database operations.",
+)
+app.add_typer(db_app, name="db")
 
 console = Console()
 
@@ -330,7 +336,7 @@ def students(
         )
 
     result = conn.sql(
-        f"SELECT identifier, github_username, github_id, name, canvas_id"
+        f"SELECT identifier, github_username, github_id, name, email, canvas_id"
         f"{', excluded' if all_students else ''} "
         f"FROM students {where_clause} ORDER BY lower(identifier)"
     )
@@ -706,7 +712,123 @@ def query(
         report.render_table(result)
 
 
-@app.command(name="db")
-def db_repl() -> None:
-    """Open interactive DuckDB REPL (alias for `cass query`)."""
-    _run_repl()
+_VALID_TABLES = ("students", "assignments", "submissions", "grades")
+
+
+@app.command(name="export")
+def export_table(
+    table: str = typer.Argument(
+        ..., help="Table to export (students, assignments, submissions, grades)"
+    ),
+    csv_out: str = typer.Option("", "--csv", help="Export as CSV file"),
+    markdown_out: str = typer.Option(
+        "", "--markdown", "--md", help="Export as markdown file"
+    ),
+) -> None:
+    """Export a database table to CSV or markdown."""
+    from . import db, report
+
+    if table not in _VALID_TABLES:
+        console.print(
+            f"[red]Unknown table '{table}'. Choose from: {', '.join(_VALID_TABLES)}[/red]"
+        )
+        raise typer.Exit(code=1)
+
+    conn = db.get_db()
+    result = conn.sql(f"SELECT * FROM {table} ORDER BY 1")
+
+    if csv_out:
+        report.write_csv_file(csv_out, relation=result)
+    elif markdown_out:
+        report.save_relation_markdown(markdown_out, table.title(), result)
+    else:
+        report.write_csv_file(f"{table}.csv", relation=result)
+
+
+@app.command(name="import")
+def import_csv(
+    file: str = typer.Argument(..., help="CSV file to import"),
+    table: str = typer.Option(
+        "", "--table", help="Target table (auto-detected from headers if omitted)"
+    ),
+) -> None:
+    """Import a CSV file into the database."""
+    import csv as csv_mod
+
+    from . import db
+
+    path = Path(file)
+    if not path.exists():
+        console.print(f"[red]File not found: {file}[/red]")
+        raise typer.Exit(code=1)
+
+    with open(path, newline="") as f:
+        reader = csv_mod.DictReader(f)
+        if reader.fieldnames is None:
+            console.print("[red]CSV file has no headers.[/red]")
+            raise typer.Exit(code=1)
+        headers = set(reader.fieldnames)
+        rows = list(reader)
+
+    if not rows:
+        console.print("[yellow]CSV file is empty.[/yellow]")
+        return
+
+    # Auto-detect table from column headers
+    if not table:
+        _TABLE_SIGNATURES = {
+            "students": {"identifier"},
+            "grades": {"student_id", "assignment_id", "grade"},
+            "submissions": {"student_id", "assignment_id", "source", "submitted"},
+            "assignments": {"id", "source", "title"},
+        }
+        for tbl, required in _TABLE_SIGNATURES.items():
+            if required.issubset(headers):
+                table = tbl
+                break
+        if not table:
+            console.print("[red]Cannot auto-detect table. Use --table flag.[/red]")
+            raise typer.Exit(code=1)
+
+    if table not in _VALID_TABLES:
+        console.print(
+            f"[red]Unknown table '{table}'. Choose from: {', '.join(_VALID_TABLES)}[/red]"
+        )
+        raise typer.Exit(code=1)
+
+    conn = db.get_db()
+    # Get table columns from schema
+    table_cols = [col[0] for col in conn.execute(f"DESCRIBE {table}").fetchall()]
+    # Only use columns present in both CSV and table
+    import_cols = [c for c in table_cols if c in headers]
+
+    if not import_cols:
+        console.print("[red]No matching columns between CSV and table.[/red]")
+        raise typer.Exit(code=1)
+
+    placeholders = ", ".join("?" for _ in import_cols)
+    col_names = ", ".join(import_cols)
+    insert_sql = f"INSERT OR REPLACE INTO {table} ({col_names}) VALUES ({placeholders})"
+
+    for row in rows:
+        values = [row.get(c, "") for c in import_cols]
+        conn.execute(insert_sql, values)
+
+    console.print(f"[green]Imported {len(rows)} rows into {table}.[/green]")
+
+
+@db_app.callback()
+def db_callback(ctx: typer.Context) -> None:
+    """Database operations (clean, REPL)."""
+    if ctx.invoked_subcommand is None:
+        _run_repl()
+
+
+@db_app.command()
+def clean() -> None:
+    """Drop api_cache contents to shrink the .db for git commits."""
+    from . import db
+
+    count = db.cache_count()
+    db.cache_clear()
+    console.print(f"[green]Cleared {count} cache entries.[/green]")
