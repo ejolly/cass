@@ -1,8 +1,7 @@
 """Config discovery, loading, and writing for cass.
 
-Searches for ``cass.toml`` (or ``classroom.toml`` as fallback) starting from
-the current directory and walking upward.  Config is loaded lazily on first
-access via ``get_config()``.
+Searches for ``cass.toml`` starting from the current directory and walking
+upward.  Config is loaded lazily on first access via ``get_config()``.
 """
 
 import os
@@ -11,7 +10,7 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
-CONFIG_FILENAMES = ("cass.toml", "classroom.toml")
+CONFIG_FILENAME = "cass.toml"
 
 
 @dataclass
@@ -35,12 +34,11 @@ _config: Config | None = None
 
 
 def find_project_root(start: Path | None = None) -> Path:
-    """Walk up from *start* (default: cwd) to find a config file."""
+    """Walk up from *start* (default: cwd) to find cass.toml."""
     current = (start or Path.cwd()).resolve()
     while True:
-        for name in CONFIG_FILENAMES:
-            if (current / name).exists():
-                return current
+        if (current / CONFIG_FILENAME).exists():
+            return current
         parent = current.parent
         if parent == current:
             break
@@ -57,23 +55,17 @@ def config_file_path() -> Path | None:
         root = find_project_root()
     except SystemExit:
         return None
-    for name in CONFIG_FILENAMES:
-        path = root / name
-        if path.exists():
-            return path
-    return None
+    path = root / CONFIG_FILENAME
+    return path if path.exists() else None
 
 
 def _load_config() -> Config:
     root = find_project_root()
-    for name in CONFIG_FILENAMES:
-        path = root / name
-        if path.exists():
-            with open(path, "rb") as f:
-                raw = tomllib.load(f)
-            break
-    else:
+    path = root / CONFIG_FILENAME
+    if not path.exists():
         raise SystemExit("Config file not found.")
+    with open(path, "rb") as f:
+        raw = tomllib.load(f)
 
     cc = raw.get("classroom", {})
     canvas = raw.get("canvas", {})

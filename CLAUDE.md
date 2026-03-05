@@ -2,7 +2,7 @@
 
 ## Overview
 
-`cass` is a CLI tool for grading classroom assignments. It supports **GitHub Classroom**, **Canvas LMS**, or **both** — configure whichever systems your course uses. Data is stored in a per-project DuckDB database (`cass.db`) with Polars for DataFrame operations. No external database setup needed — everything is self-contained.
+`cass` is a CLI tool for grading classroom assignments. It supports **GitHub Classroom**, **Canvas LMS**, or **both** — configure whichever systems your course uses. Data is stored in a per-project DuckDB database (`cass.db`). No external database setup needed — everything is self-contained.
 
 Installable via `uv tool install cass` or `uvx cass`.
 
@@ -11,7 +11,7 @@ Installable via `uv tool install cass` or `uvx cass`.
 ## Setup
 
 ```bash
-uv sync          # install deps (typer, rich, duckdb, polars, msgspec, httpx + ruff/ty dev)
+uv sync          # install deps (typer, rich, duckdb, msgspec, httpx + ruff/ty dev)
 gh auth status   # verify GitHub CLI is authenticated (if using GitHub Classroom)
 ```
 
@@ -21,7 +21,7 @@ Requires: `uv`. Also `gh` (authenticated) if using GitHub Classroom.
 
 ## Configuration
 
-`cass.toml` (or `classroom.toml` for backward compat) — discovered by walking up from cwd. At least one section required:
+`cass.toml` — discovered by walking up from cwd. At least one section required:
 
 ```toml
 # GitHub Classroom only

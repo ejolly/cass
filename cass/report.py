@@ -57,8 +57,14 @@ def write_csv_file(
 ) -> None:
     """Write a DuckDB relation or headers/rows to CSV."""
     if relation is not None:
-        df = relation.pl()
-        df.write_csv(path)
+        columns = relation.columns
+        data = relation.fetchall()
+        with open(path, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(columns)
+            writer.writerows(
+                [str(v) if v is not None else "" for v in row] for row in data
+            )
     elif headers is not None and rows is not None:
         with open(path, "w", newline="") as f:
             writer = csv.writer(f)
