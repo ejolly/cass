@@ -9,10 +9,10 @@ from rich.console import Console
 
 import msgspec
 
-from .classroom import GHContentItem, build_repo_map
+from .classroom import build_repo_map
 from .config import get_config
 from .gh import api_cached
-from .models import Assignment, Student
+from .models import Assignment, GHContentItem, Student
 
 console = Console()
 
@@ -21,6 +21,8 @@ _PDF_EXTS = {".pdf"}
 
 # Download destination: {project_root}/students/{student}/{assignment}/
 STUDENTS_DIR = "students"
+
+_FINAL_PROJECT_SLUG = "final-project"
 
 
 def _student_dir(student: Student) -> str:
@@ -55,7 +57,7 @@ def _list_contents(
         return []
     if not isinstance(data, list):
         return []
-    return msgspec.json.decode(msgspec.json.encode(data), type=list[GHContentItem])
+    return msgspec.convert(data, list[GHContentItem])
 
 
 def fetch_assignment(
@@ -67,12 +69,10 @@ def fetch_assignment(
     force_refresh: bool = False,
 ) -> None:
     """Download files for one assignment across all students."""
-    from .models import FINAL_PROJECT_SLUG
-
     repo_map = build_repo_map(
         assignment, ttl_hours=ttl_hours, force_refresh=force_refresh
     )
-    is_final = assignment.slug == FINAL_PROJECT_SLUG
+    is_final = assignment.slug == _FINAL_PROJECT_SLUG
     dest_root = get_config().root / STUDENTS_DIR
 
     downloaded = 0

@@ -97,7 +97,7 @@ def test_submissions_roundtrip(db_conn):
             assignment_id="hw-01",
             source="github",
             submitted=True,
-            commits_after=2,
+            commits_after_deadline=2,
         ),
         Submission(
             student_id="bob",
@@ -117,18 +117,23 @@ def test_submissions_roundtrip(db_conn):
     hw01 = db.load_submissions(assignment_id="hw-01")
     assert len(hw01) == 2
     assert hw01[0].student_id == "alice"
-    assert hw01[0].commits_after == 2
+    assert hw01[0].commits_after_deadline == 2
     assert hw01[1].student_id == "bob"
     assert hw01[1].late is True
 
 
 def test_grades_roundtrip(db_conn):
     grades = [
-        Grade(student_id="alice", assignment_id="hw-01", grade="1", numeric=1.0),
+        Grade(student_id="alice", assignment_id="hw-01", grade="1", numeric_score=1.0),
         Grade(
-            student_id="bob", assignment_id="hw-01", grade="0 (+1d 01:01)", numeric=0.0
+            student_id="bob",
+            assignment_id="hw-01",
+            grade="0 (+1d 01:01)",
+            numeric_score=0.0,
         ),
-        Grade(student_id="alice", assignment_id="hw-02", grade="1+ (3)", numeric=1.0),
+        Grade(
+            student_id="alice", assignment_id="hw-02", grade="1+ (3)", numeric_score=1.0
+        ),
     ]
     assert db.save_grades(grades) == 3
     all_grades = db.load_grades()
@@ -136,7 +141,7 @@ def test_grades_roundtrip(db_conn):
     hw01 = db.load_grades(assignment_id="hw-01")
     assert len(hw01) == 2
     assert hw01[0].grade == "1"
-    assert hw01[0].numeric == 1.0
+    assert hw01[0].numeric_score == 1.0
     assert hw01[1].grade == "0 (+1d 01:01)"
 
 

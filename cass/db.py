@@ -10,7 +10,7 @@ from .config import get_config
 from .models import Assignment, Grade, Student, Submission
 
 DB_FILENAME = "cass.db"
-_SCHEMA_VERSION = 3
+_SCHEMA_VERSION = 4
 
 _conn: duckdb.DuckDBPyConnection | None = None
 
@@ -52,7 +52,6 @@ def _init_schema(conn: duckdb.DuckDBPyConnection) -> None:
     version = int(row[0]) if row else 0
 
     if version < _SCHEMA_VERSION:
-        # Clean start for v3
         for table in ("students", "assignments", "submissions", "grades", "api_cache"):
             conn.execute(f"DROP TABLE IF EXISTS {table}")
 
@@ -103,7 +102,7 @@ def _init_schema(conn: duckdb.DuckDBPyConnection) -> None:
             late BOOLEAN NOT NULL DEFAULT false,
             lateness_seconds INTEGER NOT NULL DEFAULT 0,
             repo_name TEXT NOT NULL DEFAULT '',
-            commits_after INTEGER NOT NULL DEFAULT 0,
+            commits_after_deadline INTEGER NOT NULL DEFAULT 0,
             score DOUBLE,
             workflow_state TEXT NOT NULL DEFAULT '',
             fetched_at DOUBLE NOT NULL,
@@ -115,12 +114,55 @@ def _init_schema(conn: duckdb.DuckDBPyConnection) -> None:
             student_id TEXT NOT NULL,
             assignment_id TEXT NOT NULL,
             grade TEXT NOT NULL,
-            numeric DOUBLE,
+            numeric_score DOUBLE,
             source TEXT NOT NULL DEFAULT 'auto',
             updated_at DOUBLE NOT NULL,
             PRIMARY KEY (student_id, assignment_id)
         )
     """)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+_STUDENT_COLS = (
+    "identifier",
+    "github_username",
+    "github_id",
+    "name",
+    "canvas_id",
+    "excluded",
+)
+_ASSIGNMENT_COLS = (
+    "id",
+    "source",
+    "title",
+    "slug",
+    "canvas_id",
+    "deadline",
+    "points_possible",
+    "accepted",
+)
+_SUBMISSION_COLS = (
+    "student_id",
+    "assignment_id",
+    "source",
+    "submitted",
+    "submitted_at",
+    "late",
+    "lateness_seconds",
+    "repo_name",
+    "commits_after_deadline",
+    "score",
+    "workflow_state",
+)
+_GRADE_COLS = ("student_id", "assignment_id", "grade", "numeric_score", "source")
+
+
+def _rows_to_structs(rows: list[tuple], cols: tuple[str, ...], struct_type: type):
+    """Convert positional rows to struct instances using named columns."""
+    return [struct_type(**dict(zip(cols, row))) for row in rows]
 
 
 # ---------------------------------------------------------------------------
@@ -154,21 +196,11 @@ def save_students(students: list[Student]) -> int:
 def load_students(include_excluded: bool = False) -> list[Student]:
     conn = get_db()
     where = "" if include_excluded else "WHERE excluded = false"
+    cols = _STUDENT_COLS
     rows = conn.execute(
-        f"SELECT identifier, github_username, github_id, name, canvas_id, excluded "
-        f"FROM students {where} ORDER BY lower(identifier)"
+        f"SELECT {', '.join(cols)} FROM students {where} ORDER BY lower(identifier)"
     ).fetchall()
-    return [
-        Student(
-            identifier=r[0],
-            github_username=r[1],
-            github_id=r[2],
-            name=r[3],
-            canvas_id=r[4],
-            excluded=r[5],
-        )
-        for r in rows
-    ]
+    return _rows_to_structs(rows, cols, Student)
 
 
 def students_exist() -> bool:
@@ -212,23 +244,11 @@ def save_assignments(assignments: list[Assignment]) -> int:
 
 def load_assignments() -> list[Assignment]:
     conn = get_db()
+    cols = _ASSIGNMENT_COLS
     rows = conn.execute(
-        "SELECT id, source, title, slug, canvas_id, deadline, points_possible, accepted "
-        "FROM assignments ORDER BY id"
+        f"SELECT {', '.join(cols)} FROM assignments ORDER BY id"
     ).fetchall()
-    return [
-        Assignment(
-            id=r[0],
-            source=r[1],
-            title=r[2],
-            slug=r[3],
-            canvas_id=r[4],
-            deadline=r[5],
-            points_possible=r[6],
-            accepted=r[7],
-        )
-        for r in rows
-    ]
+    return _rows_to_structs(rows, cols, Assignment)
 
 
 # ---------------------------------------------------------------------------
@@ -244,7 +264,7 @@ def save_submissions(submissions: list[Submission]) -> int:
     conn.executemany(
         "INSERT OR REPLACE INTO submissions "
         "(student_id, assignment_id, source, submitted, submitted_at, late, "
-        "lateness_seconds, repo_name, commits_after, score, workflow_state, fetched_at) "
+        "lateness_seconds, repo_name, commits_after_deadline, score, workflow_state, fetched_at) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             (
@@ -256,7 +276,7 @@ def save_submissions(submissions: list[Submission]) -> int:
                 s.late,
                 s.lateness_seconds,
                 s.repo_name,
-                s.commits_after,
+                s.commits_after_deadline,
                 s.score,
                 s.workflow_state,
                 now,
@@ -269,35 +289,16 @@ def save_submissions(submissions: list[Submission]) -> int:
 
 def load_submissions(assignment_id: str | None = None) -> list[Submission]:
     conn = get_db()
+    cols = _SUBMISSION_COLS
+    select = f"SELECT {', '.join(cols)} FROM submissions"
     if assignment_id:
         rows = conn.execute(
-            "SELECT student_id, assignment_id, source, submitted, submitted_at, "
-            "late, lateness_seconds, repo_name, commits_after, score, workflow_state "
-            "FROM submissions WHERE assignment_id = ? ORDER BY student_id",
+            f"{select} WHERE assignment_id = ? ORDER BY student_id",
             [assignment_id],
         ).fetchall()
     else:
-        rows = conn.execute(
-            "SELECT student_id, assignment_id, source, submitted, submitted_at, "
-            "late, lateness_seconds, repo_name, commits_after, score, workflow_state "
-            "FROM submissions ORDER BY assignment_id, student_id"
-        ).fetchall()
-    return [
-        Submission(
-            student_id=r[0],
-            assignment_id=r[1],
-            source=r[2],
-            submitted=r[3],
-            submitted_at=r[4],
-            late=r[5],
-            lateness_seconds=r[6],
-            repo_name=r[7],
-            commits_after=r[8],
-            score=r[9],
-            workflow_state=r[10],
-        )
-        for r in rows
-    ]
+        rows = conn.execute(f"{select} ORDER BY assignment_id, student_id").fetchall()
+    return _rows_to_structs(rows, cols, Submission)
 
 
 # ---------------------------------------------------------------------------
@@ -312,10 +313,10 @@ def save_grades(grades: list[Grade]) -> int:
         return 0
     conn.executemany(
         "INSERT OR REPLACE INTO grades "
-        "(student_id, assignment_id, grade, numeric, source, updated_at) "
+        "(student_id, assignment_id, grade, numeric_score, source, updated_at) "
         "VALUES (?, ?, ?, ?, ?, ?)",
         [
-            (g.student_id, g.assignment_id, g.grade, g.numeric, g.source, now)
+            (g.student_id, g.assignment_id, g.grade, g.numeric_score, g.source, now)
             for g in grades
         ],
     )
@@ -324,23 +325,16 @@ def save_grades(grades: list[Grade]) -> int:
 
 def load_grades(assignment_id: str | None = None) -> list[Grade]:
     conn = get_db()
+    cols = _GRADE_COLS
+    select = f"SELECT {', '.join(cols)} FROM grades"
     if assignment_id:
         rows = conn.execute(
-            "SELECT student_id, assignment_id, grade, numeric, source "
-            "FROM grades WHERE assignment_id = ? ORDER BY student_id",
+            f"{select} WHERE assignment_id = ? ORDER BY student_id",
             [assignment_id],
         ).fetchall()
     else:
-        rows = conn.execute(
-            "SELECT student_id, assignment_id, grade, numeric, source "
-            "FROM grades ORDER BY assignment_id, student_id"
-        ).fetchall()
-    return [
-        Grade(
-            student_id=r[0], assignment_id=r[1], grade=r[2], numeric=r[3], source=r[4]
-        )
-        for r in rows
-    ]
+        rows = conn.execute(f"{select} ORDER BY assignment_id, student_id").fetchall()
+    return _rows_to_structs(rows, cols, Grade)
 
 
 # ---------------------------------------------------------------------------

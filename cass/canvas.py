@@ -10,41 +10,16 @@ import httpx
 import msgspec
 
 from .config import get_config
-from .models import Assignment, GHStudentInfo, Student, Submission
-
-
-# --- Canvas API response types ---
-
-
-class CanvasStudent(msgspec.Struct):
-    id: int
-    name: str
-    sortable_name: str = ""
-    email: str = ""
-
-
-class CanvasAssignment(msgspec.Struct):
-    id: int
-    name: str
-    points_possible: float = 0.0
-    due_at: str | None = None
-
-
-class CanvasSubmission(msgspec.Struct):
-    user_id: int
-    submitted_at: str | None = None
-    late: bool = False
-    missing: bool = False
-    seconds_late: float = 0.0
-    grade: str | None = None
-    score: float | None = None
-    workflow_state: str = ""
-
-
-class MatchResult(msgspec.Struct):
-    matched: dict[str, int]  # gh_login -> canvas_id
-    unmatched_gh: list[GHStudentInfo]
-    unmatched_canvas: list[CanvasStudent]
+from .models import (
+    Assignment,
+    CanvasAssignment,
+    CanvasStudent,
+    CanvasSubmission,
+    GHStudentInfo,
+    MatchResult,
+    Student,
+    Submission,
+)
 
 
 # --- Token management ---
@@ -123,14 +98,13 @@ def fetch_students(course_id: int) -> list[CanvasStudent]:
         data = _get_paginated(
             c, f"/courses/{course_id}/users?enrollment_type[]=student&include[]=email"
         )
-    decoder = msgspec.json.Decoder(list[CanvasStudent])
-    return decoder.decode(msgspec.json.encode(data))
+    return msgspec.convert(data, list[CanvasStudent])
 
 
 def fetch_assignments(course_id: int) -> list[Assignment]:
     with _client() as c:
         data = _get_paginated(c, f"/courses/{course_id}/assignments")
-    raw = msgspec.json.decode(msgspec.json.encode(data), type=list[CanvasAssignment])
+    raw = msgspec.convert(data, list[CanvasAssignment])
 
     assignments = []
     for a in raw:
@@ -162,7 +136,7 @@ def fetch_submissions(
         data = _get_paginated(
             c, f"/courses/{course_id}/assignments/{assignment_id}/submissions"
         )
-    raw = msgspec.json.decode(msgspec.json.encode(data), type=list[CanvasSubmission])
+    raw = msgspec.convert(data, list[CanvasSubmission])
 
     # canvas_id -> student identifier
     canvas_to_student: dict[int, str] = {}
@@ -217,7 +191,6 @@ def push_grade(
 
 
 # --- Name matching ---
-
 _NON_ALPHA_RE = re.compile(r"[^a-z\s]")
 
 

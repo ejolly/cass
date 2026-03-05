@@ -397,7 +397,7 @@ def submissions(
 
     result = conn.sql(
         f"SELECT student_id, assignment_id, source, submitted, late, "
-        f"lateness_seconds, repo_name, commits_after, score, workflow_state "
+        f"lateness_seconds, repo_name, commits_after_deadline, score, workflow_state "
         f"FROM submissions {where_clause} ORDER BY assignment_id, student_id"
     )
 
@@ -479,7 +479,7 @@ def push(
     from . import canvas as canvas_mod
     from . import db
     from .config import get_config
-    from .models import numeric_grade
+    from .models.grading import numeric_grade
 
     _require_classroom()
     _require_canvas()
