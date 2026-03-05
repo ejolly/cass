@@ -4,13 +4,13 @@ import httpx
 import pytest
 
 from cass.canvas import (
-    _RetryTransport,
     _normalize,
     _slugify,
     find_candidates,
     mapping_from_roster,
     match_students,
 )
+from cass.canvas_api import _RetryTransport
 from cass.models import CanvasStudent, GHStudentInfo, Student
 
 
@@ -167,7 +167,7 @@ def test_retry_transport_success():
 
 def test_retry_transport_429_then_success(monkeypatch):
     """429 is retried, and succeeds on the next attempt."""
-    monkeypatch.setattr("cass.canvas.time.sleep", lambda _: None)
+    monkeypatch.setattr("cass.canvas_api.time.sleep", lambda _: None)
     inner = _mock_transport(
         [
             httpx.Response(429, headers={"Retry-After": "1"}),
@@ -182,7 +182,7 @@ def test_retry_transport_429_then_success(monkeypatch):
 
 def test_retry_transport_429_exhausted(monkeypatch):
     """After MAX_RETRIES 429s, the last 429 response is returned."""
-    monkeypatch.setattr("cass.canvas.time.sleep", lambda _: None)
+    monkeypatch.setattr("cass.canvas_api.time.sleep", lambda _: None)
     inner = _mock_transport([httpx.Response(429)] * 4)
     transport = _RetryTransport.__new__(_RetryTransport)
     transport._wrapped = inner
@@ -193,7 +193,7 @@ def test_retry_transport_429_exhausted(monkeypatch):
 def test_retry_transport_throttle(monkeypatch):
     """Low X-Rate-Limit-Remaining triggers a delay."""
     delays: list[float] = []
-    monkeypatch.setattr("cass.canvas.time.sleep", delays.append)
+    monkeypatch.setattr("cass.canvas_api.time.sleep", delays.append)
     inner = _mock_transport(
         [
             httpx.Response(200, headers={"X-Rate-Limit-Remaining": "10"}),

@@ -757,6 +757,150 @@ def tabs_hide(
 
 
 # ---------------------------------------------------------------------------
+# cass canvas sync — reconcile TOML desired state → Canvas actual state
+# ---------------------------------------------------------------------------
+
+
+@canvas_app.command()
+def sync(
+    dry_run: bool = typer.Option(
+        True,
+        "--dry-run/--apply",
+        help="Show what would change (default) or apply changes",
+    ),
+) -> None:
+    """Sync cass.toml declarations to Canvas (modules and assignments).
+
+    Compares [[canvas.modules]] and [[canvas.assignments]] in cass.toml
+    against the live Canvas course. Shows a diff of create/update/skip
+    actions. Use --apply to execute changes.
+    """
+    from rich.table import Table
+
+    from .config import get_config
+
+    _require_canvas()
+    cfg = get_config()
+
+    if not cfg.canvas_modules and not cfg.canvas_assignments:
+        console.print(
+            "[yellow]No [[canvas.modules]] or [[canvas.assignments]] in cass.toml.[/yellow]"
+        )
+        return
+
+    with _client() as c:
+        actions: list[tuple[str, str, str]] = []  # (action, type, name)
+
+        # --- Modules ---
+        if cfg.canvas_modules:
+            live_modules = c.list_modules()
+            live_by_name = {m.name.lower(): m for m in live_modules}
+
+            for spec in cfg.canvas_modules:
+                key = spec.name.lower()
+                if key in live_by_name:
+                    live = live_by_name[key]
+                    if live.published != spec.published:
+                        actions.append(
+                            (
+                                "update",
+                                "module",
+                                f"{spec.name} (published: {spec.published})",
+                            )
+                        )
+                        if not dry_run:
+                            if spec.published:
+                                c.publish("modules", live.id)
+                            else:
+                                c.unpublish("modules", live.id)
+                    else:
+                        actions.append(("skip", "module", spec.name))
+                else:
+                    actions.append(("create", "module", spec.name))
+                    if not dry_run:
+                        mod = c.create_module(spec.name)
+                        if spec.published:
+                            c.publish("modules", mod.id)
+
+        # --- Assignments ---
+        if cfg.canvas_assignments:
+            live_assignments = c.list_assignments()
+            live_by_name = {a.name.lower(): a for a in live_assignments}
+
+            # Resolve assignment group names to IDs
+            group_map: dict[str, int] = {}
+            if any(s.group for s in cfg.canvas_assignments):
+                groups = c.list_assignment_groups()
+                group_map = {g.name.lower(): g.id for g in groups}
+
+            for spec in cfg.canvas_assignments:
+                key = spec.name.lower()
+                if key in live_by_name:
+                    live = live_by_name[key]
+                    changes: dict[str, object] = {}
+                    if spec.points and live.points_possible != spec.points:
+                        changes["points_possible"] = spec.points
+                    if spec.due_at and live.due_at != spec.due_at:
+                        changes["due_at"] = spec.due_at
+                    if live.published != spec.published:
+                        changes["published"] = spec.published
+
+                    if changes:
+                        detail = ", ".join(f"{k}: {v}" for k, v in changes.items())
+                        actions.append(
+                            ("update", "assignment", f"{spec.name} ({detail})")
+                        )
+                        if not dry_run:
+                            c.update_assignment(live.id, **changes)
+                    else:
+                        actions.append(("skip", "assignment", spec.name))
+                else:
+                    actions.append(("create", "assignment", spec.name))
+                    if not dry_run:
+                        group_id = (
+                            group_map.get(spec.group.lower()) if spec.group else None
+                        )
+                        c.create_assignment(
+                            spec.name,
+                            points_possible=spec.points,
+                            due_at=spec.due_at or None,
+                            submission_types=spec.submission_types,
+                            published=spec.published,
+                            assignment_group_id=group_id,
+                        )
+
+    # --- Display results ---
+    table = Table(
+        title="Canvas Sync" + (" (dry run)" if dry_run else ""),
+        show_edge=False,
+        pad_edge=False,
+    )
+    table.add_column("Action")
+    table.add_column("Type")
+    table.add_column("Name")
+
+    for action, rtype, name in actions:
+        color = {"create": "green", "update": "yellow", "skip": "dim"}.get(action, "")
+        table.add_row(f"[{color}]{action}[/{color}]", rtype, name)
+
+    console.print()
+    console.print(table)
+    console.print()
+
+    creates = sum(1 for a, _, _ in actions if a == "create")
+    updates = sum(1 for a, _, _ in actions if a == "update")
+    skips = sum(1 for a, _, _ in actions if a == "skip")
+    console.print(f"  {creates} create, {updates} update, {skips} skip")
+
+    if dry_run and (creates or updates):
+        console.print(
+            "\n  [yellow]Dry run — no changes made. Use --apply to sync.[/yellow]"
+        )
+    elif not dry_run:
+        console.print("\n  [green]Sync complete.[/green]")
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
