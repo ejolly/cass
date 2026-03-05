@@ -551,6 +551,7 @@ def push(
 
     total_posted = 0
     total_skipped = 0
+    failed: list[str] = []
     for gh_a, cv_a in matched_pairs:
         for student in students:
             grade_str = grade_map.get((student.handle_lower, gh_a.id))
@@ -568,11 +569,18 @@ def push(
                 total_skipped += 1
                 continue
 
-            canvas_mod.push_grade(
+            ok = canvas_mod.push_grade(
                 cfg.canvas_course_id, cv_a.canvas_id, canvas_id, str(int(numeric))
             )
-            total_posted += 1
+            if ok:
+                total_posted += 1
+            else:
+                failed.append(f"{student.identifier} / {gh_a.id}")
 
+    if failed:
+        console.print(f"[red]Failed to post {len(failed)} grade(s):[/red]")
+        for entry in failed:
+            console.print(f"  [red]• {entry}[/red]")
     console.print(
         f"[green]Posted {total_posted} grades, skipped {total_skipped}.[/green]"
     )

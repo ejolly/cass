@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
+import time
 from datetime import datetime
 
 import httpx
 import msgspec
+from rich.console import Console
 
+from . import __version__
 from .config import get_config
 from .models import (
     Assignment,
@@ -49,6 +53,60 @@ def save_token(token: str) -> None:
 
 # --- HTTP client ---
 
+_console = Console(stderr=True)
+_log = logging.getLogger(__name__)
+
+MAX_RETRIES = 3
+THROTTLE_THRESHOLD = 50.0
+THROTTLE_DELAY = 1.0
+
+
+class _RetryTransport(httpx.BaseTransport):
+    """Wraps HTTPTransport with 429 retry, backoff, and proactive throttling."""
+
+    def __init__(self, *, retries: int = 0) -> None:
+        self._wrapped = httpx.HTTPTransport(retries=retries)
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        for attempt in range(MAX_RETRIES + 1):
+            response = self._wrapped.handle_request(request)
+
+            if response.status_code == 429:
+                if attempt == MAX_RETRIES:
+                    return response  # let raise_for_status handle it
+                retry_after = response.headers.get("Retry-After")
+                wait = float(retry_after) if retry_after else 2**attempt
+                _console.print(
+                    f"[yellow]Canvas rate limit hit, retrying in {wait:.0f}s…[/yellow]"
+                )
+                time.sleep(wait)
+                continue
+
+            # Proactive throttle when remaining quota is low
+            remaining = response.headers.get("X-Rate-Limit-Remaining")
+            if remaining:
+                try:
+                    if float(remaining) < THROTTLE_THRESHOLD:
+                        _log.debug(
+                            "Rate limit remaining %.1f, throttling", float(remaining)
+                        )
+                        time.sleep(THROTTLE_DELAY)
+                except ValueError:
+                    pass
+
+            # Log request cost at debug level
+            cost = response.headers.get("X-Request-Cost")
+            if cost:
+                _log.debug("Request cost: %s", cost)
+
+            return response
+
+        # Should not reach here, but satisfy the type checker
+        raise RuntimeError("Canvas API rate limit exceeded after retries")
+
+    def close(self) -> None:
+        self._wrapped.close()
+
 
 def _client() -> httpx.Client:
     cfg = get_config()
@@ -58,8 +116,9 @@ def _client() -> httpx.Client:
         base_url=base_url,
         headers={
             "Authorization": f"Bearer {token}",
-            "User-Agent": "cass-cli/0.2",
+            "User-Agent": f"cass-cli/{__version__}",
         },
+        transport=_RetryTransport(retries=1),
         timeout=30.0,
     )
 
@@ -181,13 +240,19 @@ def fetch_submissions(
 
 def push_grade(
     course_id: int, assignment_id: int, student_canvas_id: int, grade: str
-) -> None:
-    with _client() as c:
-        resp = c.put(
-            f"/courses/{course_id}/assignments/{assignment_id}/submissions/{student_canvas_id}",
-            data={"submission[posted_grade]": grade},
-        )
-        resp.raise_for_status()
+) -> bool:
+    """Push a single grade to Canvas. Returns True on success, False on failure."""
+    try:
+        with _client() as c:
+            resp = c.put(
+                f"/courses/{course_id}/assignments/{assignment_id}/submissions/{student_canvas_id}",
+                data={"submission[posted_grade]": grade},
+            )
+            resp.raise_for_status()
+        return True
+    except (httpx.HTTPStatusError, RuntimeError) as exc:
+        _log.warning("Failed to push grade for student %s: %s", student_canvas_id, exc)
+        return False
 
 
 # --- Name matching ---
