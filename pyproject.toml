@@ -1,0 +1,65 @@
+[project]
+name = "cass"
+version = "0.2.0"
+description = "CLI grading toolkit for GitHub Classroom and Canvas LMS — track submissions, deadlines, and sync grades"
+requires-python = ">=3.11"
+license = "MIT"
+readme = "README.md"
+authors = [
+    { name = "Eshin Jolly", email = "eshin.jolly@gmail.com" },
+]
+keywords = ["github-classroom", "canvas", "grading", "education", "cli"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Education",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Education",
+]
+dependencies = [
+    "typer>=0.24.1",
+    "rich>=14.3.3",
+    "duckdb>=1.4.4",
+    "polars>=1.38.1",
+    "msgspec>=0.20.0",
+    "httpx>=0.28.1",
+    "pytz>=2026.1.post1",
+]
+
+[project.urls]
+Homepage = "https://github.com/ejolly/cass"
+Repository = "https://github.com/ejolly/cass"
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.4",
+    "ty>=0.0.20",
+    "pytest>=9.0.2",
+    "poethepoet>=0.42.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["cass"]
+
+[project.scripts]
+cass = "cass.cli:app"
+
+[tool.poe.tasks.lint]
+help = "Format, lint, and type check"
+sequence = [
+    { cmd = "ruff format cass/ tests/" },
+    { cmd = "ruff check cass/ tests/" },
+    { cmd = "ty check" },
+]
+
+[tool.poe.tasks.test]
+help = "Run test suite"
+cmd = "pytest tests/ -v"
