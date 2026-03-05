@@ -96,12 +96,15 @@ cass fetch hw-01              # download student files for an assignment
 cass fetch all --force        # re-download everything
 ```
 
-### Raw queries
+### Database tools
 
 ```bash
 cass query "SELECT * FROM students WHERE canvas_id != ''"
 cass query                    # interactive DuckDB REPL
+cass view                     # open cass.db in Dataflare (GUI viewer)
 ```
+
+[Dataflare](https://dataflare.app/) is a recommended GUI for browsing and editing the database interactively. Install with `brew install --cask dataflare`.
 
 ### Global flags
 

@@ -64,6 +64,7 @@ cass fetch hw-01                          # download student files
 cass fetch all --force                    # re-download existing
 cass query "SELECT * FROM students"       # raw DuckDB SQL query
 cass query                                # interactive DuckDB REPL
+cass view                                 # open cass.db in Dataflare (GUI viewer)
 cass db                                   # interactive DuckDB REPL (alias)
 cass db clean                             # clear api_cache for git commits
 cass export grades --csv grades.csv       # export table to CSV
