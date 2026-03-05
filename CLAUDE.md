@@ -109,7 +109,17 @@ Schema version 3. Tables:
 - `submissions` — unified GH+Canvas (student_id, assignment_id, source, submitted, late, lateness_seconds, repo_name, commits_after, score, workflow_state)
 - `grades` — computed grades (student_id, assignment_id, grade, numeric, source)
 
-All tables are queryable via `cass query "SQL"` or the interactive REPL (`cass query`).
+All tables are queryable via `cass query "SQL"`, the interactive REPL (`cass query`), or directly with the `duckdb` CLI:
+
+```bash
+duckdb cass.db -c "SQL"              # quick one-off query
+duckdb -readonly cass.db -c "SQL"    # safe read-only access
+duckdb cass.db -csv -c "SQL"         # export as CSV
+duckdb cass.db -json -c "SQL"        # export as JSON
+duckdb cass.db                       # interactive REPL
+```
+
+Prefer `duckdb` CLI over Python for quick inspection, ad-hoc queries, and data checks.
 
 ---
 
@@ -157,3 +167,56 @@ uv publish                 # publish to PyPI
 uv run poe lint && uv run poe test
 ```
 Both must pass clean.
+
+---
+
+## Project Management (Linear)
+
+Project: **cass** — [linear.app/ejolly/project/cass-bd5285c72a0c](https://linear.app/ejolly/project/cass-bd5285c72a0c)
+Team: **Ejolly** (EJO). Issues are prefixed `EJO-NNN`.
+
+### Active issues
+
+| Issue | Title | Priority | Dependencies |
+|-------|-------|----------|------------|
+| EJO-319 | Refactor data models: human-readable, self-documenting API + domain types | Urgent | — (start here) |
+| EJO-320 | Data storage & collaboration: single .db as git-shared source of truth | Urgent | Blocked by 319 |
+| EJO-321 | User-friendly CLI commands for common data operations | High | Blocked by 319, 320 |
+| EJO-322 | Canvas API compliance: User-Agent, rate limiting, 429 retry | High | Independent |
+| EJO-323 | Documentation: README, CLI help, Google-style docstrings, pdoc | Medium | Blocked by 319, 320 |
+
+Execution order:
+```
+EJO-319 (models) ──→ EJO-320 (storage) ──→ EJO-321 (CLI commands)
+                                        ──→ EJO-323 (docs)
+EJO-322 (Canvas API) — anytime, independent
+```
+
+### Linear CLI essentials
+
+```bash
+# List project issues
+linear list-issues --project "cass"
+
+# View an issue
+linear get-issue --id EJO-319
+
+# Create an issue
+linear save-issue --title "Title" --team "Ejolly" --project "cass" --priority 2 --description "..."
+
+# Update an issue (use full UUID or identifier)
+linear save-issue --id EJO-319 --state "In Progress"
+linear save-issue --id EJO-319 --state "Done"
+
+# Link issues
+linear save-issue --id EJO-321 --blocked-by "EJO-320"
+linear save-issue --id EJO-321 --related-to "EJO-319,EJO-320"
+
+# For complex descriptions, use --raw with JSON (bypasses flag parsing)
+linear save-issue --raw '{"title": "...", "team": "Ejolly", "project": "cass", "description": "..."}'
+# Or write JSON to a temp file first for long descriptions:
+# linear save-issue --raw "$(cat /tmp/issue.json)"
+
+# Priority values: 1=Urgent, 2=High, 3=Medium, 4=Low
+# States: Backlog, Todo, In Progress, Done, Canceled
+```
