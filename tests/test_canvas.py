@@ -1,8 +1,10 @@
 """Tests for cass.canvas — name matching, slugification, roster mapping."""
 
+import httpx
 import pytest
 
 from cass.canvas import (
+    _RetryTransport,
     _normalize,
     _slugify,
     find_candidates,
@@ -138,3 +140,67 @@ def test_mapping_from_roster():
     ]
     result = mapping_from_roster(students)
     assert result == {"alice-gh": 100, "bob-gh": 200}
+
+
+# --- _RetryTransport ---
+
+
+def _mock_transport(responses: list[httpx.Response]) -> httpx.BaseTransport:
+    """Transport that yields pre-built responses in order."""
+    it = iter(responses)
+
+    class _Mock(httpx.BaseTransport):
+        def handle_request(self, request: httpx.Request) -> httpx.Response:
+            return next(it)
+
+    return _Mock()
+
+
+def test_retry_transport_success():
+    """Normal 200 passes through immediately."""
+    inner = _mock_transport([httpx.Response(200, json={"ok": True})])
+    transport = _RetryTransport.__new__(_RetryTransport)
+    transport._wrapped = inner
+    resp = transport.handle_request(httpx.Request("GET", "https://example.com"))
+    assert resp.status_code == 200
+
+
+def test_retry_transport_429_then_success(monkeypatch):
+    """429 is retried, and succeeds on the next attempt."""
+    monkeypatch.setattr("cass.canvas.time.sleep", lambda _: None)
+    inner = _mock_transport(
+        [
+            httpx.Response(429, headers={"Retry-After": "1"}),
+            httpx.Response(200, json={"ok": True}),
+        ]
+    )
+    transport = _RetryTransport.__new__(_RetryTransport)
+    transport._wrapped = inner
+    resp = transport.handle_request(httpx.Request("GET", "https://example.com"))
+    assert resp.status_code == 200
+
+
+def test_retry_transport_429_exhausted(monkeypatch):
+    """After MAX_RETRIES 429s, the last 429 response is returned."""
+    monkeypatch.setattr("cass.canvas.time.sleep", lambda _: None)
+    inner = _mock_transport([httpx.Response(429)] * 4)
+    transport = _RetryTransport.__new__(_RetryTransport)
+    transport._wrapped = inner
+    resp = transport.handle_request(httpx.Request("GET", "https://example.com"))
+    assert resp.status_code == 429
+
+
+def test_retry_transport_throttle(monkeypatch):
+    """Low X-Rate-Limit-Remaining triggers a delay."""
+    delays: list[float] = []
+    monkeypatch.setattr("cass.canvas.time.sleep", delays.append)
+    inner = _mock_transport(
+        [
+            httpx.Response(200, headers={"X-Rate-Limit-Remaining": "10"}),
+        ]
+    )
+    transport = _RetryTransport.__new__(_RetryTransport)
+    transport._wrapped = inner
+    transport.handle_request(httpx.Request("GET", "https://example.com"))
+    assert len(delays) == 1
+    assert delays[0] == 1.0
