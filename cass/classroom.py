@@ -331,8 +331,8 @@ async def fetch_file_submissions(
 # ---------------------------------------------------------------------------
 
 
-def _gh_id(assignment: Assignment) -> int:
-    """Get the GH Classroom numeric ID for API calls (sync)."""
+def _resolve_gh_id_sync(assignment: Assignment) -> int:
+    """Resolve assignment slug to GH Classroom numeric ID (sync, for fetch.py)."""
     cfg = get_config()
     data = gh.api_cached(
         f"/classrooms/{cfg.classroom_id}/assignments",
@@ -347,13 +347,13 @@ def _gh_id(assignment: Assignment) -> int:
     raise RuntimeError(f"Assignment {assignment.slug} not found in GH Classroom API")
 
 
-def _build_repo_map(
+def build_repo_map(
     assignment: Assignment,
     ttl_hours: float = 6,
     force_refresh: bool = False,
 ) -> dict[str, str]:
     """Return {handle_lower: repo_short_name} for an assignment (sync)."""
-    gh_id = _gh_id(assignment)
+    gh_id = _resolve_gh_id_sync(assignment)
     data = gh.api_cached(
         f"/assignments/{gh_id}/accepted_assignments",
         ttl_hours=ttl_hours,
@@ -369,7 +369,3 @@ def _build_repo_map(
             if handle and repo_name:
                 repo_map[handle] = repo_name.split("/")[-1]
     return repo_map
-
-
-# Re-export for fetch.py
-build_repo_map = _build_repo_map

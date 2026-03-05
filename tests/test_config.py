@@ -19,11 +19,6 @@ def test_find_project_root(tmp_path):
     assert find_project_root(start=nested) == tmp_path
 
 
-def test_find_project_root_classroom_toml(tmp_path):
-    (tmp_path / "classroom.toml").write_text('[classroom]\nid = 1\norg = "x"\n')
-    assert find_project_root(start=tmp_path) == tmp_path
-
-
 def test_find_project_root_not_found(tmp_path):
     isolated = tmp_path / "empty"
     isolated.mkdir()

@@ -1,10 +1,11 @@
-"""Data models for cass — msgspec structs matching the Go version's types."""
+"""Data models for cass — msgspec structs for students, assignments, submissions, grades."""
 
 from __future__ import annotations
 
 from datetime import datetime
 
 import msgspec
+import msgspec.structs
 
 
 class Student(msgspec.Struct):
@@ -60,19 +61,7 @@ class Submission(msgspec.Struct):
 
     def with_assignment_id(self, assignment_id: str) -> Submission:
         """Return a copy with a different assignment_id."""
-        return Submission(
-            student_id=self.student_id,
-            assignment_id=assignment_id,
-            source=self.source,
-            submitted=self.submitted,
-            submitted_at=self.submitted_at,
-            late=self.late,
-            lateness_seconds=self.lateness_seconds,
-            repo_name=self.repo_name,
-            commits_after=self.commits_after,
-            score=self.score,
-            workflow_state=self.workflow_state,
-        )
+        return msgspec.structs.replace(self, assignment_id=assignment_id)
 
 
 class Grade(msgspec.Struct):
@@ -89,7 +78,7 @@ REPORT_FILE = "pdfs/final-report.pdf"
 
 
 def compute_grade(sub: Submission, assign: Assignment) -> Grade:
-    """Compute a grade from a submission, matching Go's ComputeGrade logic."""
+    """Compute a grade from a submission."""
     if sub.source == "github":
         return _compute_github_grade(sub, assign)
     return _compute_canvas_grade(sub, assign)
