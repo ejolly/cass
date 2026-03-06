@@ -99,6 +99,20 @@ CLI commands query source tables with inline JOINs (no views — removed in v6 a
 - Svelte 5 + shadcn-svelte + TanStack Table
 - Built with `poe ui-build`, output committed to `viewer/dist/`
 
+### Svelte CLI (`svelte`) — ALWAYS use when writing/editing Svelte code
+
+The `svelte` CLI (installed at `~/go/bin/svelte`) provides Svelte 5 documentation and code validation. **You MUST use this tool whenever working on Svelte code in `viewer/ui/`.**
+
+**Workflow for any Svelte task:**
+
+1. **`svelte list-sections`** — Run first to discover relevant documentation. Analyze the `use_cases` field to identify which sections match the task.
+
+2. **`svelte get-documentation --path <path>`** — Fetch docs for all relevant sections identified in step 1. Pass multiple `--path` flags or comma-separated paths. Use this for unfamiliar APIs; prefer your own knowledge + autofixer for straightforward changes.
+
+3. **`svelte svelte-autofixer --code '<component>' --desired-svelte-version 5`** — Validate Svelte code before writing it to files. **Run this on every component you create or modify.** Keep fixing and re-running until no issues remain. Add `--filename Component.svelte` if available. Add `--async` if the component uses top-level await.
+
+4. **`svelte playground-link --code '<component>'`** — Only if the user asks for a playground link. Never use this if code was already written to project files.
+
 ---
 
 ## Canvas Integration
