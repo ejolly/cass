@@ -29,7 +29,7 @@ cass pull
 cass students
 cass assignments
 cass submissions hw-01
-cass grades
+cass gradebook
 ```
 
 Running `cass` with no arguments shows a project status dashboard.
@@ -94,7 +94,7 @@ cass students --all           # include excluded students
 cass assignments              # assignment metadata
 cass submissions              # all submissions
 cass submissions hw-01        # filter by assignment slug
-cass grades                   # gradebook matrix (students x assignments)
+cass gradebook                   # gradebook matrix (students x assignments)
 ```
 
 All view commands support:
@@ -105,8 +105,8 @@ All view commands support:
 ### Grade sync
 
 ```bash
-cass grades push              # dry-run: preview what would be pushed to Canvas
-cass grades push --post       # actually push grades
+cass gradebook push              # dry-run: preview what would be pushed to Canvas
+cass gradebook push --post       # actually push grades
 cass egrades                  # export eGrades CSV (UCSD final grade format)
 cass egrades -o custom.csv    # custom output path
 ```
@@ -193,7 +193,7 @@ All data lives in a local [DuckDB](https://duckdb.org/) database (`cass.duckdb`)
 ```
 cass init    → creates cass.toml
 cass pull    → fetches APIs → populates DuckDB
-cass grades  → reads from DB → renders Rich tables
+cass gradebook  → reads from DB → renders Rich tables
 cass view    → browse/edit in browser
 cass query   → direct SQL access
 ```
@@ -206,7 +206,7 @@ When both `[classroom]` and `[canvas]` are configured, `cass pull` will:
 2. Discover GitHub Classroom students from accepted assignments
 3. Auto-match GitHub <> Canvas students by name (with interactive resolution for ambiguous cases)
 4. Store source data in separate tables (`gh_*`, `canvas_*`) and merge into unified master tables
-5. `cass grades push` syncs pre-computed Canvas grades directly
+5. `cass gradebook push` syncs pre-computed Canvas grades directly
 
 ### Grading logic
 
@@ -270,8 +270,8 @@ git add cass.duckdb && git commit -m "grade hw-02" && git push
 
 # Instructor pulls, reviews, pushes to Canvas
 git pull
-cass grades
-cass grades push --post
+cass gradebook
+cass gradebook push --post
 ```
 
 For manual edits:

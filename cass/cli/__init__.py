@@ -27,7 +27,7 @@ grades_app = typer.Typer(
     help="Show the gradebook as a student x assignment matrix, "
     "or push grades to Canvas.",
 )
-app.add_typer(grades_app, name="grades")
+app.add_typer(grades_app, name="gradebook")
 db_app = typer.Typer(
     invoke_without_command=True,
     no_args_is_help=False,
@@ -461,7 +461,7 @@ def submissions(
 
 
 # ---------------------------------------------------------------------------
-# cass grades / cass grades push
+# cass gradebook / cass gradebook push
 # ---------------------------------------------------------------------------
 
 
@@ -472,7 +472,7 @@ def grades_callback(
     where: str = typer.Option("", "--where", help="SQL WHERE filter"),
     csv_out: str = typer.Option("", "--csv", help="Export as CSV file"),
 ) -> None:
-    """Show the gradebook as a student x assignment matrix with computed grades."""
+    """Show the gradebook as a student x assignment matrix with posted grades."""
     if ctx.invoked_subcommand is not None:
         return
 
@@ -482,11 +482,14 @@ def grades_callback(
     conn = db.get_db()
     try:
         rows = conn.execute(
-            "SELECT s.name AS student, a.slug AS assignment,"
+            "SELECT s.name AS student, s.sortable_name,"
+            "  ca.name AS assignment, ca.assignment_group,"
             "  cg.posted_grade AS display_grade"
             " FROM canvas_grades cg"
-            " JOIN students s ON s.canvas_id = cg.canvas_user_id"
-            " JOIN assignments a ON a.canvas_assignment_id = cg.canvas_assignment_id"
+            " JOIN canvas_students s ON s.canvas_id = cg.canvas_user_id"
+            " JOIN canvas_assignments ca"
+            "   ON ca.canvas_id = cg.canvas_assignment_id"
+            " ORDER BY ca.assignment_group, ca.name"
         ).fetchall()
     except Exception as exc:
         console.print("[yellow]No grades. Run [bold]cass pull[/bold] first.[/yellow]")
@@ -496,16 +499,17 @@ def grades_callback(
         console.print("[yellow]No grades. Run [bold]cass pull[/bold] first.[/yellow]")
         raise typer.Exit(code=1)
 
-    students_set: dict[str, None] = {}
+    # Collect unique students (sorted by sortable_name) and assignments (in query order)
+    students_by_sortable: dict[str, str] = {}
     assignments_set: dict[str, None] = {}
     grade_map: dict[tuple[str, str], str] = {}
-    for student_name, assignment_slug, display_grade in rows:
-        students_set[student_name] = None
-        assignments_set[assignment_slug] = None
-        grade_map[(student_name, assignment_slug)] = display_grade
+    for student_name, sortable_name, assignment_name, _group, display_grade in rows:
+        students_by_sortable[sortable_name] = student_name
+        assignments_set[assignment_name] = None
+        grade_map[(student_name, assignment_name)] = display_grade
 
-    assignment_ids = sorted(assignments_set)
-    student_ids = sorted(students_set)
+    assignment_ids = list(assignments_set)  # preserves insertion (query) order
+    student_ids = [students_by_sortable[k] for k in sorted(students_by_sortable)]
 
     headers = ["Student", *assignment_ids]
     matrix_rows: list[list[str]] = []
@@ -516,9 +520,9 @@ def grades_callback(
     if csv_out:
         report.write_csv_file(csv_out, headers=headers, rows=matrix_rows)
     elif save:
-        report.save_markdown(save, "Grades", headers, matrix_rows)
+        report.save_markdown(save, "Gradebook", headers, matrix_rows)
     else:
-        report.render_list(headers, matrix_rows, title="Grades")
+        report.render_list(headers, matrix_rows, title="Gradebook")
 
 
 @grades_app.command()

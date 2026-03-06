@@ -39,6 +39,22 @@ def viewer_conn():
     )
     conn.execute("INSERT INTO students VALUES (200, 'Bob Jones', 'bob@test.edu', true)")
     conn.execute("INSERT INTO assignments VALUES ('hw-01', 'Homework 1', 10.0)")
+    conn.execute(
+        "CREATE TABLE canvas_assignments ("
+        "  canvas_id INTEGER PRIMARY KEY,"
+        "  name TEXT,"
+        "  points_possible DOUBLE,"
+        "  due_at TEXT,"
+        "  published BOOLEAN DEFAULT true"
+        ")"
+    )
+    conn.execute(
+        "CREATE TABLE canvas_students ("
+        "  canvas_id INTEGER PRIMARY KEY,"
+        "  name TEXT,"
+        "  email TEXT"
+        ")"
+    )
     yield conn
     conn.close()
 
@@ -63,9 +79,11 @@ def testget_tables_types(viewer_conn):
 
 
 def test_editable_table(viewer_conn):
-    """Tables with a PK that aren't read-only should be editable."""
-    assert is_editable(viewer_conn, "students") is True
-    assert is_editable(viewer_conn, "assignments") is True
+    """Only canvas tables (not submissions) are editable."""
+    assert is_editable(viewer_conn, "canvas_assignments") is True
+    assert is_editable(viewer_conn, "canvas_students") is True
+    assert is_editable(viewer_conn, "students") is False
+    assert is_editable(viewer_conn, "assignments") is False
 
 
 def test_no_pk_not_editable(viewer_conn):
