@@ -166,7 +166,6 @@ cass query "SELECT * FROM students WHERE github_username IS NOT NULL"
 cass query                    # interactive DuckDB REPL
 cass view                     # browser-based database viewer
 cass view --port 8080         # use a fixed port
-cass view --classic           # legacy AG Grid viewer
 ```
 
 ### Global flags
@@ -177,7 +176,7 @@ cass view --classic           # legacy AG Grid viewer
 
 ## Browser viewer
 
-`cass view` opens a Svelte-powered spreadsheet UI for browsing and editing the database.
+`cass view` opens a NiceGUI-powered browser UI for browsing and editing the database.
 
 - **Browse**: sidebar navigation by table group (Combined / Canvas / GitHub), sortable columns, search (Ctrl+K)
 - **Edit**: double-click cells to edit, changes tracked as pending until pushed
@@ -305,10 +304,9 @@ Use `--no-cache` or `--ttl 0` for immediate expiry. Run `cass db clean` to clear
 
 ```bash
 uv sync                       # install all dependencies
-uv run poe lint               # format + lint + type check (ruff, ty, basedpyright, biome, svelte-check)
+uv run poe lint               # format + lint + type check (ruff, ty, basedpyright)
 uv run poe test               # run test suite
-uv run poe ui-build           # build Svelte frontend
-uv run poe install            # build frontend + install as global CLI tool
+uv run poe install            # install as global CLI tool
 uv run poe docs               # generate API docs to docs/api/
 ```
 
