@@ -9,7 +9,8 @@ from typing import Any
 import duckdb
 from nicegui import ui
 
-from ..db import db_path
+from ..config import config_file_path
+from ..db import DB_FILENAME
 from ..db import reset as db_reset
 from .config import (
     CANVAS_PUSHABLE,
@@ -74,331 +75,58 @@ _GRID_CSS = """
 # ---------------------------------------------------------------------------
 
 
+def _detect_state() -> str:
+    """Return 'setup', 'pull', or 'ready' based on config/db presence."""
+    from ..db import is_remote
+
+    cfg_path = config_file_path()
+    if cfg_path is None:
+        return "setup"
+
+    # Config exists — check database
+    if is_remote():
+        return "ready"
+
+    from ..config import get_config
+
+    cfg = get_config()
+    db_file = cfg.root / DB_FILENAME
+    if not db_file.exists():
+        return "pull"
+
+    return "ready"
+
+
 def start_nicegui_server(port: int = 0) -> None:
     """Start the NiceGUI viewer, open the browser, block until Ctrl+C.
 
     Args:
         port: Port number to bind to. 0 = auto-select an available port.
+
+    Routes based on project state:
+    - No cass.toml → setup wizard
+    - cass.toml but no database → auto-pull with progress
+    - Both exist → normal table viewer
     """
-    db_reset()
-    conn = duckdb.connect(db_path())
-    tables = get_tables(conn)
-    groups = group_tables(tables)
-    pending: PendingChanges = {}
+    from .setup import pull_progress_page, setup_wizard_page
 
     @ui.page("/")
-    def index() -> None:  # pyright: ignore[reportUnusedFunction]
-        ui.add_head_html(f"<style>{_GRID_CSS}</style>")
+    def root_page() -> None:  # pyright: ignore[reportUnusedFunction]
+        state = _detect_state()
+        if state == "setup":
+            setup_wizard_page(on_complete=lambda: ui.navigate.to("/pull"))
+        elif state == "pull":
+            pull_progress_page(on_complete=lambda: ui.navigate.to("/view"))
+        else:
+            ui.navigate.to("/view")
 
-        # --- State ---
-        grid_container: dict[str, Any] = {"ref": None}
-        default_table = next(
-            (t["name"] for t in tables if t["name"] == "canvas_grades"),
-            tables[0]["name"] if tables else "",
-        )
-        current_table: dict[str, str] = {"name": default_table}
-        sidebar_items: dict[str, ui.element] = {}
-        pending_badge: dict[str, ui.badge | None] = {"ref": None}
-        table_label: dict[str, ui.label | None] = {"ref": None}
-        meta_label: dict[str, ui.label | None] = {"ref": None}
-        search_input: dict[str, ui.input | None] = {"ref": None}
-        revert_btn: dict[str, ui.button | None] = {"ref": None}
-        push_btn: dict[str, ui.button | None] = {"ref": None}
+    @ui.page("/pull")
+    def pull_page() -> None:  # pyright: ignore[reportUnusedFunction]
+        pull_progress_page(on_complete=lambda: ui.navigate.to("/view"))
 
-        # --- Helpers ---
-
-        _ITEM_BASE = (
-            "w-full items-center gap-1 px-4 py-1 cursor-pointer "
-            "rounded-none text-white/70 hover:bg-white/[0.08] hover:text-white/95"
-        )
-        _ITEM_ACTIVE = "bg-blue-500/20 !text-white font-semibold"
-
-        def update_pending_display() -> None:
-            """Refresh the pending/sync badge and toggle revert/push visibility."""
-            count = pending_count(pending)
-            has_pending = count > 0
-            badge = pending_badge["ref"]
-            if badge is not None:
-                if has_pending:
-                    badge.text = f"{count} pending"
-                    badge.props("color=amber-8 text-color=white")
-                else:
-                    badge.text = "Synchronized"
-                    badge.props("color=green text-color=white")
-            rb = revert_btn["ref"]
-            if rb is not None:
-                rb.set_visibility(has_pending)
-            pb = push_btn["ref"]
-            if pb is not None:
-                pushable = current_table["name"] in CANVAS_PUSHABLE
-                pb.set_visibility(has_pending and pushable)
-
-        def load_table(table_name: str) -> None:
-            """Load a table into the grid area."""
-            old = current_table["name"]
-            current_table["name"] = table_name
-
-            # Update sidebar active states
-            if old in sidebar_items:
-                sidebar_items[old].classes(remove=_ITEM_ACTIVE)
-            if table_name in sidebar_items:
-                sidebar_items[table_name].classes(add=_ITEM_ACTIVE)
-
-            # Update toolbar labels
-            editable_flag = is_editable(conn, table_name)
-            tl = table_label["ref"]
-            if tl is not None:
-                tl.text = display_name(table_name)
-
-            # Build grid data
-            is_gb = table_name == "canvas_grades"
-            if is_gb:
-                row_data, col_defs = build_gradebook_view(conn)
-                pk_cols: list[str] = []
-            else:
-                row_data = get_table_rows(conn, table_name)
-                col_defs = build_column_defs(conn, table_name)
-                pk_cols = get_primary_keys(conn, table_name) if editable_flag else []
-
-            ml = meta_label["ref"]
-            if ml is not None:
-                n_visible = sum(
-                    1 for c in col_defs if not c.get("hide") and "children" not in c
-                )
-                n_visible += sum(
-                    len(c["children"]) for c in col_defs if "children" in c
-                )
-                if is_gb:
-                    ml.text = (
-                        f"{len(row_data)} students \u00b7 {n_visible - 1} assignments"
-                    )
-                else:
-                    ml.text = f"{len(row_data)} rows \u00b7 {n_visible} columns"
-
-            # Clear and rebuild grid container
-            container = grid_container["ref"]
-            if container is not None:
-                container.clear()
-                with container:
-                    grid_options: dict[str, Any] = {
-                        "columnDefs": col_defs,
-                        "rowData": row_data,
-                        "defaultColDef": {
-                            "sortable": True,
-                            "resizable": True,
-                            "minWidth": 80,
-                        },
-                        "animateRows": True,
-                        "enableCellTextSelection": True,
-                        "stopEditingWhenCellsLoseFocus": True,
-                    }
-
-                    if is_gb:
-                        grid_options[":getRowId"] = (
-                            "(params) => String(params.data._canvas_user_id)"
-                        )
-                    else:
-                        grid_options[":getRowId"] = f"(params) => {row_id_js(pk_cols)}"
-
-                    grid = (
-                        ui.aggrid(grid_options, theme="quartz")
-                        .classes("w-full")
-                        .style("height: calc(100vh - 6rem)")
-                    )
-
-                    if is_gb:
-                        attach_gradebook_edit_handler(
-                            grid,
-                            conn,
-                            pending,
-                            update_pending_display,
-                        )
-                    elif editable_flag:
-                        attach_edit_handler(
-                            grid,
-                            conn,
-                            table_name,
-                            pk_cols,
-                            pending,
-                            update_pending_display,
-                        )
-
-                    if is_gb or editable_flag:
-                        attach_date_autocommit(grid)
-
-            # Refresh pending/push display for new table context
-            update_pending_display()
-
-            # Clear search
-            si = search_input["ref"]
-            if si is not None:
-                si.value = ""
-
-        # --- Layout ---
-
-        # Sidebar (Quasar left drawer — toggle, mobile-responsive built-in)
-        drawer = ui.left_drawer(
-            value=True,
-            top_corner=True,
-            bottom_corner=True,
-            fixed=True,
-        ).classes("bg-[#1d1d1d] border-r border-white/10 !w-56 p-0")
-        with drawer:
-            # Header
-            with ui.row().classes(
-                "w-full items-center justify-between px-4 py-3 border-b border-white/10"
-            ):
-                ui.label("CASS").classes(
-                    "text-xs font-bold tracking-widest opacity-60 uppercase"
-                )
-                ui.button(
-                    icon="chevron_left",
-                    on_click=drawer.toggle,
-                ).props("flat dense round size=sm color=grey-6")
-
-            # Navigation
-            scroll = ui.scroll_area().classes("flex-1")
-            with scroll, ui.column().classes("w-full gap-0 py-2"):
-                for group in groups:
-                    ui.label(group["label"]).classes(
-                        "text-[0.7rem] font-bold tracking-wider"
-                        " opacity-50 uppercase px-4 pt-3 pb-1"
-                    )
-                    for t in group["items"]:
-                        tn = t["name"]
-                        dn = display_name(tn)
-                        editable_item = is_editable(conn, tn)
-                        is_active = tn == current_table["name"]
-
-                        item = (
-                            ui.row()
-                            .classes(
-                                f"{_ITEM_BASE}{' ' + _ITEM_ACTIVE if is_active else ''}"
-                            )
-                            .on(
-                                "click",
-                                lambda _e, n=tn: load_table(n),
-                            )
-                        )
-                        with item:
-                            ui.label(dn).classes("text-xs font-mono")
-                            ui.space()
-                            if editable_item:
-                                ui.badge("editable").props(
-                                    "outline color=green"
-                                ).classes("text-[0.55rem]")
-                            else:
-                                ui.badge("view-only").props(
-                                    "outline color=grey-7"
-                                ).classes("text-[0.55rem]")
-                        sidebar_items[tn] = item
-
-        # Main content
-        with ui.column().classes("w-full flex-1 gap-0"):
-            # Toolbar row 1: title, metadata, export, status, actions
-            with ui.row().classes(
-                "w-full items-center gap-2 px-4 py-2"
-                " border-b border-white/10 bg-[#1d1d1d]"
-            ):
-                ui.button(
-                    icon="menu",
-                    on_click=drawer.toggle,
-                ).props("flat dense round color=grey-6")
-
-                tl = ui.label("").classes("text-sm font-semibold")
-                table_label["ref"] = tl
-
-                ml = ui.label("").classes("text-xs opacity-50")
-                meta_label["ref"] = ml
-
-                ui.button(
-                    "CSV",
-                    on_click=lambda: export_csv(grid_container),
-                ).props("flat dense no-caps size=sm color=grey-5").classes("text-xs")
-                ui.button(
-                    "Markdown",
-                    on_click=lambda: export_markdown(
-                        grid_container,
-                        current_table,
-                    ),
-                ).props("flat dense no-caps size=sm color=grey-5").classes("text-xs")
-
-                ui.space()
-
-                # Status badge
-                badge = ui.badge(
-                    "Synchronized",
-                    color="green",
-                    text_color="white",
-                ).classes("text-[0.65rem] font-semibold")
-                pending_badge["ref"] = badge
-
-                # Revert button (hidden initially)
-                rb = ui.button(
-                    "Revert",
-                    on_click=lambda: revert_pending(
-                        conn,
-                        pending,
-                        update_pending_display,
-                        grid_container,
-                        current_table,
-                    ),
-                ).props("flat dense no-caps size=sm color=red")
-                rb.set_visibility(False)
-                revert_btn["ref"] = rb
-
-                # Push to Canvas button (hidden initially)
-                pb = ui.button(
-                    "Push to Canvas",
-                    on_click=lambda: open_push_modal(
-                        conn,
-                        pending,
-                        update_pending_display,
-                        grid_container,
-                        current_table,
-                    ),
-                ).props("dense no-caps size=sm color=primary")
-                pb.set_visibility(False)
-                push_btn["ref"] = pb
-
-            # Toolbar row 2: search
-            with ui.row().classes(
-                "w-full px-4 py-1 border-b border-white/10 bg-[#1d1d1d]"
-            ):
-                si = (
-                    ui.input(placeholder="Search rows...")
-                    .props("dense outlined rounded")
-                    .classes("w-1/3 min-w-[12rem] text-xs")
-                )
-                search_input["ref"] = si
-                si.on(
-                    "update:model-value",
-                    lambda e: apply_search(
-                        grid_container,
-                        e.args,  # pyright: ignore[reportUnknownMemberType]
-                    ),
-                )
-
-            # Grid area
-            gc = ui.element("div").classes("flex-1 w-full")
-            grid_container["ref"] = gc
-
-        # Keyboard shortcut: Ctrl/Cmd+K -> focus search
-        ui.add_body_html("""
-        <script>
-        document.addEventListener('keydown', (e) => {
-            if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
-                e.preventDefault();
-                const input = document.querySelector('.q-field__native');
-                if (input) input.focus();
-            }
-        });
-        </script>
-        """)
-
-        # Load initial table
-        if tables:
-            load_table(default_table)
+    @ui.page("/view")
+    def view_page() -> None:  # pyright: ignore[reportUnusedFunction]
+        _render_viewer()
 
     ui.run(  # pyright: ignore[reportUnknownMemberType]
         title="cass viewer",
@@ -408,3 +136,319 @@ def start_nicegui_server(port: int = 0) -> None:
         show=True,
         favicon="\U0001f4ca",
     )
+
+
+def _render_viewer() -> None:
+    """Render the main table viewer (the original index page content)."""
+    from ..db import db_path
+
+    db_reset()
+    conn = duckdb.connect(db_path())
+    tables = get_tables(conn)
+    groups = group_tables(tables)
+    pending: PendingChanges = {}
+
+    ui.add_head_html(f"<style>{_GRID_CSS}</style>")
+
+    # --- State ---
+    grid_container: dict[str, Any] = {"ref": None}
+    default_table = next(
+        (t["name"] for t in tables if t["name"] == "canvas_grades"),
+        tables[0]["name"] if tables else "",
+    )
+    current_table: dict[str, str] = {"name": default_table}
+    sidebar_items: dict[str, ui.element] = {}
+    pending_badge: dict[str, ui.badge | None] = {"ref": None}
+    table_label: dict[str, ui.label | None] = {"ref": None}
+    meta_label: dict[str, ui.label | None] = {"ref": None}
+    search_input: dict[str, ui.input | None] = {"ref": None}
+    revert_btn: dict[str, ui.button | None] = {"ref": None}
+    push_btn: dict[str, ui.button | None] = {"ref": None}
+
+    # --- Helpers ---
+
+    _ITEM_BASE = (
+        "w-full items-center gap-1 px-4 py-1 cursor-pointer "
+        "rounded-none text-white/70 hover:bg-white/[0.08] hover:text-white/95"
+    )
+    _ITEM_ACTIVE = "bg-blue-500/20 !text-white font-semibold"
+
+    def update_pending_display() -> None:
+        """Refresh the pending/sync badge and toggle revert/push visibility."""
+        count = pending_count(pending)
+        has_pending = count > 0
+        badge = pending_badge["ref"]
+        if badge is not None:
+            if has_pending:
+                badge.text = f"{count} pending"
+                badge.props("color=amber-8 text-color=white")
+            else:
+                badge.text = "Synchronized"
+                badge.props("color=green text-color=white")
+        rb = revert_btn["ref"]
+        if rb is not None:
+            rb.set_visibility(has_pending)
+        pb = push_btn["ref"]
+        if pb is not None:
+            pushable = current_table["name"] in CANVAS_PUSHABLE
+            pb.set_visibility(has_pending and pushable)
+
+    def load_table(table_name: str) -> None:
+        """Load a table into the grid area."""
+        old = current_table["name"]
+        current_table["name"] = table_name
+
+        # Update sidebar active states
+        if old in sidebar_items:
+            sidebar_items[old].classes(remove=_ITEM_ACTIVE)
+        if table_name in sidebar_items:
+            sidebar_items[table_name].classes(add=_ITEM_ACTIVE)
+
+        # Update toolbar labels
+        editable_flag = is_editable(conn, table_name)
+        tl = table_label["ref"]
+        if tl is not None:
+            tl.text = display_name(table_name)
+
+        # Build grid data
+        is_gb = table_name == "canvas_grades"
+        if is_gb:
+            row_data, col_defs = build_gradebook_view(conn)
+            pk_cols: list[str] = []
+        else:
+            row_data = get_table_rows(conn, table_name)
+            col_defs = build_column_defs(conn, table_name)
+            pk_cols = get_primary_keys(conn, table_name) if editable_flag else []
+
+        ml = meta_label["ref"]
+        if ml is not None:
+            n_visible = sum(
+                1 for c in col_defs if not c.get("hide") and "children" not in c
+            )
+            n_visible += sum(len(c["children"]) for c in col_defs if "children" in c)
+            if is_gb:
+                ml.text = f"{len(row_data)} students \u00b7 {n_visible - 1} assignments"
+            else:
+                ml.text = f"{len(row_data)} rows \u00b7 {n_visible} columns"
+
+        # Clear and rebuild grid container
+        container = grid_container["ref"]
+        if container is not None:
+            container.clear()
+            with container:
+                grid_options: dict[str, Any] = {
+                    "columnDefs": col_defs,
+                    "rowData": row_data,
+                    "defaultColDef": {
+                        "sortable": True,
+                        "resizable": True,
+                        "minWidth": 80,
+                    },
+                    "animateRows": True,
+                    "enableCellTextSelection": True,
+                    "stopEditingWhenCellsLoseFocus": True,
+                }
+
+                if is_gb:
+                    grid_options[":getRowId"] = (
+                        "(params) => String(params.data._canvas_user_id)"
+                    )
+                else:
+                    grid_options[":getRowId"] = f"(params) => {row_id_js(pk_cols)}"
+
+                grid = (
+                    ui.aggrid(grid_options, theme="quartz")
+                    .classes("w-full")
+                    .style("height: calc(100vh - 6rem)")
+                )
+
+                if is_gb:
+                    attach_gradebook_edit_handler(
+                        grid,
+                        conn,
+                        pending,
+                        update_pending_display,
+                    )
+                elif editable_flag:
+                    attach_edit_handler(
+                        grid,
+                        conn,
+                        table_name,
+                        pk_cols,
+                        pending,
+                        update_pending_display,
+                    )
+
+                if is_gb or editable_flag:
+                    attach_date_autocommit(grid)
+
+        # Refresh pending/push display for new table context
+        update_pending_display()
+
+        # Clear search
+        si = search_input["ref"]
+        if si is not None:
+            si.value = ""
+
+    # --- Layout ---
+
+    # Sidebar (Quasar left drawer — toggle, mobile-responsive built-in)
+    drawer = ui.left_drawer(
+        value=True,
+        top_corner=True,
+        bottom_corner=True,
+        fixed=True,
+    ).classes("bg-[#1d1d1d] border-r border-white/10 !w-56 p-0")
+    with drawer:
+        # Header
+        with ui.row().classes(
+            "w-full items-center justify-between px-4 py-3 border-b border-white/10"
+        ):
+            ui.label("CASS").classes(
+                "text-xs font-bold tracking-widest opacity-60 uppercase"
+            )
+            ui.button(
+                icon="chevron_left",
+                on_click=drawer.toggle,
+            ).props("flat dense round size=sm color=grey-6")
+
+        # Navigation
+        scroll = ui.scroll_area().classes("flex-1")
+        with scroll, ui.column().classes("w-full gap-0 py-2"):
+            for group in groups:
+                ui.label(group["label"]).classes(
+                    "text-[0.7rem] font-bold tracking-wider"
+                    " opacity-50 uppercase px-4 pt-3 pb-1"
+                )
+                for t in group["items"]:
+                    tn = t["name"]
+                    dn = display_name(tn)
+                    editable_item = is_editable(conn, tn)
+                    is_active = tn == current_table["name"]
+
+                    item = (
+                        ui.row()
+                        .classes(
+                            f"{_ITEM_BASE}{' ' + _ITEM_ACTIVE if is_active else ''}"
+                        )
+                        .on(
+                            "click",
+                            lambda _e, n=tn: load_table(n),
+                        )
+                    )
+                    with item:
+                        ui.label(dn).classes("text-xs font-mono")
+                        ui.space()
+                        if editable_item:
+                            ui.badge("editable").props("outline color=green").classes(
+                                "text-[0.55rem]"
+                            )
+                        else:
+                            ui.badge("view-only").props("outline color=grey-7").classes(
+                                "text-[0.55rem]"
+                            )
+                    sidebar_items[tn] = item
+
+    # Main content
+    with ui.column().classes("w-full flex-1 gap-0"):
+        # Toolbar row 1: title, metadata, export, status, actions
+        with ui.row().classes(
+            "w-full items-center gap-2 px-4 py-2 border-b border-white/10 bg-[#1d1d1d]"
+        ):
+            ui.button(
+                icon="menu",
+                on_click=drawer.toggle,
+            ).props("flat dense round color=grey-6")
+
+            tl = ui.label("").classes("text-sm font-semibold")
+            table_label["ref"] = tl
+
+            ml = ui.label("").classes("text-xs opacity-50")
+            meta_label["ref"] = ml
+
+            ui.button(
+                "CSV",
+                on_click=lambda: export_csv(grid_container),
+            ).props("flat dense no-caps size=sm color=grey-5").classes("text-xs")
+            ui.button(
+                "Markdown",
+                on_click=lambda: export_markdown(
+                    grid_container,
+                    current_table,
+                ),
+            ).props("flat dense no-caps size=sm color=grey-5").classes("text-xs")
+
+            ui.space()
+
+            # Status badge
+            badge = ui.badge(
+                "Synchronized",
+                color="green",
+                text_color="white",
+            ).classes("text-[0.65rem] font-semibold")
+            pending_badge["ref"] = badge
+
+            # Revert button (hidden initially)
+            rb = ui.button(
+                "Revert",
+                on_click=lambda: revert_pending(
+                    conn,
+                    pending,
+                    update_pending_display,
+                    grid_container,
+                    current_table,
+                ),
+            ).props("flat dense no-caps size=sm color=red")
+            rb.set_visibility(False)
+            revert_btn["ref"] = rb
+
+            # Push to Canvas button (hidden initially)
+            pb = ui.button(
+                "Push to Canvas",
+                on_click=lambda: open_push_modal(
+                    conn,
+                    pending,
+                    update_pending_display,
+                    grid_container,
+                    current_table,
+                ),
+            ).props("dense no-caps size=sm color=primary")
+            pb.set_visibility(False)
+            push_btn["ref"] = pb
+
+        # Toolbar row 2: search
+        with ui.row().classes("w-full px-4 py-1 border-b border-white/10 bg-[#1d1d1d]"):
+            si = (
+                ui.input(placeholder="Search rows...")
+                .props("dense outlined rounded")
+                .classes("w-1/3 min-w-[12rem] text-xs")
+            )
+            search_input["ref"] = si
+            si.on(
+                "update:model-value",
+                lambda e: apply_search(
+                    grid_container,
+                    e.args,  # pyright: ignore[reportUnknownMemberType]
+                ),
+            )
+
+        # Grid area
+        gc = ui.element("div").classes("flex-1 w-full")
+        grid_container["ref"] = gc
+
+    # Keyboard shortcut: Ctrl/Cmd+K -> focus search
+    ui.add_body_html("""
+    <script>
+    document.addEventListener('keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+            e.preventDefault();
+            const input = document.querySelector('.q-field__native');
+            if (input) input.focus();
+        }
+    });
+    </script>
+    """)
+
+    # Load initial table
+    if tables:
+        load_table(default_table)

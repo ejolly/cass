@@ -1075,17 +1075,11 @@ def import_csv(
 def view(
     port: int = typer.Option(0, "--port", help="Port number (0 = auto-select)"),
 ) -> None:
-    """Open the database in a browser-based viewer."""
-    from .. import db
+    """Open the database in a browser-based viewer.
 
-    if not db.is_remote():
-        db_file = Path(db.db_path())
-        if not db_file.exists():
-            console.print(
-                "[yellow]No database yet. Run [bold]cass pull[/bold] first.[/yellow]"
-            )
-            raise typer.Exit(code=1)
-
+    Launches a setup wizard if no cass.toml exists, or auto-pulls data
+    if the config exists but the database hasn't been created yet.
+    """
     from ..viewer.nicegui_app import start_nicegui_server
 
     start_nicegui_server(port=port)
