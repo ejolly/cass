@@ -96,7 +96,10 @@ CLI commands query source tables with inline JOINs (no views — removed in v6 a
 - Bulk grade push per assignment + auto-post for post_manually assignments
 
 **Svelte frontend** (`viewer/ui/` → built to `viewer/dist/`):
-- Svelte 5 + shadcn-svelte + TanStack Table
+- Svelte 5 + Tailwind CSS v4 + DaisyUI v5 (no shadcn, no TanStack Table)
+- Single-click inline cell editing (input replaces cell text on click)
+- Built-in column sort (click headers), DaisyUI `table-pin-rows` for sticky headers
+- Dark mode: automatic via DaisyUI `--prefersdark`
 - Built with `poe ui-build`, output committed to `viewer/dist/`
 
 ### Svelte CLI (`svelte`) — ALWAYS use when writing/editing Svelte code

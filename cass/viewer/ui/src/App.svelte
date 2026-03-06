@@ -4,13 +4,9 @@
   import { classifyTable } from "$lib/types.js";
   import Sidebar from "./components/Sidebar.svelte";
   import Toolbar from "./components/Toolbar.svelte";
-  import EditBar from "./components/EditBar.svelte";
   import DataGrid from "./components/DataGrid.svelte";
   import PushModal from "./components/PushModal.svelte";
-  import { Toaster } from "$lib/components/ui/sonner/index.js";
-  import { Button } from "$lib/components/ui/button/index.js";
 
-  // Load initial data
   $effect(() => {
     loadInitialData();
   });
@@ -31,7 +27,6 @@
         return order[classifyTable(a.name)] - order[classifyTable(b.name)];
       });
       if (sorted[0]) {
-        // Trigger table selection via same logic as sidebar
         app.selectedTable = sorted[0].name;
         const { schema, data } = await api.fetchSchemaAndData(sorted[0].name);
         app.schema = schema;
@@ -46,16 +41,12 @@
     }
   }
 
-  // Keyboard shortcuts
   function handleKeydown(e: KeyboardEvent) {
-    // Cmd/Ctrl+K → focus search
     if ((e.metaKey || e.ctrlKey) && e.key === "k") {
       e.preventDefault();
       document.getElementById("search-box")?.focus();
       return;
     }
-
-    // Escape → close modal > cancel edit
     if (e.key === "Escape") {
       if (app.modal.kind !== "closed") {
         app.modal = { kind: "closed" };
@@ -64,49 +55,24 @@
       }
     }
   }
-
-  // Dark mode: apply class to document
-  $effect(() => {
-    if (app.darkMode) {
-      document.documentElement.classList.add("dark");
-    } else {
-      document.documentElement.classList.remove("dark");
-    }
-  });
-
-  // Watch for system dark mode changes
-  $effect(() => {
-    const mq = globalThis.matchMedia?.("(prefers-color-scheme: dark)");
-    if (!mq) return;
-    const handler = (e: MediaQueryListEvent) => { app.darkMode = e.matches; };
-    mq.addEventListener("change", handler);
-    return () => mq.removeEventListener("change", handler);
-  });
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
 
-<div class="flex h-screen w-screen overflow-hidden bg-background text-foreground">
+<div class="flex h-screen w-screen overflow-hidden bg-base-100">
   <Sidebar />
 
-  <!-- Sidebar toggle when collapsed -->
   {#if app.sidebarCollapsed}
-    <Button
-      variant="outline"
-      size="icon"
-      class="absolute left-2 top-10 z-20 h-7 w-7"
+    <button
+      class="btn btn-ghost btn-xs absolute left-2 top-2 z-20"
       onclick={() => (app.sidebarCollapsed = false)}
-    >
-      &#8250;
-    </Button>
+    >&#8250;</button>
   {/if}
 
   <main class="flex flex-1 flex-col overflow-hidden">
     <Toolbar />
-    <EditBar />
     <DataGrid />
   </main>
 </div>
 
 <PushModal />
-<Toaster />

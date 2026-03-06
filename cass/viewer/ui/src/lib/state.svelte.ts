@@ -1,8 +1,7 @@
 /**
  * Global reactive state for the viewer app.
  *
- * Single $state object — equivalent to the Elm Model.
- * Imported by components that need to read/write shared state.
+ * Single $state object — imported by components that need shared state.
  */
 import type {
   TableInfo,
@@ -29,7 +28,6 @@ export const app = $state({
   statusMessage: null as StatusMessage | null,
   editing: null as EditState | null,
   modal: { kind: "closed" } as ModalState,
-  darkMode: globalThis.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false,
 });
 
 /** Set a status message that auto-clears after a delay. */
