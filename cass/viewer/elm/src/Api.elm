@@ -1,11 +1,14 @@
 module Api exposing
-    ( buildCsvContent
+    ( applyPush
+    , buildCsvContent
     , fetchPending
+    , fetchPreview
     , fetchSchemaAndData
     , fetchTables
     , httpErrorToString
     , matchesSearch
     , parseRows
+    , updateCell
     )
 
 {-| HTTP requests and JSON decoders for the viewer API.
@@ -17,9 +20,10 @@ No `async/await`, no `try/catch` — just data in, data out.
 
 -}
 
-import Dict
+import Dict exposing (Dict)
 import Http
 import Json.Decode as D
+import Json.Encode as E
 import Task
 import Types exposing (..)
 
@@ -74,6 +78,112 @@ fetchPending =
         { url = "/api/pending"
         , expect = Http.expectJson GotPending (D.field "count" D.int)
         }
+
+
+{-| POST a cell update to the server.
+-}
+updateCell : String -> Dict String String -> String -> String -> Cmd Msg
+updateCell table pk column value =
+    let
+        pkJson =
+            E.object (List.map (\( k, v ) -> ( k, E.string v )) (Dict.toList pk))
+
+        body =
+            E.object
+                [ ( "pk", pkJson )
+                , ( "column", E.string column )
+                , ( "value", E.string value )
+                ]
+    in
+    Http.post
+        { url = "/api/update/" ++ table
+        , body = Http.jsonBody body
+        , expect =
+            Http.expectJson (GotUpdateResult table pk column)
+                (D.map3
+                    (\ok err pc -> { ok = ok, error = err, pendingCount = pc })
+                    (D.field "ok" D.bool)
+                    (D.maybe (D.field "error" D.string))
+                    (D.maybe (D.field "pending_count" D.int))
+                )
+        }
+
+
+{-| POST to fetch Canvas preview data.
+-}
+fetchPreview : Cmd Msg
+fetchPreview =
+    Http.post
+        { url = "/api/canvas/preview"
+        , body = Http.emptyBody
+        , expect = Http.expectJson GotPreview previewDecoder
+        }
+
+
+{-| POST to apply pending changes to Canvas.
+-}
+applyPush : Cmd Msg
+applyPush =
+    Http.post
+        { url = "/api/canvas/apply"
+        , body = Http.emptyBody
+        , expect =
+            Http.expectJson GotApplyResult
+                (D.map2
+                    (\ok results -> { ok = ok, results = results })
+                    (D.field "ok" D.bool)
+                    (D.field "results"
+                        (D.list
+                            (D.map3
+                                (\ok cid err -> PushResult ok cid err)
+                                (D.field "ok" D.bool)
+                                (D.maybe (D.field "canvas_id" D.int))
+                                (D.maybe (D.field "error" D.string))
+                            )
+                        )
+                    )
+                )
+        }
+
+
+previewDecoder : D.Decoder PreviewData
+previewDecoder =
+    D.map3 PreviewData
+        (D.field "changes"
+            (D.list
+                (D.map7 CanvasChange
+                    (D.field "table" D.string)
+                    (D.oneOf [ D.field "name" D.string, D.succeed "" ])
+                    (D.oneOf [ D.field "column" D.string, D.succeed "" ])
+                    (D.maybe (D.field "live" jsonToMaybeString))
+                    (D.maybe (D.field "current" jsonToMaybeString))
+                    (D.oneOf [ D.field "conflict" D.bool, D.succeed False ])
+                    (D.maybe (D.field "error" D.string))
+                )
+            )
+        )
+        (D.oneOf [ D.field "has_conflicts" D.bool, D.succeed False ])
+        (D.oneOf [ D.field "has_errors" D.bool, D.succeed False ])
+
+
+{-| Decode a JSON value to Maybe String, handling null/numbers/booleans.
+-}
+jsonToMaybeString : D.Decoder String
+jsonToMaybeString =
+    D.oneOf
+        [ D.string
+        , D.float |> D.map String.fromFloat
+        , D.int |> D.map String.fromInt
+        , D.bool
+            |> D.map
+                (\b ->
+                    if b then
+                        "Yes"
+
+                    else
+                        "No"
+                )
+        ]
 
 
 resolveJson : D.Decoder a -> Http.Response String -> Result Http.Error a

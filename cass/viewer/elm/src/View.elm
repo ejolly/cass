@@ -1,4 +1,4 @@
-module View exposing (getDisplayedColumns, initGrid, view)
+module View exposing (getDisplayedColumns, initGrid, isCombinedTable, view)
 
 {-| All view code for the viewer, written with elm-ui.
 
@@ -73,6 +73,11 @@ view model =
         , Font.color p.text
         , Background.color p.bg
         , htmlAttribute (Html.Events.preventDefaultOn "keydown" keyDecoder)
+        , if model.showModal then
+            inFront (viewModal p model)
+
+          else
+            inFront none
         ]
         (row [ width fill, height fill ]
             [ viewSidebar p model
@@ -94,6 +99,9 @@ keyDecoder =
         (\key ctrl meta ->
             if (ctrl || meta) && key == "k" then
                 ( FocusSearch, True )
+
+            else if key == "Escape" then
+                ( EscapePressed, True )
 
             else
                 ( NoOp, False )
@@ -411,9 +419,7 @@ viewExportButton p model =
 viewPushButton : Palette -> Model -> Element Msg
 viewPushButton p model =
     if model.pendingCount > 0 then
-        -- Non-interactive indicator showing pending Canvas changes.
-        -- Phase 2 will add the preview modal and push flow.
-        el
+        Input.button
             [ Font.size 12
             , Font.semiBold
             , paddingXY 10 5
@@ -422,23 +428,29 @@ viewPushButton p model =
             , Border.rounded 6
             , Background.color p.accentLight
             , Font.color p.accent
-            ]
-            (row [ spacing 5 ]
-                [ text "Push to Canvas"
-                , el
-                    [ Font.size 10
-                    , Font.semiBold
-                    , Font.color p.white
-                    , Font.center
-                    , Background.color p.accent
-                    , Border.rounded 9
-                    , paddingXY 4 0
-                    , width (minimum 18 shrink)
-                    , height (px 18)
-                    ]
-                    (text (String.fromInt model.pendingCount))
+            , mouseOver
+                [ Background.color p.accent
+                , Font.color p.white
                 ]
-            )
+            ]
+            { onPress = Just OpenPushModal
+            , label =
+                row [ spacing 5 ]
+                    [ text "Push to Canvas"
+                    , el
+                        [ Font.size 10
+                        , Font.semiBold
+                        , Font.color p.white
+                        , Font.center
+                        , Background.color p.accent
+                        , Border.rounded 9
+                        , paddingXY 4 0
+                        , width (minimum 18 shrink)
+                        , height (px 18)
+                        ]
+                        (text (String.fromInt model.pendingCount))
+                    ]
+            }
 
     else
         none
@@ -475,20 +487,25 @@ viewGridArea : Palette -> Model -> Element Msg
 viewGridArea p model =
     case model.gridModel of
         Just gm ->
-            -- `Element.html` bridges elm/html into elm-ui.
-            -- The grid library renders standard Html; we wrap it
-            -- so it lives inside our elm-ui layout.
-            -- Like using {@html rawContent} in Svelte, but type-safe.
             el [ width fill, height fill, clip ]
-                (Grid.view gm
-                    |> Html.map GridMsg
-                    |> html
+                (column [ width fill, height fill ]
+                    [ case model.editing of
+                        Just ed ->
+                            viewEditBar p ed
+
+                        Nothing ->
+                            none
+                    , el [ width fill, height fill ]
+                        (Grid.view gm
+                            |> Html.map GridMsg
+                            |> html
+                        )
+                    ]
                 )
 
         Nothing ->
             case model.error of
                 Just err ->
-                    -- centerX + centerY = Tailwind `flex items-center justify-center`
                     el [ centerX, centerY, Font.color p.error ]
                         (text err)
 
@@ -499,6 +516,440 @@ viewGridArea p model =
                         , el [ centerX, Font.size 12, Font.color p.textFaint ]
                             (text "Use ⌘K to search within a table")
                         ]
+
+
+{-| Inline edit bar shown above the grid when editing a cell.
+-}
+viewEditBar : Palette -> EditState -> Element Msg
+viewEditBar p ed =
+    row
+        [ width fill
+        , paddingXY 16 8
+        , spacing 10
+        , Background.color p.accentLight
+        , Border.widthEach { bottom = 1, left = 0, right = 0, top = 0 }
+        , Border.color p.accent
+        ]
+        [ el [ Font.size 12, Font.semiBold, Font.color p.accent ]
+            (text ("Editing: " ++ ed.column))
+        , Input.text
+            [ width (px 300)
+            , Font.size 13
+            , paddingXY 10 5
+            , Border.width 1
+            , Border.color p.accent
+            , Border.rounded 4
+            , Background.color p.inputBg
+            , Font.color p.text
+            , htmlAttribute (Html.Attributes.id "cell-editor")
+            , htmlAttribute
+                (Html.Events.on "keydown"
+                    (D.field "key" D.string
+                        |> D.andThen
+                            (\key ->
+                                case key of
+                                    "Enter" ->
+                                        D.succeed CommitEdit
+
+                                    "Escape" ->
+                                        D.succeed CancelEdit
+
+                                    _ ->
+                                        D.fail "ignore"
+                            )
+                    )
+                )
+            ]
+            { onChange = EditChanged
+            , text = ed.value
+            , placeholder = Nothing
+            , label = Input.labelHidden "Edit cell value"
+            }
+        , Input.button
+            [ Font.size 12
+            , paddingXY 10 5
+            , Border.rounded 4
+            , Background.color p.accent
+            , Font.color p.white
+            , mouseOver [ alpha 0.9 ]
+            ]
+            { onPress = Just CommitEdit
+            , label = text "Save"
+            }
+        , Input.button
+            [ Font.size 12
+            , paddingXY 10 5
+            , Border.rounded 4
+            , Border.width 1
+            , Border.color p.inputBorder
+            , Background.color p.inputBg
+            , Font.color p.text
+            , mouseOver [ Border.color p.accent ]
+            ]
+            { onPress = Just CancelEdit
+            , label = text "Cancel"
+            }
+        ]
+
+
+
+-- MODAL
+
+
+{-| Full-screen overlay with the Canvas push preview/apply modal.
+-}
+viewModal : Palette -> Model -> Element Msg
+viewModal p model =
+    -- Overlay background (click to close)
+    el
+        [ width fill
+        , height fill
+        , Background.color (rgba 0 0 0 0.5)
+        , htmlAttribute (Html.Events.onClick ClosePushModal)
+        ]
+        -- Modal card (stop propagation so clicks inside don't close)
+        (el
+            [ centerX
+            , centerY
+            , width (px 640)
+            , height (maximum 600 shrink)
+            , Background.color p.bg
+            , Border.rounded 12
+            , Border.width 1
+            , Border.color p.border
+            , Border.shadow
+                { offset = ( 0, 20 )
+                , size = 0
+                , blur = 60
+                , color = rgba 0 0 0 0.3
+                }
+            , htmlAttribute (Html.Events.stopPropagationOn "click" (D.succeed ( NoOp, True )))
+            ]
+            (column [ width fill, height fill ]
+                [ viewModalHeader p
+                , viewModalBody p model
+                , viewModalFooter p model
+                ]
+            )
+        )
+
+
+viewModalHeader : Palette -> Element Msg
+viewModalHeader p =
+    row
+        [ width fill
+        , paddingXY 20 16
+        , Border.widthEach { bottom = 1, left = 0, right = 0, top = 0 }
+        , Border.color p.border
+        ]
+        [ el [ Font.semiBold, Font.size 14 ] (text "Push to Canvas")
+        , Input.button
+            [ alignRight
+            , padding 4
+            , Font.size 18
+            , Font.color p.textDim
+            , Border.rounded 4
+            , mouseOver [ Background.color p.sidebarActive ]
+            ]
+            { onPress = Just ClosePushModal
+            , label = text "×"
+            }
+        ]
+
+
+viewModalBody : Palette -> Model -> Element Msg
+viewModalBody p model =
+    el
+        [ width fill
+        , paddingXY 20 16
+        , scrollbarY
+        , height (fill |> minimum 100)
+        ]
+        (if model.modalLoading then
+            el [ centerX, Font.color p.textDim ] (text "Comparing with Canvas...")
+
+         else
+            case model.pushResults of
+                Just results ->
+                    viewPushResults p results
+
+                Nothing ->
+                    case model.previewData of
+                        Just preview ->
+                            viewPreviewChanges p preview
+
+                        Nothing ->
+                            case model.error of
+                                Just err ->
+                                    el [ Font.color p.error ] (text err)
+
+                                Nothing ->
+                                    el [ centerX, Font.color p.textDim ] (text "No pending changes")
+        )
+
+
+viewPreviewChanges : Palette -> PreviewData -> Element Msg
+viewPreviewChanges p preview =
+    if List.isEmpty preview.changes then
+        el [ centerX, Font.color p.textDim ] (text "No pending changes")
+
+    else
+        let
+            assignmentChanges =
+                List.filter (\c -> c.table == "canvas_assignments") preview.changes
+
+            gradeChanges =
+                List.filter (\c -> c.table == "canvas_grades") preview.changes
+        in
+        column [ width fill, spacing 16 ]
+            [ if List.isEmpty assignmentChanges then
+                none
+
+              else
+                viewChangeTable p "Assignment changes" [ "Assignment", "Field", "On Canvas", "New value" ] assignmentChanges viewAssignmentRow
+            , if List.isEmpty gradeChanges then
+                none
+
+              else
+                viewChangeTable p "Grade changes" [ "Student — Assignment", "On Canvas", "New grade" ] gradeChanges viewGradeRow
+            , if preview.hasConflicts then
+                el
+                    [ width fill
+                    , padding 12
+                    , Background.color (rgba 220 38 38 0.08)
+                    , Border.width 1
+                    , Border.color (rgba 220 38 38 0.25)
+                    , Border.rounded 6
+                    , Font.size 12
+                    , Font.color p.error
+                    ]
+                    (text "Some Canvas values differ from when you last pulled. Pushing will overwrite the current Canvas values.")
+
+              else
+                none
+            ]
+
+
+viewChangeTable : Palette -> String -> List String -> List CanvasChange -> (Palette -> CanvasChange -> Element Msg) -> Element Msg
+viewChangeTable p title headers changes rowView =
+    column [ width fill, spacing 6 ]
+        [ el [ Font.semiBold, Font.size 13 ] (text title)
+        , Element.table [ width fill, spacing 0 ]
+            { data = changes
+            , columns =
+                List.map
+                    (\h ->
+                        { header =
+                            el
+                                [ paddingXY 10 6
+                                , Font.size 11
+                                , Font.color p.textDim
+                                , Font.semiBold
+                                , Border.widthEach { bottom = 2, left = 0, right = 0, top = 0 }
+                                , Border.color p.border
+                                ]
+                                (text (String.toUpper h))
+                        , width = fill
+                        , view = \_ -> none
+                        }
+                    )
+                    headers
+            }
+        , column [ width fill ] (List.map (rowView p) changes)
+        ]
+
+
+viewAssignmentRow : Palette -> CanvasChange -> Element Msg
+viewAssignmentRow p ch =
+    case ch.error of
+        Just err ->
+            row [ width fill, paddingXY 10 6, Font.size 13, Font.color p.error ]
+                [ text (ch.name ++ ": " ++ err) ]
+
+        Nothing ->
+            row
+                [ width fill
+                , paddingXY 10 6
+                , Font.size 13
+                , Border.widthEach { bottom = 1, left = 0, right = 0, top = 0 }
+                , Border.color p.border
+                , if ch.conflict then
+                    Background.color (rgba 220 38 38 0.08)
+
+                  else
+                    Background.color (rgba 0 0 0 0)
+                ]
+                [ el [ width fill ] (text ch.name)
+                , el [ width fill ]
+                    (row [ spacing 4 ]
+                        [ text ch.column
+                        , if ch.conflict then
+                            el [ Font.color p.error ] (text "⚠")
+
+                          else
+                            none
+                        ]
+                    )
+                , el [ width fill, Font.color p.textDim ] (text (Maybe.withDefault "null" ch.live))
+                , el [ width fill, Font.semiBold ] (text (Maybe.withDefault "null" ch.current))
+                ]
+
+
+viewGradeRow : Palette -> CanvasChange -> Element Msg
+viewGradeRow p ch =
+    case ch.error of
+        Just err ->
+            row [ width fill, paddingXY 10 6, Font.size 13, Font.color p.error ]
+                [ text (ch.name ++ ": " ++ err) ]
+
+        Nothing ->
+            row
+                [ width fill
+                , paddingXY 10 6
+                , Font.size 13
+                , Border.widthEach { bottom = 1, left = 0, right = 0, top = 0 }
+                , Border.color p.border
+                , if ch.conflict then
+                    Background.color (rgba 220 38 38 0.08)
+
+                  else
+                    Background.color (rgba 0 0 0 0)
+                ]
+                [ el [ width fill ]
+                    (row [ spacing 4 ]
+                        [ text ch.name
+                        , if ch.conflict then
+                            el [ Font.color p.error ] (text "⚠")
+
+                          else
+                            none
+                        ]
+                    )
+                , el [ width fill, Font.color p.textDim ] (text (Maybe.withDefault "null" ch.live))
+                , el [ width fill, Font.semiBold ] (text (Maybe.withDefault "null" ch.current))
+                ]
+
+
+viewPushResults : Palette -> List PushResult -> Element Msg
+viewPushResults p results =
+    let
+        succeeded =
+            List.filter .ok results
+
+        failed =
+            List.filter (\r -> not r.ok) results
+    in
+    column [ width fill, spacing 8 ]
+        [ el [ Font.semiBold ]
+            (text
+                (String.fromInt (List.length succeeded)
+                    ++ " pushed, "
+                    ++ String.fromInt (List.length failed)
+                    ++ " failed:"
+                )
+            )
+        , column [ width fill, spacing 4 ]
+            (List.map
+                (\r ->
+                    if r.ok then
+                        el [ Font.color p.success, paddingXY 0 2 ]
+                            (text ("✓ Assignment " ++ (r.canvasId |> Maybe.map String.fromInt |> Maybe.withDefault "?")))
+
+                    else
+                        el [ Font.color p.error, paddingXY 0 2 ]
+                            (text
+                                ("✗ Assignment "
+                                    ++ (r.canvasId |> Maybe.map String.fromInt |> Maybe.withDefault "?")
+                                    ++ ": "
+                                    ++ Maybe.withDefault "Unknown error" r.error
+                                )
+                            )
+                )
+                results
+            )
+        ]
+
+
+viewModalFooter : Palette -> Model -> Element Msg
+viewModalFooter p model =
+    row
+        [ width fill
+        , paddingXY 20 12
+        , spacing 8
+        , Border.widthEach { bottom = 0, left = 0, right = 0, top = 1 }
+        , Border.color p.border
+        , alignBottom
+        ]
+        [ el [ alignRight ] none
+        , row [ alignRight, spacing 8 ]
+            [ Input.button
+                [ Font.size 12
+                , paddingXY 14 6
+                , Border.width 1
+                , Border.color p.inputBorder
+                , Border.rounded 6
+                , Background.color p.inputBg
+                , Font.color p.text
+                , mouseOver [ Border.color p.accent ]
+                ]
+                { onPress = Just ClosePushModal
+                , label =
+                    text
+                        (if model.pushResults /= Nothing then
+                            "Close"
+
+                         else
+                            "Cancel"
+                        )
+                }
+            , case ( model.previewData, model.pushResults, model.modalPushing ) of
+                ( Just preview, Nothing, False ) ->
+                    let
+                        pushableCount =
+                            List.length (List.filter (\c -> c.error == Nothing) preview.changes)
+                    in
+                    if pushableCount > 0 then
+                        Input.button
+                            [ Font.size 12
+                            , Font.semiBold
+                            , paddingXY 14 6
+                            , Border.rounded 6
+                            , Background.color p.accent
+                            , Font.color p.white
+                            , mouseOver [ alpha 0.9 ]
+                            ]
+                            { onPress = Just ApplyPush
+                            , label = text ("Push " ++ String.fromInt pushableCount ++ " change" ++ pluralize pushableCount)
+                            }
+
+                    else
+                        none
+
+                ( _, Nothing, True ) ->
+                    el
+                        [ Font.size 12
+                        , Font.semiBold
+                        , paddingXY 14 6
+                        , Border.rounded 6
+                        , Background.color p.accent
+                        , Font.color p.white
+                        , alpha 0.5
+                        ]
+                        (text "Pushing...")
+
+                _ ->
+                    none
+            ]
+        ]
+
+
+pluralize : Int -> String
+pluralize n =
+    if n == 1 then
+        ""
+
+    else
+        "s"
 
 
 rowCountText : Model -> String
