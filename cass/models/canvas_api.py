@@ -49,6 +49,8 @@ class CanvasEnrollment(msgspec.Struct):
     enrollment_state: str = ""
     role: str = ""
     course_section_id: int = 0
+    computed_final_score: float | None = None
+    computed_current_score: float | None = None
 
 
 class CanvasUser(msgspec.Struct):
