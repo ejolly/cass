@@ -778,4 +778,8 @@ def revert_pending(
     clear_pending_cells()
     update_pending_display()
     reload_current_grid(conn, grid_container, current_table["name"])
+    # Force AG Grid to re-evaluate cellClassRules after clearing pending set
+    grid = find_grid(grid_container)
+    if grid is not None:
+        grid.run_grid_method("refreshCells", {"force": True})  # pyright: ignore[reportUnknownMemberType]
     notify(f"Reverted {count} change{'s' if count != 1 else ''}")

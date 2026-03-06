@@ -12,6 +12,7 @@ from nicegui import ui
 from ..db import db_path
 from ..db import reset as db_reset
 from .config import (
+    CANVAS_PUSHABLE,
     PendingChanges,
     display_name,
     group_tables,
@@ -151,14 +152,6 @@ _CUSTOM_CSS = """
     border-radius: 9999px;
     font-weight: 600;
 }
-.badge-editable {
-    background: rgba(34, 197, 94, 0.15);
-    color: #4ade80;
-}
-.badge-readonly {
-    background: rgba(255, 255, 255, 0.08);
-    color: rgba(255, 255, 255, 0.5);
-}
 .toolbar-meta {
     font-size: 0.75rem;
     opacity: 0.5;
@@ -170,6 +163,14 @@ _CUSTOM_CSS = """
     font-weight: 600;
     background: rgba(245, 158, 11, 0.2);
     color: #fbbf24;
+}
+.sync-badge {
+    font-size: 0.65rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 9999px;
+    font-weight: 600;
+    background: rgba(34, 197, 94, 0.15);
+    color: #4ade80;
 }
 .cell-pending {
     background: rgba(245, 158, 11, 0.15) !important;
@@ -187,6 +188,7 @@ _CUSTOM_CSS = """
     display: flex;
     align-items: center;
     gap: 0.5rem;
+    padding-right: 0.5rem;
 }
 .search-input {
     font-size: 0.75rem;
@@ -203,6 +205,16 @@ _CUSTOM_CSS = """
 }
 .search-input::placeholder {
     opacity: 0.4;
+}
+/* Search row below toolbar */
+.search-row {
+    padding: 0.35rem 1rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    background: var(--q-dark-page, #1d1d1d);
+}
+.search-row .search-input {
+    width: 33%;
+    min-width: 12rem;
 }
 /* Toolbar buttons */
 .toolbar-btn {
@@ -338,7 +350,6 @@ def start_nicegui_server(port: int = 0) -> None:
         sidebar_buttons: dict[str, ui.element] = {}
         pending_label: dict[str, Any] = {"ref": None}
         table_label: dict[str, Any] = {"ref": None}
-        badge_el: dict[str, Any] = {"ref": None}
         meta_label: dict[str, Any] = {"ref": None}
         search_ref: dict[str, Any] = {"ref": None}
         clear_btn_ref: dict[str, Any] = {"ref": None}
@@ -349,19 +360,24 @@ def start_nicegui_server(port: int = 0) -> None:
         sidebar_state: dict[str, bool] = {"collapsed": False}
 
         def update_pending_display() -> None:
-            """Update pending badge and toggle revert/push button visibility."""
+            """Update pending/sync badge and toggle revert/push visibility."""
             count = pending_count(pending)
-            visible = count > 0
+            has_pending = count > 0
             el = pending_label["ref"]
             if el is not None:
-                el.text = f"{count} pending" if visible else ""
-                el.set_visibility(visible)
+                if has_pending:
+                    el.text = f"{count} pending"
+                    el.classes(remove="sync-badge", add="pending-badge")
+                else:
+                    el.text = "Synchronized"
+                    el.classes(remove="pending-badge", add="sync-badge")
             cb = clear_btn_ref["ref"]
             if cb is not None:
-                cb.set_visibility(visible)
+                cb.set_visibility(has_pending)
             pb = push_btn_ref["ref"]
             if pb is not None:
-                pb.set_visibility(visible)
+                pushable = current_table["name"] in CANVAS_PUSHABLE
+                pb.set_visibility(has_pending and pushable)
 
         def load_table(table_name: str) -> None:
             """Load a table into the grid area."""
@@ -379,21 +395,6 @@ def start_nicegui_server(port: int = 0) -> None:
             tl = table_label["ref"]
             if tl is not None:
                 tl.text = display_name(table_name)
-
-            be = badge_el["ref"]
-            if be is not None:
-                if editable:
-                    be.text = "EDITABLE"
-                    be.classes(
-                        remove="badge-readonly",
-                        add="badge-editable",
-                    )
-                else:
-                    be.text = "VIEW ONLY"
-                    be.classes(
-                        remove="badge-editable",
-                        add="badge-readonly",
-                    )
 
             # Build grid data
             is_gb = table_name == "canvas_grades"
@@ -448,7 +449,7 @@ def start_nicegui_server(port: int = 0) -> None:
                     grid = (
                         ui.aggrid(grid_options, theme="quartz")
                         .classes("w-full")
-                        .style("height: calc(100vh - 3rem)")
+                        .style("height: calc(100vh - 5.5rem)")
                     )
 
                     if is_gb:
@@ -470,6 +471,9 @@ def start_nicegui_server(port: int = 0) -> None:
 
                     if is_gb or editable:
                         attach_date_autocommit(grid)
+
+            # Refresh pending/push display for new table context
+            update_pending_display()
 
             # Clear search
             sr = search_ref["ref"]
@@ -550,76 +554,56 @@ def start_nicegui_server(port: int = 0) -> None:
 
             # --- Main content ---
             with ui.element("div").classes("main-content"):
-                # Toolbar
+                # Toolbar row 1: title, size, export, status pill, push
                 with ui.element("div").classes("toolbar"):
                     tl = ui.label("").classes("toolbar-label")
                     table_label["ref"] = tl
-                    be = ui.label("").classes("toolbar-badge badge-readonly")
-                    badge_el["ref"] = be
                     ml = ui.label("").classes("toolbar-meta")
                     meta_label["ref"] = ml
 
-                    pl = ui.label("").classes("pending-badge")
-                    pl.set_visibility(False)
-                    pending_label["ref"] = pl
-
-                    # Revert button (hidden initially)
-                    rb = (
+                    # Export CSV button
+                    eb = (
                         ui.element("button")
-                        .classes("toolbar-btn toolbar-btn-danger")
-                        .props('innerHTML="Revert"')
+                        .classes("toolbar-btn")
+                        .props('innerHTML="CSV"')
+                        .on("click", lambda _: export_csv(grid_container))
+                    )
+                    export_btn_ref["ref"] = eb
+
+                    # Export Markdown button
+                    (
+                        ui.element("button")
+                        .classes("toolbar-btn")
+                        .props('innerHTML="Markdown"')
                         .on(
                             "click",
-                            lambda _: revert_pending(
-                                conn,
-                                pending,
-                                update_pending_display,
-                                grid_container,
-                                current_table,
-                            ),
+                            lambda _: export_markdown(grid_container, current_table),
                         )
                     )
-                    rb.set_visibility(False)
-                    clear_btn_ref["ref"] = rb
 
                     with ui.element("div").classes("toolbar-right"):
-                        # Export CSV button
-                        eb = (
-                            ui.element("button")
-                            .classes("toolbar-btn")
-                            .props('innerHTML="CSV"')
-                            .on("click", lambda _: export_csv(grid_container))
-                        )
-                        export_btn_ref["ref"] = eb
+                        # Pending / Synchronized pill
+                        pl = ui.label("Synchronized").classes("sync-badge")
+                        pending_label["ref"] = pl
 
-                        # Export Markdown button
-                        (
+                        # Revert button (hidden initially)
+                        rb = (
                             ui.element("button")
-                            .classes("toolbar-btn")
-                            .props('innerHTML="Markdown"')
+                            .classes("toolbar-btn toolbar-btn-danger")
+                            .props('innerHTML="Revert"')
                             .on(
                                 "click",
-                                lambda _: export_markdown(
-                                    grid_container, current_table
+                                lambda _: revert_pending(
+                                    conn,
+                                    pending,
+                                    update_pending_display,
+                                    grid_container,
+                                    current_table,
                                 ),
                             )
                         )
-
-                        si = (
-                            ui.input(
-                                placeholder="Search rows...",
-                            )
-                            .classes("search-input")
-                            .props("dense outlined")
-                        )
-                        search_ref["ref"] = si
-                        si.on(
-                            "update:model-value",
-                            lambda e: apply_search(
-                                grid_container,
-                                e.args,  # pyright: ignore[reportUnknownMemberType]
-                            ),
-                        )
+                        rb.set_visibility(False)
+                        clear_btn_ref["ref"] = rb
 
                         # Push to Canvas button (hidden initially)
                         pb = (
@@ -639,6 +623,24 @@ def start_nicegui_server(port: int = 0) -> None:
                         )
                         pb.set_visibility(False)
                         push_btn_ref["ref"] = pb
+
+                # Toolbar row 2: search bar
+                with ui.element("div").classes("search-row"):
+                    si = (
+                        ui.input(
+                            placeholder="Search rows...",
+                        )
+                        .classes("search-input")
+                        .props("dense outlined")
+                    )
+                    search_ref["ref"] = si
+                    si.on(
+                        "update:model-value",
+                        lambda e: apply_search(
+                            grid_container,
+                            e.args,  # pyright: ignore[reportUnknownMemberType]
+                        ),
+                    )
 
                 # Grid area
                 gc = ui.element("div").classes("grid-container")
