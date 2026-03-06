@@ -38,8 +38,10 @@ async def pull_students(
     """
     # Step 1: Canvas students (always — Canvas is required)
     console.print("[bold]Pulling students from Canvas...[/bold]")
-    canvas_students = canvas_mod.fetch_students(cfg.canvas_course_id)
-    db.save_canvas_students(canvas_students)
+    canvas_students, sis_section_map = canvas_mod.fetch_students_with_sections(
+        cfg.canvas_course_id
+    )
+    db.save_canvas_students(canvas_students, sis_section_map=sis_section_map)
     console.print(f"  Found {len(canvas_students)} Canvas students")
 
     # Step 2: Create/update master students from Canvas (authoritative)

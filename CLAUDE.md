@@ -148,13 +148,13 @@ Python package (`cass/`) with Typer CLI, DuckDB storage, msgspec models, and Ric
 
 Per-project DuckDB file (`cass.duckdb`) in the project root. Auto-created on first use. API cache is in a separate `.cass_cache.duckdb` file (gitignored) to keep the shared DB lean.
 
-Schema version 7. Tables:
+Schema version 9. Tables:
 
 Source tables (raw data from each platform):
 - `gh_students` — GitHub Classroom students (PK: github_username)
-- `canvas_students` — Canvas enrolled students (PK: canvas_id)
+- `canvas_students` — Canvas enrolled students (PK: canvas_id, sis_user_id, sis_section_id)
 - `gh_assignments` — GitHub Classroom assignments (PK: slug, UNIQUE: gh_id)
-- `canvas_assignments` — Canvas assignments (PK: canvas_id)
+- `canvas_assignments` — Canvas assignments (PK: canvas_id, post_manually)
 - `gh_submissions` — GitHub submission records (PK: github_username, assignment_slug)
 - `canvas_submissions` — Canvas submission records (PK: canvas_user_id, canvas_assignment_id)
 

@@ -29,9 +29,11 @@ from .models import (
     CanvasCourse,
     CanvasFile,
     CanvasFolder,
+    CanvasGradingStandard,
     CanvasModule,
     CanvasModuleItem,
     CanvasQuiz,
+    CanvasSection,
     CanvasStudent,
     CanvasSubmissionResponse,
     CanvasTab,
@@ -250,6 +252,28 @@ class CanvasClient:
             self._course("/users?enrollment_type[]=student&include[]=email")
         )
         return msgspec.convert(data, list[CanvasStudent], strict=False)
+
+    # --- Sections ---
+
+    def list_sections(self) -> list[CanvasSection]:
+        """List all course sections.
+
+        Returns:
+            Sections with SIS IDs (if available).
+        """
+        data = self._get_paginated(self._course("/sections"))
+        return msgspec.convert(data, list[CanvasSection], strict=False)
+
+    # --- Grading Standards ---
+
+    def list_grading_standards(self) -> list[CanvasGradingStandard]:
+        """List grading standards available for this course.
+
+        Returns:
+            Grading standards with scheme entries.
+        """
+        data = self._get_paginated(self._course("/grading_standards"))
+        return msgspec.convert(data, list[CanvasGradingStandard], strict=False)
 
     # --- Modules ---
 
