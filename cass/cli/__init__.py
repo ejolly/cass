@@ -541,16 +541,30 @@ def push(
         console.print("[yellow]No Canvas grades to push.[/yellow]")
         raise typer.Exit(code=1)
 
+    # Build {aid: {uid: grade_string}}, skipping empty/placeholder grades
+    grade_data_by_aid: dict[int, dict[int, str]] = {}
     by_assignment: dict[int, list[CanvasGrade]] = defaultdict(list)
+    total_skipped = 0
     for g in canvas_grades:
         by_assignment[g.canvas_assignment_id].append(g)
+        if not g.posted_grade or g.posted_grade in ("-", "?"):
+            total_skipped += 1
+            continue
+        grade_data_by_aid.setdefault(g.canvas_assignment_id, {})[g.canvas_user_id] = (
+            g.posted_grade
+        )
 
     assignments = db.load_assignments()
     aid_to_title = {
         a.canvas_assignment_id: a.title for a in assignments if a.canvas_assignment_id
     }
 
-    post_manually_map = db.load_post_manually_map()
+    # Preview table
+    conn = db.get_db()
+    manual_rows = conn.execute(
+        "SELECT canvas_id, post_manually FROM canvas_assignments"
+    ).fetchall()
+    post_manually_map = {r[0]: r[1] for r in manual_rows}
 
     table = Table(title="Grade Push Preview", show_edge=False, pad_edge=False)
     table.add_column("Canvas Assignment")
@@ -576,54 +590,30 @@ def push(
         )
         return
 
-    # Group pushable grades by assignment for bulk push
-    grade_data_by_aid: dict[int, dict[int, str]] = {}
-    total_skipped = 0
-    for g in canvas_grades:
-        if not g.posted_grade or g.posted_grade in ("-", "?"):
-            total_skipped += 1
-            continue
-        grade_data_by_aid.setdefault(g.canvas_assignment_id, {})[g.canvas_user_id] = (
-            g.posted_grade
-        )
-
     from ..canvas.client import CanvasClient
+    from ..canvas.sync import push_grades
+
+    with CanvasClient() as c:
+        results = push_grades(c, conn, grade_data_by_aid)
 
     total_posted = 0
     failed: list[str] = []
-    posted_aids: list[int] = []
-    with CanvasClient() as c:
-        for aid, grade_data in grade_data_by_aid.items():
-            title = aid_to_title.get(aid, f"Assignment {aid}")
-            try:
-                progress = c.bulk_push_grades(aid, grade_data)
-                c.wait_for_progress(progress.id)
-                total_posted += len(grade_data)
-                posted_aids.append(aid)
-                console.print(f"  [green]✓[/green] {title}: {len(grade_data)} grades")
-            except Exception as e:
-                failed.append(f"{title}: {e}")
-                console.print(f"  [red]✗[/red] {title}: {e}")
-
-        # Post grades for manual-post assignments (make visible to students)
-        manual_aids = [aid for aid in posted_aids if post_manually_map.get(aid)]
-        if manual_aids:
-            console.print(
-                f"\n[dim]Posting grades for {len(manual_aids)} manual-post "
-                f"assignment(s)…[/dim]"
-            )
-            for aid in manual_aids:
-                title = aid_to_title.get(aid, f"Assignment {aid}")
-                try:
-                    p = c.post_assignment_grades(aid, graded_only=True)
-                    if p:
-                        c.wait_for_progress(p.id)
-                    console.print(
-                        f"  [green]✓[/green] {title}: grades now visible to students"
-                    )
-                except Exception as e:
-                    failed.append(f"{title} (post): {e}")
-                    console.print(f"  [red]✗[/red] {title} (post): {e}")
+    for r in results:
+        aid: int = r["canvas_assignment_id"]  # type: ignore[assignment]
+        title = aid_to_title.get(aid, f"Assignment {aid}")
+        if r.get("ok"):
+            if r.get("action") == "posted_to_students":
+                console.print(
+                    f"  [green]✓[/green] {title}: grades now visible to students"
+                )
+            else:
+                count: int = r.get("count", 0)  # type: ignore[assignment]
+                total_posted += count
+                console.print(f"  [green]✓[/green] {title}: {count} grades")
+        else:
+            action = f" ({r['action']})" if r.get("action") else ""
+            failed.append(f"{title}{action}: {r.get('error')}")
+            console.print(f"  [red]✗[/red] {title}{action}: {r.get('error')}")
 
     if failed:
         console.print(f"\n[red]Failed {len(failed)} operation(s).[/red]")

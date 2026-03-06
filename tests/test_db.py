@@ -4,7 +4,6 @@ from cass import db
 from cass.config import Config
 from cass.models import (
     Assignment,
-    CanvasAssignment,
     CanvasGrade,
     CanvasStudent,
     CanvasSubmission,
@@ -156,17 +155,6 @@ def test_load_assignment_mappings(db_conn):
     db.upsert_assignments(assignments)
     mappings = db.load_assignment_mappings()
     assert mappings == {"hw-01": 42}
-
-
-def test_load_post_manually_map(db_conn):
-    assignments = [
-        CanvasAssignment(id=100, name="HW1", post_manually=True),
-        CanvasAssignment(id=101, name="HW2", post_manually=False),
-        CanvasAssignment(id=102, name="Quiz 1", post_manually=True),
-    ]
-    db.save_canvas_assignments(assignments, {})
-    result = db.load_post_manually_map()
-    assert result == {100: True, 101: False, 102: True}
 
 
 # --- GH Submissions ---

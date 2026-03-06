@@ -874,6 +874,8 @@ def sync(
 
         # --- Assignments ---
         if cfg.canvas_assignments:
+            from ..canvas.sync import push_assignments
+
             live_assignments = c.list_assignments()
             live_by_name = {a.name.lower(): a for a in live_assignments}
 
@@ -883,6 +885,7 @@ def sync(
                 groups = c.list_assignment_groups()
                 group_map = {g.name.lower(): g.id for g in groups}
 
+            updates_by_id: dict[int, dict[str, object]] = {}
             for spec in cfg.canvas_assignments:
                 key = spec.name.lower()
                 if key in live_by_name:
@@ -900,8 +903,7 @@ def sync(
                         actions.append(
                             ("update", "assignment", f"{spec.name} ({detail})")
                         )
-                        if not dry_run:
-                            c.update_assignment(live.id, **changes)
+                        updates_by_id[live.id] = changes
                     else:
                         actions.append(("skip", "assignment", spec.name))
                 else:
@@ -918,6 +920,9 @@ def sync(
                             published=spec.published,
                             assignment_group_id=group_id,
                         )
+
+            if not dry_run and updates_by_id:
+                push_assignments(c, updates_by_id)
 
     # --- Display results ---
     table = Table(
