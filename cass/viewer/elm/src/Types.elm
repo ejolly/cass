@@ -17,6 +17,7 @@ truth for every data shape in the app.
 Key difference from TS: Elm's `type` (union type) is exhaustively
 checked at compile time. The `Msg` type below is the equivalent of
 a discriminated union for all possible events.
+
 -}
 
 import Dict exposing (Dict)
@@ -59,6 +60,7 @@ type alias TableData =
 
 We normalize everything to strings for display in the grid.
 Similar to how AG Grid in JS works with `rowData` arrays of objects.
+
 -}
 type alias Row =
     { values : Dict String String }
@@ -81,6 +83,7 @@ type alias Model =
 In Svelte, events are scattered: on:click handlers, dispatched events,
 store subscriptions. In Elm, ALL events flow through this single type.
 The compiler guarantees you handle every variant in `update`.
+
 -}
 type Msg
     = GotTables (Result Http.Error (List TableInfo))

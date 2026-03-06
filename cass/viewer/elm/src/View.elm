@@ -5,23 +5,25 @@ module View exposing (initGrid, view)
 If you're coming from Svelte + Tailwind, here's the mental model shift:
 
 **Tailwind:** You write HTML, then attach utility classes as strings.
-    <div class="flex flex-col gap-4 p-4 bg-gray-100">
+<div class="flex flex-col gap-4 p-4 bg-gray-100">
 
 **elm-ui:** You call layout functions, passing attributes as a list.
-    column [ spacing 16, padding 16, Background.color gray100 ] [ ... ]
+column [ spacing 16, padding 16, Background.color gray100 ][ ... ]
 
 The key differences:
-1. No CSS file at all — styles live next to the elements they affect
-   (like Tailwind, but without the string indirection)
-2. Layout is explicit: `row` = horizontal, `column` = vertical
-   (replaces `flex`, `flex-row`, `flex-col`)
-3. Sizing is explicit: `width fill` = `w-full`, `width (px 200)` = `w-[200px]`
-4. Spacing belongs to the PARENT, not the children
-   (`spacing 8` on a column = `gap-2` in Tailwind)
-5. No cascading, no specificity wars — each element owns its styles
+
+1.  No CSS file at all — styles live next to the elements they affect
+    (like Tailwind, but without the string indirection)
+2.  Layout is explicit: `row` = horizontal, `column` = vertical
+    (replaces `flex`, `flex-row`, `flex-col`)
+3.  Sizing is explicit: `width fill` = `w-full`, `width (px 200)` = `w-[200px]`
+4.  Spacing belongs to the PARENT, not the children
+    (`spacing 8` on a column = `gap-2` in Tailwind)
+5.  No cascading, no specificity wars — each element owns its styles
 
 In Svelte terms: imagine if every component's styles were guaranteed
 scoped, co-located, and type-checked. That's elm-ui.
+
 -}
 
 import Dict exposing (Dict)
@@ -46,6 +48,7 @@ Browser.element expects `view : Model -> Html Msg`.
 `Element.layout` is the bridge — it wraps the entire elm-ui tree
 in a single DOM node. Think of it as Svelte's `<svelte:body>` or
 the root `<div id="app">` that your Tailwind styles hang off of.
+
 -}
 view : Model -> Html.Html Msg
 view model =
@@ -131,7 +134,7 @@ viewSidebarHeader p =
             , mouseOver [ Background.color p.sidebarActive ]
             ]
             { onPress = Just ToggleSidebar
-            , label = text "\u{2039}"
+            , label = text "‹"
             }
         ]
 
@@ -252,7 +255,7 @@ viewSidebarToggle p =
         , mouseOver [ Background.color p.sidebarActive ]
         ]
         { onPress = Just ToggleSidebar
-        , label = text "\u{203A}"
+        , label = text "›"
         }
 
 
@@ -387,7 +390,7 @@ rowCountText model =
                 |> Maybe.withDefault 0
     in
     if count > 0 then
-        String.fromInt count ++ " rows \u{00B7} " ++ String.fromInt colCount ++ " columns"
+        String.fromInt count ++ " rows · " ++ String.fromInt colCount ++ " columns"
 
     else
         ""
@@ -415,6 +418,7 @@ hiddenColumns =
 Separated from the view so Main.update can call it when data arrives.
 The grid library needs its dimensions at init time (like AG Grid's
 `domLayout` or `containerStyle` props in the JS world).
+
 -}
 initGrid : List String -> List String -> String -> List Row -> Grid.Model Row
 initGrid colNames colTypes tableName rows =

@@ -638,7 +638,7 @@ class ViewerHandler(BaseHTTPRequestHandler):
     conn: duckdb.DuckDBPyConnection
     valid_tables: set[str]
     pending_changes: dict
-    use_elm: bool
+    use_classic: bool
 
     def log_message(self, format: str, *args: object) -> None:  # noqa: A002
         """Suppress default stderr logging."""
@@ -676,14 +676,14 @@ class ViewerHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         """Handle GET requests."""
         if self.path == "/":
-            if self.use_elm:
-                html = files("cass.viewer").joinpath("index_elm.html").read_bytes()
+            if self.use_classic:
+                html = files("cass.viewer").joinpath("index_classic.html").read_bytes()
             else:
                 html = files("cass.viewer").joinpath("index.html").read_bytes()
             self._send_html(html)
             return
 
-        if self.path == "/elm.js" and self.use_elm:
+        if self.path == "/elm.js" and not self.use_classic:
             js = files("cass.viewer").joinpath("elm.js").read_bytes()
             self._send_js(js)
             return
@@ -792,12 +792,12 @@ class ViewerHandler(BaseHTTPRequestHandler):
 # ---------------------------------------------------------------------------
 
 
-def start_server(port: int = 0, *, elm: bool = False) -> None:
+def start_server(port: int = 0, *, classic: bool = False) -> None:
     """Start the viewer server, open the browser, block until Ctrl+C.
 
     Args:
         port: Port number to bind to. 0 = auto-select an available port.
-        elm: Use the Elm frontend instead of the default AG Grid frontend.
+        classic: Use the classic AG Grid frontend instead of the default Elm frontend.
     """
     db_file = db_path()
 
@@ -810,7 +810,7 @@ def start_server(port: int = 0, *, elm: bool = False) -> None:
     ViewerHandler.conn = conn
     ViewerHandler.valid_tables = valid_tables
     ViewerHandler.pending_changes = {}
-    ViewerHandler.use_elm = elm
+    ViewerHandler.use_classic = classic
 
     server = HTTPServer(("127.0.0.1", port), ViewerHandler)
     actual_port = server.server_address[1]

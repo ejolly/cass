@@ -11,6 +11,7 @@ In Svelte you'd use `fetch` in a `+page.ts` loader or an `onMount`.
 In Elm, HTTP is a side effect — you return a `Cmd` from `update` and
 the runtime executes it, calling you back with the result as a `Msg`.
 No `async/await`, no `try/catch` — just data in, data out.
+
 -}
 
 import Dict
@@ -33,6 +34,7 @@ fetchTables =
 In Svelte/JS you'd do `Promise.all([fetchSchema(), fetchData()])`.
 In Elm, `Task.map2` is the equivalent — it runs two tasks and combines
 their results. If either fails, you get the first error.
+
 -}
 fetchSchemaAndData : String -> Cmd Msg
 fetchSchemaAndData name =

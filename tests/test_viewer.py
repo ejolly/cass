@@ -55,7 +55,7 @@ def server(viewer_conn):
     ViewerHandler.conn = viewer_conn
     ViewerHandler.valid_tables = _get_table_names(viewer_conn)
     ViewerHandler.pending_changes = {}
-    ViewerHandler.use_elm = False
+    ViewerHandler.use_classic = False
 
     srv = HTTPServer(("127.0.0.1", 0), ViewerHandler)
     port = srv.server_address[1]
@@ -137,7 +137,7 @@ def test_index_page(server):
     with urlopen(f"{server}/") as resp:
         assert resp.status == 200
         html = resp.read().decode()
-        assert "ag-grid" in html.lower() or "AG Grid" in html
+        assert "elm-app" in html
 
 
 def test_tables_endpoint(server):
