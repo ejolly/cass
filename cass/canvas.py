@@ -1,157 +1,42 @@
-"""Canvas LMS integration — httpx client, roster matching, grade sync."""
+"""Canvas LMS integration — roster matching, grade sync, and domain conversion.
+
+Business logic for matching GitHub ↔ Canvas students, converting Canvas API
+responses to domain types, and pushing grades. All raw API calls are delegated
+to ``CanvasClient`` in ``canvas_api.py``.
+"""
 
 from __future__ import annotations
 
 __docformat__ = "google"
 
-import logging
-import os
 import re
-import time
 from datetime import datetime
 
-import httpx
-import msgspec
-from rich.console import Console
-
-from . import __version__
-from .config import get_config
+from .canvas_api import CanvasClient, get_token, save_token
 from .models import (
     Assignment,
-    CanvasAssignment,
     CanvasStudent,
-    CanvasSubmission,
     GHStudentInfo,
     MatchResult,
     Student,
     Submission,
 )
 
-
-# --- Token management ---
-
-
-def get_token() -> str:
-    cfg = get_config()
-    token_path = cfg.root / "canvas-token.txt"
-    if token_path.exists():
-        token = token_path.read_text().strip()
-        if token:
-            return token
-    token = os.environ.get("CANVAS_TOKEN", "")
-    if not token:
-        raise SystemExit(
-            "Canvas token not found. Create canvas-token.txt in the project root "
-            "or set the CANVAS_TOKEN environment variable."
-        )
-    return token
+# Re-export for backwards compatibility (used by cli.py init)
+__all__ = [
+    "get_token",
+    "save_token",
+    "fetch_students",
+    "fetch_assignments",
+    "fetch_submissions",
+    "push_grade",
+    "match_students",
+    "find_candidates",
+    "mapping_from_roster",
+]
 
 
-def save_token(token: str) -> None:
-    cfg = get_config()
-    token_path = cfg.root / "canvas-token.txt"
-    token_path.write_text(token.strip() + "\n")
-
-
-# --- HTTP client ---
-
-_console = Console(stderr=True)
-_log = logging.getLogger(__name__)
-
-MAX_RETRIES = 3
-THROTTLE_THRESHOLD = 50.0
-THROTTLE_DELAY = 1.0
-
-
-class _RetryTransport(httpx.BaseTransport):
-    """Wraps HTTPTransport with 429 retry, backoff, and proactive throttling."""
-
-    def __init__(self, *, retries: int = 0) -> None:
-        self._wrapped = httpx.HTTPTransport(retries=retries)
-
-    def handle_request(self, request: httpx.Request) -> httpx.Response:
-        for attempt in range(MAX_RETRIES + 1):
-            response = self._wrapped.handle_request(request)
-
-            if response.status_code == 429:
-                if attempt == MAX_RETRIES:
-                    return response  # let raise_for_status handle it
-                retry_after = response.headers.get("Retry-After")
-                wait = float(retry_after) if retry_after else 2**attempt
-                _console.print(
-                    f"[yellow]Canvas rate limit hit, retrying in {wait:.0f}s…[/yellow]"
-                )
-                time.sleep(wait)
-                continue
-
-            # Proactive throttle when remaining quota is low
-            remaining = response.headers.get("X-Rate-Limit-Remaining")
-            if remaining:
-                try:
-                    if float(remaining) < THROTTLE_THRESHOLD:
-                        _log.debug(
-                            "Rate limit remaining %.1f, throttling", float(remaining)
-                        )
-                        time.sleep(THROTTLE_DELAY)
-                except ValueError:
-                    pass
-
-            # Log request cost at debug level
-            cost = response.headers.get("X-Request-Cost")
-            if cost:
-                _log.debug("Request cost: %s", cost)
-
-            return response
-
-        # Should not reach here, but satisfy the type checker
-        raise RuntimeError("Canvas API rate limit exceeded after retries")
-
-    def close(self) -> None:
-        self._wrapped.close()
-
-
-def _client() -> httpx.Client:
-    cfg = get_config()
-    base_url = cfg.canvas_base_url.rstrip("/") + "/api/v1"
-    token = get_token()
-    return httpx.Client(
-        base_url=base_url,
-        headers={
-            "Authorization": f"Bearer {token}",
-            "User-Agent": f"cass-cli/{__version__}",
-        },
-        transport=_RetryTransport(retries=1),
-        timeout=30.0,
-    )
-
-
-_LINK_NEXT_RE = re.compile(r'<([^>]+)>;\s*rel="next"')
-
-
-def _get_paginated(client: httpx.Client, path: str) -> list[dict]:
-    """GET with Canvas-style Link header pagination."""
-    results: list[dict] = []
-    sep = "&" if "?" in path else "?"
-    url = f"{path}{sep}per_page=100"
-
-    while url:
-        resp = client.get(url)
-        resp.raise_for_status()
-        results.extend(resp.json())
-
-        url = ""
-        link = resp.headers.get("link", "")
-        if m := _LINK_NEXT_RE.search(link):
-            url = m.group(1)
-            # Canvas returns full URLs; strip base_url if present
-            base = str(client.base_url)
-            if url.startswith(base):
-                url = url[len(base) :]
-
-    return results
-
-
-# --- API functions ---
+# --- API functions (delegate to CanvasClient) ---
 
 
 def fetch_students(course_id: int) -> list[CanvasStudent]:
@@ -163,11 +48,8 @@ def fetch_students(course_id: int) -> list[CanvasStudent]:
     Returns:
         Students sorted by Canvas enrollment order.
     """
-    with _client() as c:
-        data = _get_paginated(
-            c, f"/courses/{course_id}/users?enrollment_type[]=student&include[]=email"
-        )
-    return msgspec.convert(data, list[CanvasStudent])
+    with CanvasClient(course_id=course_id) as c:
+        return c.list_students()
 
 
 def fetch_assignments(course_id: int) -> list[Assignment]:
@@ -182,9 +64,8 @@ def fetch_assignments(course_id: int) -> list[Assignment]:
     Returns:
         Assignments sorted by slug ID.
     """
-    with _client() as c:
-        data = _get_paginated(c, f"/courses/{course_id}/assignments")
-    raw = msgspec.convert(data, list[CanvasAssignment])
+    with CanvasClient(course_id=course_id) as c:
+        raw = c.list_assignments()
 
     assignments = []
     for a in raw:
@@ -226,11 +107,8 @@ def fetch_submissions(
         Submissions sorted by student_id. Students not in the roster
         are silently skipped.
     """
-    with _client() as c:
-        data = _get_paginated(
-            c, f"/courses/{course_id}/assignments/{assignment_id}/submissions"
-        )
-    raw = msgspec.convert(data, list[CanvasSubmission])
+    with CanvasClient(course_id=course_id) as c:
+        raw = c.list_submissions(assignment_id)
 
     # canvas_id -> student identifier
     canvas_to_student: dict[int, str] = {}
@@ -277,17 +155,8 @@ def push_grade(
     course_id: int, assignment_id: int, student_canvas_id: int, grade: str
 ) -> bool:
     """Push a single grade to Canvas. Returns True on success, False on failure."""
-    try:
-        with _client() as c:
-            resp = c.put(
-                f"/courses/{course_id}/assignments/{assignment_id}/submissions/{student_canvas_id}",
-                data={"submission[posted_grade]": grade},
-            )
-            resp.raise_for_status()
-        return True
-    except (httpx.HTTPStatusError, RuntimeError) as exc:
-        _log.warning("Failed to push grade for student %s: %s", student_canvas_id, exc)
-        return False
+    with CanvasClient(course_id=course_id) as c:
+        return c.push_grade(assignment_id, student_canvas_id, grade)
 
 
 # --- Name matching ---
