@@ -152,7 +152,7 @@ class CanvasAssignmentGroup(msgspec.Struct):
     name: str
     position: int = 0
     group_weight: float = 0.0
-    rules: dict = {}  # noqa: RUF012
+    rules: dict[str, object] = {}  # noqa: RUF012
 
 
 # --- Quizzes ---

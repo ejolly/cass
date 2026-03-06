@@ -41,6 +41,7 @@ dev = [
     "pytest>=9.0.2",
     "poethepoet>=0.42.1",
     "pdoc>=15.0",
+    "basedpyright>=1.38.2",
 ]
 
 [build-system]
@@ -60,6 +61,7 @@ sequence = [
     { cmd = "ruff format cass/ tests/" },
     { cmd = "ruff check cass/ tests/" },
     { cmd = "ty check" },
+    { cmd = "basedpyright cass/" },
     { shell = "npx --yes @biomejs/biome check --files-ignore-unknown=true cass/viewer/index.html cass/viewer/index_classic.html" },
     { cmd = "elm-format --validate cass/viewer/elm/src/" },
 ]
@@ -83,6 +85,10 @@ sequence = [
     { cmd = "elm make src/Main.elm --optimize --output=elm.js", cwd = "cass/viewer/elm" },
     { cmd = "cp cass/viewer/elm/elm.js cass/viewer/elm.js" },
 ]
+
+[tool.basedpyright]
+typeCheckingMode = "strict"
+pythonVersion = "3.11"
 
 [tool.poe.tasks.install]
 help = "Install cass as a global CLI tool"

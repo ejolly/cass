@@ -5,7 +5,7 @@ import pytest
 
 from cass.canvas.matching import (
     _normalize,
-    _slugify,
+    slugify,
     find_candidates,
     match_students,
 )
@@ -39,7 +39,7 @@ def test_normalize(name, expected):
     assert _normalize(name) == expected
 
 
-# --- _slugify ---
+# --- slugify ---
 
 
 @pytest.mark.parametrize(
@@ -61,8 +61,8 @@ def test_normalize(name, expected):
         "parens",
     ],
 )
-def test_slugify(name, expected):
-    assert _slugify(name) == expected
+def testslugify(name, expected):
+    assert slugify(name) == expected
 
 
 # --- match_students ---

@@ -4,8 +4,13 @@ from __future__ import annotations
 
 __docformat__ = "google"
 
+from typing import TYPE_CHECKING
+
 import typer
 from rich.console import Console
+
+if TYPE_CHECKING:
+    from ..canvas.client import CanvasClient
 
 canvas_app = typer.Typer(
     invoke_without_command=True,
@@ -49,10 +54,10 @@ def _require_canvas() -> None:
         raise typer.Exit(code=1)
 
 
-def _client():  # noqa: ANN202
-    from ..canvas.client import CanvasClient
+def _client() -> CanvasClient:
+    from ..canvas.client import CanvasClient as _CanvasClient
 
-    return CanvasClient()
+    return _CanvasClient()
 
 
 # ---------------------------------------------------------------------------
@@ -78,7 +83,7 @@ def canvas_callback(ctx: typer.Context) -> None:
         quizzes = c.list_quizzes()
         anns = c.list_announcements()
 
-    lines = []
+    lines: list[str] = []
     lines.append(f"  [dim]State[/dim]          {course.workflow_state}")
     if course.total_students is not None:
         lines.append(f"  [dim]Students[/dim]       {course.total_students}")
@@ -142,7 +147,7 @@ def people(
         users = c.list_users()
 
     headers = ["Name", "Role", "Email", "SIS ID", "Canvas ID"]
-    rows = []
+    rows: list[list[str]] = []
     for u in sorted(users, key=lambda u: u.sortable_name or u.name):
         role = ""
         if u.enrollments:
@@ -713,7 +718,7 @@ def announcements_update(
 ) -> None:
     """Update an announcement."""
     _require_canvas()
-    kwargs: dict = {}
+    kwargs: dict[str, str] = {}
     if title:
         kwargs["title"] = title
     if message:
@@ -948,7 +953,7 @@ def sync(
 # ---------------------------------------------------------------------------
 
 
-def _resolve_assignment_group(c, group_name: str) -> int:  # noqa: ANN001
+def _resolve_assignment_group(c: CanvasClient, group_name: str) -> int:
     """Resolve an assignment group name to its Canvas ID (case-insensitive)."""
     groups = c.list_assignment_groups()
     key = group_name.lower()

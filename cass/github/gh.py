@@ -43,7 +43,7 @@ def check_auth() -> tuple[bool, str]:
     return True, "(authenticated)"
 
 
-def api(endpoint: str, paginate: bool = False) -> dict | list:
+def api(endpoint: str, paginate: bool = False) -> object:
     """Call `gh api` and return parsed JSON."""
     _require_gh()
     cmd = ["gh", "api", endpoint]
@@ -55,7 +55,7 @@ def api(endpoint: str, paginate: bool = False) -> dict | list:
     # --paginate can return multiple JSON arrays concatenated; merge them
     text = result.stdout.strip()
     if paginate and text.startswith("["):
-        merged = []
+        merged: list[object] = []
         decoder = json.JSONDecoder()
         pos = 0
         while pos < len(text):
@@ -65,7 +65,7 @@ def api(endpoint: str, paginate: bool = False) -> dict | list:
                 break
             obj, end = decoder.raw_decode(text, pos)
             if isinstance(obj, list):
-                merged.extend(obj)
+                merged.extend(obj)  # pyright: ignore[reportUnknownArgumentType]
             else:
                 merged.append(obj)
             pos = end
@@ -78,14 +78,12 @@ def api_cached(
     ttl_hours: float = 6,
     force_refresh: bool = False,
     paginate: bool = False,
-) -> dict | list:
+) -> object:
     """Cache-through wrapper around api()."""
     if not force_refresh:
         raw = cache.cache_load(endpoint, ttl_hours)
         if raw is not None:
-            cached = json.loads(raw)
-            if isinstance(cached, (dict, list)):
-                return cached
+            return json.loads(raw)
     data = api(endpoint, paginate=paginate)
     cache.cache_save(endpoint, json.dumps(data))
     return data

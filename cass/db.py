@@ -18,9 +18,11 @@ import duckdb
 from .config import get_config
 from .models import (
     Assignment,
+    CanvasAssignment,
     CanvasGrade,
     CanvasStudent,
     CanvasSubmission,
+    GHAssignment,
     GHGrade,
     GHSubmission,
     GHStudentInfo,
@@ -393,16 +395,16 @@ def students_exist() -> bool:
 # ---------------------------------------------------------------------------
 
 
-def save_gh_assignments(assignments: list) -> int:
+def save_gh_assignments(assignments: list[GHAssignment]) -> int:
     """Save GitHub assignments from GHAssignment API types."""
     conn = get_db()
     if not assignments:
         return 0
     from datetime import datetime
 
-    rows = []
+    rows: list[tuple[str, int, str, datetime | None, float, int, int, int]] = []
     for a in assignments:
-        deadline = None
+        deadline: datetime | None = None
         if a.deadline:
             try:
                 deadline = datetime.fromisoformat(a.deadline.replace("Z", "+00:00"))
@@ -416,8 +418,8 @@ def save_gh_assignments(assignments: list) -> int:
                 deadline,
                 1.0,
                 a.accepted,
-                getattr(a, "submissions", 0),
-                getattr(a, "passing", 0),
+                a.submissions,
+                a.passing,
             )
         )
     for row in rows:
@@ -441,7 +443,7 @@ def save_gh_assignments(assignments: list) -> int:
 
 
 def save_canvas_assignments(
-    assignments: list,
+    assignments: list[CanvasAssignment],
     group_names: dict[int, str] | None = None,
 ) -> int:
     """Save Canvas assignments from CanvasAssignment API types.
@@ -456,9 +458,9 @@ def save_canvas_assignments(
     from datetime import datetime
 
     groups = group_names or {}
-    rows = []
+    rows: list[tuple[int, str, float, datetime | None, bool, str, bool]] = []
     for a in assignments:
-        due_at = None
+        due_at: datetime | None = None
         if a.due_at:
             try:
                 due_at = datetime.fromisoformat(a.due_at.replace("Z", "+00:00"))

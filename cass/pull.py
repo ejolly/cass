@@ -17,7 +17,15 @@ from .config import Config
 from .github import classroom
 from .github import fetch as fetch_mod
 from .github.client import GitHubClient
-from .models import Assignment, CanvasGrade, GHGrade, Student
+from .models import (
+    Assignment,
+    CanvasAssignment,
+    CanvasGrade,
+    CanvasSubmission,
+    GHGrade,
+    GHSubmission,
+    Student,
+)
 
 # Course-specific constants for final project handling
 FINAL_PROJECT_SLUG = "final-project"
@@ -141,9 +149,9 @@ async def pull_assignments(
     existing_master = {a.slug: a for a in db.load_assignments()}
 
     # Build canvas assignment lookup by slug
-    from .canvas.matching import _slugify
+    from .canvas.matching import slugify as _slugify
 
-    canvas_by_slug: dict[str, object] = {}
+    canvas_by_slug: dict[str, CanvasAssignment] = {}
     for ca in canvas_assignments:
         canvas_by_slug[_slugify(ca.name)] = ca
 
@@ -246,7 +254,7 @@ async def pull_submissions(
     # GitHub submissions
     gh_assignments = [a for a in assignments if a.gh_assignment_slug]
     if gh_assignments and cfg.has_classroom and client is not None:
-        all_gh_subs = []
+        all_gh_subs: list[GHSubmission] = []
         for i, a in enumerate(gh_assignments, 1):
             console.print(
                 f"  Fetching GH submissions... ({i}/{len(gh_assignments)} {a.slug})"
@@ -286,7 +294,7 @@ async def pull_submissions(
     canvas_assignments = [a for a in assignments if a.canvas_assignment_id]
     if canvas_assignments:
         known_ids = {s.canvas_id for s in students}
-        all_canvas_subs = []
+        all_canvas_subs: list[CanvasSubmission] = []
         for a in canvas_assignments:
             subs = matching_mod.fetch_canvas_submissions(
                 cfg.canvas_course_id, a.canvas_assignment_id, known_ids
@@ -329,8 +337,6 @@ def pull_grades(console: Console) -> None:
 
     canvas_grades: list[CanvasGrade] = []
     for r in canvas_sub_rows:
-        from .models import CanvasSubmission
-
         sub = CanvasSubmission(
             canvas_user_id=r[0],
             canvas_assignment_id=r[1],
