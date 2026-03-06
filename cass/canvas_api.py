@@ -27,6 +27,7 @@ from .models import (
     CanvasAssignment,
     CanvasAssignmentGroup,
     CanvasCourse,
+    CanvasEnrollment,
     CanvasFile,
     CanvasFolder,
     CanvasGradingStandard,
@@ -264,6 +265,27 @@ class CanvasClient:
         """
         data = self._get_paginated(self._course("/sections"))
         return msgspec.convert(data, list[CanvasSection], strict=False)
+
+    # --- Enrollments ---
+
+    def list_enrollments(
+        self, *, enrollment_type: str = "StudentEnrollment"
+    ) -> list[CanvasEnrollment]:
+        """List enrollments with computed scores.
+
+        Args:
+            enrollment_type: Filter by type (default: StudentEnrollment).
+
+        Returns:
+            Enrollments including computed_final_score.
+        """
+        data = self._get_paginated(
+            self._course(
+                f"/enrollments?type[]={enrollment_type}"
+                "&state[]=active&include[]=total_scores"
+            )
+        )
+        return msgspec.convert(data, list[CanvasEnrollment], strict=False)
 
     # --- Grading Standards ---
 

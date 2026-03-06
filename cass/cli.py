@@ -969,6 +969,32 @@ def export_table(
         report.write_csv_file(f"{table}.csv", relation=result)
 
 
+@app.command()
+def egrades(
+    output: str = typer.Option("egrades.csv", "--output", "-o", help="Output CSV path"),
+) -> None:
+    """Export eGrades CSV for UCSD final grade submission.
+
+    Fetches computed final scores from Canvas enrollments, applies the course
+    grading scheme to convert to letter grades, and writes the 5-column CSV
+    (Last Name, First Name, Student ID, SectionId, Final_Assigned_Egrade).
+    """
+    from .egrades import generate_egrades
+
+    _require_canvas()
+
+    try:
+        path, count, warnings = generate_egrades(output)
+    except RuntimeError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(code=1) from None
+
+    for w in warnings:
+        console.print(f"[yellow]  ⚠ {w}[/yellow]")
+
+    console.print(f"\n[green]Wrote {count} student grades to {path}[/green]")
+
+
 @app.command(name="import")
 def import_csv(
     file: str = typer.Argument(..., help="CSV file to import"),

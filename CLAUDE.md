@@ -89,6 +89,8 @@ cass export grades --csv grades.csv       # export table to CSV
 cass export students --md roster.md       # export table to markdown
 cass import grades.csv                    # import CSV into DB (auto-detects table)
 cass import data.csv --table students     # import with explicit table target
+cass egrades                              # export eGrades CSV (UCSD final grade format)
+cass egrades -o custom.csv                # custom output path
 cass canvas                               # course overview with resource counts
 cass canvas people                        # enrolled students
 cass canvas modules                       # list modules (with items)
@@ -138,6 +140,7 @@ Python package (`cass/`) with Typer CLI, DuckDB storage, msgspec models, and Ric
 | `cass/classroom.py` | GH Classroom API: typed response structs, assignments, submissions, student discovery |
 | `cass/canvas.py` | Canvas business logic: roster matching, name normalization, grade sync |
 | `cass/canvas_api.py` | Canvas HTTP client: typed `CanvasClient`, retry transport, token management |
+| `cass/egrades.py` | eGrades CSV export: grading scheme conversion, UCSD format |
 | `cass/fetch.py` | Download student files from repos |
 | `cass/viewer/` | Browser-based DB viewer: stdlib HTTP server + AG Grid frontend |
 | `cass/report.py` | Rich tables, CSV, markdown output formatting |
@@ -315,7 +318,6 @@ Team: **Ejolly** (EJO). Issues are prefixed `EJO-NNN`.
 
 | Issue | Title | Priority | Status |
 |-------|-------|----------|--------|
-| EJO-327 | Grade posting policy: detect post_manually and post via GraphQL | High | Backlog |
 | EJO-328 | eGrades CSV export with grading scheme letter grade conversion | High | Backlog |
 | EJO-321 | User-friendly CLI commands for common data operations | High | Backlog |
 
@@ -323,6 +325,7 @@ Team: **Ejolly** (EJO). Issues are prefixed `EJO-NNN`.
 
 | Issue | Title | Priority | Status |
 |-------|-------|----------|--------|
+| EJO-327 | Grade posting policy: detect post_manually and post via GraphQL | High | Done |
 | EJO-326 | Bulk grade push via Canvas update_grades endpoint | Urgent | Done |
 | EJO-319 | Refactor data models: human-readable, self-documenting API + domain types | Urgent | Done |
 | EJO-320 | Data storage & collaboration: single .db as git-shared source of truth | Urgent | Done |

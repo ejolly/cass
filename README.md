@@ -111,6 +111,19 @@ All view commands support:
 ```bash
 cass grades push              # dry-run: preview what would be pushed to Canvas
 cass grades push --post       # actually push grades
+cass egrades                  # export eGrades CSV (UCSD final grade format)
+cass egrades -o custom.csv    # custom output path
+```
+
+Assignments with a manual posting policy (`post_manually`) are auto-posted after grade push — grades become visible to students in one step.
+
+### Export & import
+
+```bash
+cass export grades --csv grades.csv    # export table to CSV
+cass export students --md roster.md    # export table to markdown
+cass import grades.csv                 # import CSV into DB (auto-detects table)
+cass import data.csv --table students  # import with explicit table target
 ```
 
 ### File downloads
@@ -222,11 +235,12 @@ When both `[classroom]` and `[canvas]` are configured, `cass pull` will:
 | `pull.py` | Orchestrates the students → assignments → submissions → grades pipeline |
 | `classroom.py` | GitHub Classroom API — async with parallel per-student fetching |
 | `canvas.py` | Canvas business logic — roster matching, name normalization, grade sync |
-| `canvas_api.py` | Canvas HTTP client — typed `CanvasClient`, retry transport, token management |
+| `canvas_api.py` | Canvas HTTP client — typed `CanvasClient`, retry transport, GraphQL grade posting |
 | `github_client.py` | Async httpx GitHub API client with caching and concurrency control |
 | `gh.py` | Subprocess wrapper for `gh api` (used by fetch.py) |
 | `db.py` | DuckDB database — schema, CRUD for all tables, raw queries |
 | `cache.py` | API response cache in separate `.cass_cache.duckdb` file |
+| `egrades.py` | eGrades CSV export — grading scheme conversion, UCSD format |
 | `fetch.py` | Download student files from GitHub repos |
 | `viewer/` | Browser-based DB viewer — stdlib HTTP server + AG Grid frontend |
 | `report.py` | Output formatting — Rich tables, CSV, and markdown |
@@ -234,7 +248,7 @@ When both `[classroom]` and `[canvas]` are configured, `cass pull` will:
 
 ## Database schema
 
-The `cass.duckdb` file contains these tables (schema version 6). API cache lives in a separate `.cass_cache.duckdb` file to keep the shared DB lean.
+The `cass.duckdb` file contains these tables (schema version 9). API cache lives in a separate `.cass_cache.duckdb` file to keep the shared DB lean.
 
 **Source tables** (raw data from each platform):
 
