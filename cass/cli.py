@@ -212,70 +212,73 @@ _INIT_TOML = """\
 """
 
 
-@app.command(rich_help_panel="Setup")
-def init() -> None:
-    """Initialize a new project or check an existing setup."""
-    from . import canvas
-    from .config import (
-        check_prerequisites,
-        config_file_path,
-        reset_config,
-        write_config,
-    )
+def _verify_canvas_connection(base_url: str, token: str, course_id: int) -> str | None:
+    """Test Canvas connection, returning course name on success."""
+    import httpx as _httpx
 
-    cfg_path = config_file_path()
+    try:
+        resp = _httpx.get(
+            f"{base_url.rstrip('/')}/api/v1/courses/{course_id}",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10.0,
+        )
+        if resp.status_code == 200:
+            return resp.json().get("name")
+    except Exception:
+        pass
+    return None
 
-    if cfg_path is None:
-        cwd = Path.cwd()
-        toml_path = cwd / "cass.toml"
 
-        console.print("[bold]Setting up cass...[/bold]\n")
+def _verify_classroom_connection(classroom_id: int) -> str | None:
+    """Test GitHub Classroom connection, returning classroom name on success."""
+    from . import gh
 
-        classroom_id = 0
-        org = ""
-        canvas_base_url = ""
-        canvas_course_id = 0
+    if not gh.check_available():
+        return None
+    try:
+        data = gh.api(f"/classrooms/{classroom_id}")
+        if isinstance(data, dict):
+            return data.get("name")
+    except Exception:
+        pass
+    return None
 
-        if typer.confirm("Configure GitHub Classroom?", default=True):
-            raw = typer.prompt("  Classroom ID", default="0")
-            classroom_id = int(raw) if raw.strip() and raw.strip() != "0" else 0
-            org = typer.prompt("  GitHub org", default="").strip()
 
-        if typer.confirm("Configure Canvas LMS?", default=False):
-            canvas_base_url = typer.prompt(
-                "  Canvas base URL (e.g. https://canvas.ucsd.edu)"
-            )
-            raw = typer.prompt("  Canvas course ID", default="0")
-            canvas_course_id = int(raw) if raw.strip() and raw.strip() != "0" else 0
-            if canvas_base_url and canvas_course_id:
-                token = typer.prompt(
-                    "  Canvas API token (or Enter to skip)", default="", hide_input=True
-                )
-                if token.strip():
-                    write_config(
-                        toml_path, classroom_id, org, canvas_base_url, canvas_course_id
-                    )
-                    canvas.save_token(token)
-                    reset_config()
-                    console.print(f"\n[green]Created {toml_path.name}[/green]")
-                    return
+def _run_initial_pull() -> None:
+    """Run the full pull pipeline (students -> assignments -> submissions -> grades)."""
+    import asyncio
 
-        has_cc = bool(classroom_id and org)
-        has_cv = bool(canvas_base_url and canvas_course_id)
+    from . import pull as pull_mod
+    from .config import get_config
+    from .github_client import GitHubClient
 
-        if not has_cc and not has_cv:
-            toml_path.write_text(_INIT_TOML)
-            console.print(f"\n[green]Created {toml_path.name}[/green]")
-            console.print(
-                "Edit it with your settings, then run [bold]cass init[/bold] again."
-            )
-            return
+    cfg = get_config()
 
-        write_config(toml_path, classroom_id, org, canvas_base_url, canvas_course_id)
-        console.print(f"\n[green]Created {toml_path.name}[/green]")
-        return
+    async def _pull() -> None:
+        client = None
+        if cfg.has_classroom:
+            client = GitHubClient()
+        try:
+            await pull_mod.pull_students(client, cfg, console, 6.0, False)
+            await pull_mod.pull_assignments(client, cfg, console, 6.0, False)
+            await pull_mod.pull_submissions(client, cfg, console, 6.0, False)
+        finally:
+            if client:
+                await client.close()
 
-    # Config exists — run checks
+    try:
+        asyncio.run(_pull())
+        pull_mod.pull_grades(console)
+    except Exception as exc:
+        console.print(f"\n  [red]Pull failed:[/red] {exc}")
+        console.print("  Run [bold]cass pull[/bold] to retry.")
+
+
+def _init_check() -> None:
+    """Run prerequisite checks on an existing config."""
+    from . import db
+    from .config import check_prerequisites
+
     console.print("[bold]Checking setup...[/bold]\n")
     checks = check_prerequisites()
     all_ok = True
@@ -289,8 +292,177 @@ def init() -> None:
     console.print()
     if all_ok:
         console.print("[green]All checks passed![/green]")
+        try:
+            if not db.students_exist():
+                from rich.prompt import Confirm
+
+                console.print()
+                if Confirm.ask("  No student data yet. Pull now?", default=True):
+                    console.print()
+                    _run_initial_pull()
+        except Exception:
+            pass
     else:
         console.print("Fix the issues above and run [bold]cass init[/bold] again.")
+
+
+def _init_wizard() -> None:
+    """Interactive setup wizard for new projects."""
+    from rich.panel import Panel
+    from rich.prompt import Confirm, IntPrompt, Prompt
+
+    from . import canvas as canvas_mod
+    from .config import write_config
+
+    cwd = Path.cwd()
+    toml_path = cwd / "cass.toml"
+
+    # Welcome
+    console.print()
+    console.print(
+        Panel(
+            "  Let's set up your grading project.\n"
+            "  Configure [bold]Canvas LMS[/bold], [bold]GitHub Classroom[/bold], or both.",
+            title="[bold]cass[/bold] setup",
+            title_align="left",
+            border_style="blue",
+            padding=(1, 1),
+        )
+    )
+
+    # --- Canvas LMS ---
+    canvas_base_url = ""
+    canvas_course_id = 0
+    canvas_token = ""
+
+    console.rule("[bold]Canvas LMS[/bold]", style="blue")
+    console.print()
+
+    if Confirm.ask("  Configure Canvas LMS?", default=True):
+        canvas_base_url = (
+            Prompt.ask("  Canvas URL [dim](e.g. https://canvas.ucsd.edu)[/dim]")
+            .strip()
+            .rstrip("/")
+        )
+        canvas_course_id = IntPrompt.ask("  Course ID")
+
+        console.print(
+            f"\n  [dim]Generate a token at {canvas_base_url}/profile/settings[/dim]"
+        )
+        console.print("  [dim]Press Enter to skip (set $CANVAS_TOKEN later)[/dim]")
+        canvas_token = Prompt.ask(
+            "  API token", password=True, default="", show_default=False
+        ).strip()
+
+        if canvas_base_url and canvas_course_id and canvas_token:
+            with console.status("  Verifying Canvas connection...", spinner="dots"):
+                course_name = _verify_canvas_connection(
+                    canvas_base_url, canvas_token, canvas_course_id
+                )
+            if course_name:
+                console.print(
+                    f"  [green]✓[/green] Connected — [bold]{course_name}[/bold]"
+                )
+            else:
+                console.print(
+                    "  [yellow]⚠[/yellow] Could not verify connection. "
+                    "Check your URL, course ID, and token."
+                )
+                if not Confirm.ask("  Save anyway?", default=True):
+                    canvas_base_url = ""
+                    canvas_course_id = 0
+                    canvas_token = ""
+
+    # --- GitHub Classroom ---
+    classroom_id = 0
+    org = ""
+
+    console.print()
+    console.rule("[bold]GitHub Classroom[/bold] [dim](optional)[/dim]", style="blue")
+    console.print()
+
+    if Confirm.ask("  Configure GitHub Classroom?", default=False):
+        from . import gh
+
+        if gh.check_available():
+            authed, detail = gh.check_auth()
+            if authed:
+                console.print(
+                    f"  [green]✓[/green] gh authenticated as [bold]{detail}[/bold]"
+                )
+            else:
+                console.print(f"  [yellow]⚠[/yellow] gh not authenticated — {detail}")
+                console.print("    Run [bold]gh auth login[/bold] first.")
+        else:
+            console.print(
+                "  [yellow]⚠[/yellow] gh CLI not found — "
+                "install from [bold]https://cli.github.com/[/bold]"
+            )
+
+        console.print()
+        org = Prompt.ask("  GitHub org").strip()
+        classroom_id = IntPrompt.ask("  Classroom ID")
+
+        if classroom_id:
+            with console.status("  Verifying classroom...", spinner="dots"):
+                classroom_name = _verify_classroom_connection(classroom_id)
+            if classroom_name:
+                console.print(
+                    f"  [green]✓[/green] Found — [bold]{classroom_name}[/bold]"
+                )
+            else:
+                console.print(
+                    "  [yellow]⚠[/yellow] Could not verify classroom. "
+                    "Check the ID and [bold]gh auth status[/bold]."
+                )
+
+    # --- Write config ---
+    has_cc = bool(classroom_id and org)
+    has_cv = bool(canvas_base_url and canvas_course_id)
+
+    console.print()
+    console.rule("[bold]Summary[/bold]", style="blue")
+    console.print()
+
+    if not has_cc and not has_cv:
+        toml_path.write_text(_INIT_TOML)
+        console.print(
+            f"  [green]✓[/green] Created {toml_path.name} [dim](template)[/dim]"
+        )
+        console.print(
+            "\n  Edit it with your settings, then run [bold]cass init[/bold] again."
+        )
+        console.print()
+        return
+
+    write_config(toml_path, classroom_id, org, canvas_base_url, canvas_course_id)
+    console.print(f"  [green]✓[/green] Created [bold]{toml_path.name}[/bold]")
+
+    if canvas_token:
+        canvas_mod.save_token(canvas_token)
+        console.print("  [green]✓[/green] Saved [bold]canvas-token.txt[/bold]")
+        console.print("    [dim]Add canvas-token.txt to .gitignore[/dim]")
+
+    console.print()
+    if Confirm.ask("  Pull data now?", default=True):
+        console.print()
+        _run_initial_pull()
+    else:
+        console.print("\n  Run [bold]cass pull[/bold] when you're ready.")
+
+    console.print()
+
+
+@app.command(rich_help_panel="Setup")
+def init() -> None:
+    """Initialize a new project or check an existing setup."""
+    from .config import config_file_path
+
+    cfg_path = config_file_path()
+    if cfg_path is not None:
+        _init_check()
+    else:
+        _init_wizard()
 
 
 # ---------------------------------------------------------------------------
