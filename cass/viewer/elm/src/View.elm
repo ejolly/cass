@@ -69,7 +69,7 @@ view model =
             , Font.typeface "Roboto"
             , Font.sansSerif
             ]
-        , Font.size 13
+        , Font.size Theme.textBase
         , Font.color p.text
         , Background.color p.bg
         , htmlAttribute (Html.Events.preventDefaultOn "keydown" keyDecoder)
@@ -137,7 +137,7 @@ viewSidebar p model =
             , scrollbarY
             ]
             [ viewSidebarHeader p
-            , column [ width fill, paddingEach { top = 4, right = 0, bottom = 4, left = 0 } ]
+            , column [ width fill, paddingXY 0 Theme.sp1 ]
                 (viewTableGroups p model)
             ]
 
@@ -146,12 +146,12 @@ viewSidebarHeader : Palette -> Element Msg
 viewSidebarHeader p =
     row
         [ width fill
-        , paddingXY 16 12
+        , paddingXY Theme.sp4 Theme.sp3
         , Border.widthEach { bottom = 1, left = 0, right = 0, top = 0 }
         , Border.color p.border
         ]
         [ el
-            [ Font.size 15
+            [ Font.size Theme.textSm
             , Font.bold
             , Font.color p.textDim
             , Font.letterSpacing 0.8
@@ -162,10 +162,10 @@ viewSidebarHeader p =
         -- In Tailwind: `ml-auto`. In Svelte: `style="margin-left: auto"`.
         , Input.button
             [ alignRight
-            , Font.size 18
+            , Font.size Theme.textLg
             , Font.color p.textDim
-            , padding 4
-            , Border.rounded 4
+            , padding Theme.sp1
+            , Border.rounded Theme.rounded
             , mouseOver [ Background.color p.sidebarActive ]
             ]
             { onPress = Just ToggleSidebar
@@ -191,13 +191,13 @@ viewTableGroups p model =
                 []
 
             else
-                [ column [ width fill, paddingEach { top = 0, right = 0, bottom = 4, left = 0 } ]
+                [ column [ width fill, paddingEach { top = 0, right = 0, bottom = Theme.sp1, left = 0 } ]
                     (el
-                        [ Font.size 10
+                        [ Font.size Theme.textXxs
                         , Font.semiBold
                         , Font.color p.textDim
                         , Font.letterSpacing 0.6
-                        , paddingEach { top = 14, right = 16, bottom = 4, left = 16 }
+                        , paddingEach { top = Theme.sp3, right = Theme.sp4, bottom = Theme.sp1, left = Theme.sp4 }
                         ]
                         (text (String.toUpper label))
                         :: List.map (viewTableItem p model.selectedTable) items
@@ -232,9 +232,9 @@ viewTableItem p selected t =
     in
     Input.button
         ([ width fill
-         , paddingXY 16 7
+         , paddingXY Theme.sp4 Theme.sp2
          , Font.family Theme.mono
-         , Font.size 13
+         , Font.size Theme.textBase
          , bgAttr
          , fontColorAttr
          ]
@@ -273,15 +273,15 @@ viewSidebarToggle : Palette -> Element Msg
 viewSidebarToggle p =
     Input.button
         [ alignLeft
-        , moveDown 10
-        , moveRight 8
-        , padding 4
-        , Font.size 18
+        , moveDown (toFloat Theme.sp25)
+        , moveRight (toFloat Theme.sp2)
+        , padding Theme.sp1
+        , Font.size Theme.textLg
         , Font.color p.textDim
         , Background.color p.sidebarBg
         , Border.width 1
         , Border.color p.border
-        , Border.rounded 4
+        , Border.rounded Theme.rounded
         , mouseOver [ Background.color p.sidebarActive ]
         ]
         { onPress = Just ToggleSidebar
@@ -298,21 +298,21 @@ viewToolbar p model =
     -- `row` with `spacing` = Tailwind `flex items-center gap-2.5`
     row
         [ width fill
-        , paddingXY 16 8
-        , spacing 10
+        , paddingXY Theme.sp4 Theme.sp2
+        , spacing Theme.sp25
         , Border.widthEach { bottom = 1, left = 0, right = 0, top = 0 }
         , Border.color p.border
-        , height (px 44)
+        , height (px Theme.toolbarHeight)
         ]
-        [ el [ Font.semiBold, Font.size 14 ]
+        [ el [ Font.semiBold, Font.size Theme.textSm ]
             (text (Maybe.withDefault "" model.selectedTable))
         , viewBadge p model
-        , el [ Font.size 12, Font.color p.textDim ]
+        , el [ Font.size Theme.textXs, Font.color p.textDim ]
             (text (rowCountText model))
 
         -- alignRight on this row pushes it to the far right.
         -- Equivalent to Tailwind's `ml-auto` on a flex child.
-        , row [ alignRight, spacing 8 ]
+        , row [ alignRight, spacing Theme.sp2 ]
             [ viewSearchBox p model
             , viewExportButton p model
             , viewPushButton p model
@@ -337,13 +337,13 @@ viewBadge p model =
                         ( "READ-ONLY", p.badgeBg, p.badgeText )
             in
             el
-                [ Font.size 10
+                [ Font.size Theme.textXxs
                 , Font.semiBold
                 , Font.letterSpacing 0.3
                 , Font.color textColor
                 , Background.color bgColor
-                , paddingXY 7 2
-                , Border.rounded 4
+                , paddingXY Theme.sp2 Theme.sp05
+                , Border.rounded Theme.rounded
                 ]
                 (text label)
 
@@ -357,12 +357,12 @@ viewSearchBox p model =
     -- In Svelte: <input bind:value={searchText} on:input={handleSearch}>
     -- In elm-ui: the `onChange` is baked into the Input.text config.
     Input.text
-        [ width (px 200)
-        , Font.size 13
-        , paddingXY 10 5
+        [ width (px Theme.searchBoxWidth)
+        , Font.size Theme.textBase
+        , paddingXY Theme.sp25 Theme.sp15
         , Border.width 1
         , Border.color p.inputBorder
-        , Border.rounded 6
+        , Border.rounded Theme.roundedMd
         , Background.color p.inputBg
         , Font.color p.text
         , htmlAttribute (Html.Attributes.id "search-box")
@@ -392,11 +392,11 @@ viewExportButton p model =
     case model.selectedTable of
         Just _ ->
             Input.button
-                [ Font.size 12
-                , paddingXY 10 5
+                [ Font.size Theme.textXs
+                , paddingXY Theme.sp25 Theme.sp15
                 , Border.width 1
                 , Border.color p.inputBorder
-                , Border.rounded 6
+                , Border.rounded Theme.roundedMd
                 , Background.color p.inputBg
                 , Font.color p.text
                 , mouseOver
@@ -416,12 +416,12 @@ viewPushButton : Palette -> Model -> Element Msg
 viewPushButton p model =
     if model.pendingCount > 0 then
         Input.button
-            [ Font.size 12
+            [ Font.size Theme.textXs
             , Font.semiBold
-            , paddingXY 10 5
+            , paddingXY Theme.sp25 Theme.sp15
             , Border.width 1
             , Border.color p.accent
-            , Border.rounded 6
+            , Border.rounded Theme.roundedMd
             , Background.color p.accentLight
             , Font.color p.accent
             , mouseOver
@@ -431,16 +431,16 @@ viewPushButton p model =
             ]
             { onPress = Just OpenPushModal
             , label =
-                row [ spacing 5 ]
+                row [ spacing Theme.sp1 ]
                     [ text "Push to Canvas"
                     , el
-                        [ Font.size 10
+                        [ Font.size Theme.textXxs
                         , Font.semiBold
                         , Font.color p.white
                         , Font.center
                         , Background.color p.accent
-                        , Border.rounded 9
-                        , paddingXY 4 0
+                        , Border.rounded Theme.roundedFull
+                        , paddingXY Theme.sp1 0
                         , width (minimum 18 shrink)
                         , height (px 18)
                         ]
@@ -468,7 +468,7 @@ viewStatusMessage p model =
                         Error ->
                             p.error
             in
-            el [ Font.size 12, Font.color fontColor ]
+            el [ Font.size Theme.textXs, Font.color fontColor ]
                 (text status.text)
 
         Nothing ->
@@ -506,10 +506,10 @@ viewGridArea p model =
                         (text err)
 
                 Nothing ->
-                    column [ centerX, centerY, spacing 8 ]
-                        [ el [ centerX, Font.color p.textDim, Font.size 14 ]
+                    column [ centerX, centerY, spacing Theme.sp2 ]
+                        [ el [ centerX, Font.color p.textDim, Font.size Theme.textSm ]
                             (text "Select a table from the sidebar")
-                        , el [ centerX, Font.size 12, Font.color p.textFaint ]
+                        , el [ centerX, Font.size Theme.textXs, Font.color p.textFaint ]
                             (text "Use ⌘K to search within a table")
                         ]
 
@@ -520,21 +520,21 @@ viewEditBar : Palette -> EditState -> Element Msg
 viewEditBar p ed =
     row
         [ width fill
-        , paddingXY 16 8
-        , spacing 10
+        , paddingXY Theme.sp4 Theme.sp2
+        , spacing Theme.sp25
         , Background.color p.accentLight
         , Border.widthEach { bottom = 1, left = 0, right = 0, top = 0 }
         , Border.color p.accent
         ]
-        [ el [ Font.size 12, Font.semiBold, Font.color p.accent ]
+        [ el [ Font.size Theme.textXs, Font.semiBold, Font.color p.accent ]
             (text ("Editing: " ++ ed.column))
         , Input.text
-            [ width (px 300)
-            , Font.size 13
-            , paddingXY 10 5
+            [ width (px Theme.editInputWidth)
+            , Font.size Theme.textBase
+            , paddingXY Theme.sp25 Theme.sp15
             , Border.width 1
             , Border.color p.accent
-            , Border.rounded 4
+            , Border.rounded Theme.rounded
             , Background.color p.inputBg
             , Font.color p.text
             , htmlAttribute (Html.Attributes.id "cell-editor")
@@ -562,9 +562,9 @@ viewEditBar p ed =
             , label = Input.labelHidden "Edit cell value"
             }
         , Input.button
-            [ Font.size 12
-            , paddingXY 10 5
-            , Border.rounded 4
+            [ Font.size Theme.textXs
+            , paddingXY Theme.sp25 Theme.sp15
+            , Border.rounded Theme.rounded
             , Background.color p.accent
             , Font.color p.white
             , mouseOver [ alpha 0.9 ]
@@ -573,9 +573,9 @@ viewEditBar p ed =
             , label = text "Save"
             }
         , Input.button
-            [ Font.size 12
-            , paddingXY 10 5
-            , Border.rounded 4
+            [ Font.size Theme.textXs
+            , paddingXY Theme.sp25 Theme.sp15
+            , Border.rounded Theme.rounded
             , Border.width 1
             , Border.color p.inputBorder
             , Background.color p.inputBg
@@ -607,14 +607,14 @@ viewModal p model =
         (el
             [ centerX
             , centerY
-            , width (px 640)
-            , height (maximum 600 shrink)
+            , width (px Theme.modalWidth)
+            , height (maximum Theme.modalMaxHeight shrink)
             , Background.color p.bg
-            , Border.rounded 12
+            , Border.rounded Theme.roundedXl
             , Border.width 1
             , Border.color p.border
             , Border.shadow
-                { offset = ( 0, 20 )
+                { offset = ( 0, Theme.sp5 |> toFloat )
                 , size = 0
                 , blur = 60
                 , color = rgba 0 0 0 0.3
@@ -634,17 +634,17 @@ viewModalHeader : Palette -> Element Msg
 viewModalHeader p =
     row
         [ width fill
-        , paddingXY 20 16
+        , paddingXY Theme.sp5 Theme.sp4
         , Border.widthEach { bottom = 1, left = 0, right = 0, top = 0 }
         , Border.color p.border
         ]
-        [ el [ Font.semiBold, Font.size 14 ] (text "Push to Canvas")
+        [ el [ Font.semiBold, Font.size Theme.textSm ] (text "Push to Canvas")
         , Input.button
             [ alignRight
-            , padding 4
-            , Font.size 18
+            , padding Theme.sp1
+            , Font.size Theme.textLg
             , Font.color p.textDim
-            , Border.rounded 4
+            , Border.rounded Theme.rounded
             , mouseOver [ Background.color p.sidebarActive ]
             ]
             { onPress = Just ClosePushModal
@@ -660,7 +660,7 @@ viewModalBody : Palette -> Model -> Element Msg
 viewModalBody p model =
     el
         [ width fill
-        , paddingXY 20 16
+        , paddingXY Theme.sp5 Theme.sp4
         , scrollbarY
         , height (fill |> minimum 100)
         ]
@@ -698,7 +698,7 @@ viewPreviewChanges p preview =
             gradeChanges =
                 List.filter (\c -> c.table == "canvas_grades") preview.changes
         in
-        column [ width fill, spacing 16 ]
+        column [ width fill, spacing Theme.sp4 ]
             [ if List.isEmpty assignmentChanges then
                 none
 
@@ -712,12 +712,12 @@ viewPreviewChanges p preview =
             , if preview.hasConflicts then
                 el
                     [ width fill
-                    , padding 12
+                    , padding Theme.sp3
                     , Background.color (rgba 220 38 38 0.08)
                     , Border.width 1
                     , Border.color (rgba 220 38 38 0.25)
-                    , Border.rounded 6
-                    , Font.size 12
+                    , Border.rounded Theme.roundedMd
+                    , Font.size Theme.textXs
                     , Font.color p.error
                     ]
                     (text "Some Canvas values differ from when you last pulled. Pushing will overwrite the current Canvas values.")
@@ -736,8 +736,8 @@ both use `width fill` on each cell.
 -}
 viewChangeTable : Palette -> String -> List String -> List CanvasChange -> (Palette -> CanvasChange -> Element Msg) -> Element Msg
 viewChangeTable p title headers changes rowView =
-    column [ width fill, spacing 6 ]
-        [ el [ Font.semiBold, Font.size 13 ] (text title)
+    column [ width fill, spacing Theme.sp15 ]
+        [ el [ Font.semiBold, Font.size Theme.textBase ] (text title)
         , column [ width fill ]
             (row
                 [ width fill
@@ -748,8 +748,8 @@ viewChangeTable p title headers changes rowView =
                     (\h ->
                         el
                             [ width fill
-                            , paddingXY 10 6
-                            , Font.size 11
+                            , paddingXY Theme.sp25 Theme.sp15
+                            , Font.size Theme.textXxs
                             , Font.color p.textDim
                             , Font.semiBold
                             ]
@@ -766,14 +766,14 @@ viewAssignmentRow : Palette -> CanvasChange -> Element Msg
 viewAssignmentRow p ch =
     case ch.error of
         Just err ->
-            row [ width fill, paddingXY 10 6, Font.size 13, Font.color p.error ]
+            row [ width fill, paddingXY Theme.sp25 Theme.sp15, Font.size Theme.textBase, Font.color p.error ]
                 [ text (ch.name ++ ": " ++ err) ]
 
         Nothing ->
             row
                 [ width fill
-                , paddingXY 10 6
-                , Font.size 13
+                , paddingXY Theme.sp25 Theme.sp15
+                , Font.size Theme.textBase
                 , Border.widthEach { bottom = 1, left = 0, right = 0, top = 0 }
                 , Border.color p.border
                 , if ch.conflict then
@@ -784,7 +784,7 @@ viewAssignmentRow p ch =
                 ]
                 [ el [ width fill ] (text ch.name)
                 , el [ width fill ]
-                    (row [ spacing 4 ]
+                    (row [ spacing Theme.sp1 ]
                         [ text ch.column
                         , if ch.conflict then
                             el [ Font.color p.error ] (text "⚠")
@@ -802,14 +802,14 @@ viewGradeRow : Palette -> CanvasChange -> Element Msg
 viewGradeRow p ch =
     case ch.error of
         Just err ->
-            row [ width fill, paddingXY 10 6, Font.size 13, Font.color p.error ]
+            row [ width fill, paddingXY Theme.sp25 Theme.sp15, Font.size Theme.textBase, Font.color p.error ]
                 [ text (ch.name ++ ": " ++ err) ]
 
         Nothing ->
             row
                 [ width fill
-                , paddingXY 10 6
-                , Font.size 13
+                , paddingXY Theme.sp25 Theme.sp15
+                , Font.size Theme.textBase
                 , Border.widthEach { bottom = 1, left = 0, right = 0, top = 0 }
                 , Border.color p.border
                 , if ch.conflict then
@@ -819,7 +819,7 @@ viewGradeRow p ch =
                     Background.color (rgba 0 0 0 0)
                 ]
                 [ el [ width fill ]
-                    (row [ spacing 4 ]
+                    (row [ spacing Theme.sp1 ]
                         [ text ch.name
                         , if ch.conflict then
                             el [ Font.color p.error ] (text "⚠")
@@ -842,7 +842,7 @@ viewPushResults p results =
         failed =
             List.filter (\r -> not r.ok) results
     in
-    column [ width fill, spacing 8 ]
+    column [ width fill, spacing Theme.sp2 ]
         [ el [ Font.semiBold ]
             (text
                 (String.fromInt (List.length succeeded)
@@ -851,15 +851,15 @@ viewPushResults p results =
                     ++ " failed:"
                 )
             )
-        , column [ width fill, spacing 4 ]
+        , column [ width fill, spacing Theme.sp1 ]
             (List.map
                 (\r ->
                     if r.ok then
-                        el [ Font.color p.success, paddingXY 0 2 ]
+                        el [ Font.color p.success, paddingXY 0 Theme.sp05 ]
                             (text ("✓ Assignment " ++ (r.canvasId |> Maybe.map String.fromInt |> Maybe.withDefault "?")))
 
                     else
-                        el [ Font.color p.error, paddingXY 0 2 ]
+                        el [ Font.color p.error, paddingXY 0 Theme.sp05 ]
                             (text
                                 ("✗ Assignment "
                                     ++ (r.canvasId |> Maybe.map String.fromInt |> Maybe.withDefault "?")
@@ -880,20 +880,20 @@ viewModalFooter : Palette -> Model -> Element Msg
 viewModalFooter p model =
     row
         [ width fill
-        , paddingXY 20 12
-        , spacing 8
+        , paddingXY Theme.sp5 Theme.sp3
+        , spacing Theme.sp2
         , Border.widthEach { bottom = 0, left = 0, right = 0, top = 1 }
         , Border.color p.border
         , alignBottom
         ]
         [ el [ alignRight ] none
-        , row [ alignRight, spacing 8 ]
+        , row [ alignRight, spacing Theme.sp2 ]
             [ Input.button
-                [ Font.size 12
-                , paddingXY 14 6
+                [ Font.size Theme.textXs
+                , paddingXY Theme.sp3 Theme.sp15
                 , Border.width 1
                 , Border.color p.inputBorder
-                , Border.rounded 6
+                , Border.rounded Theme.roundedMd
                 , Background.color p.inputBg
                 , Font.color p.text
                 , mouseOver [ Border.color p.accent ]
@@ -917,10 +917,10 @@ viewModalFooter p model =
                     in
                     if pushableCount > 0 then
                         Input.button
-                            [ Font.size 12
+                            [ Font.size Theme.textXs
                             , Font.semiBold
-                            , paddingXY 14 6
-                            , Border.rounded 6
+                            , paddingXY Theme.sp3 Theme.sp15
+                            , Border.rounded Theme.roundedMd
                             , Background.color p.accent
                             , Font.color p.white
                             , mouseOver [ alpha 0.9 ]
@@ -934,10 +934,10 @@ viewModalFooter p model =
 
                 ModalPushing _ ->
                     el
-                        [ Font.size 12
+                        [ Font.size Theme.textXs
                         , Font.semiBold
-                        , paddingXY 14 6
-                        , Border.rounded 6
+                        , paddingXY Theme.sp3 Theme.sp15
+                        , Border.rounded Theme.roundedMd
                         , Background.color p.accent
                         , Font.color p.white
                         , alpha 0.5
@@ -1075,9 +1075,9 @@ initGrid colNames colTypes tableName primaryKeys rows model =
             model.windowWidth - sidebarW
 
         -- containerHeight is the grid BODY height (excludes header).
-        -- Available = viewport - toolbar(44px) - grid header(36px)
+        -- Available = viewport - toolbar - grid header
         gridHeight =
-            model.windowHeight - 44 - 36
+            model.windowHeight - Theme.toolbarHeight - Theme.gridHeaderHeight
 
         gridConfig : Grid.Config Row
         gridConfig =
@@ -1086,8 +1086,8 @@ initGrid colNames colTypes tableName primaryKeys rows model =
             , containerHeight = gridHeight
             , containerWidth = gridWidth
             , hasFilters = True
-            , headerHeight = 36
-            , lineHeight = 32
+            , headerHeight = Theme.gridHeaderHeight
+            , lineHeight = Theme.sp8
             , rowClass =
                 \item ->
                     if tableName == "canvas_assignments" then
