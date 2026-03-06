@@ -173,7 +173,7 @@ def people(
 @modules_app.callback()
 def modules_callback(
     ctx: typer.Context,
-    module_id: str = typer.Argument("", help="Module ID or name to show items"),
+    module_id: str = typer.Option("", "--id", help="Module ID or name to show items"),
     csv_out: str = typer.Option("", "--csv", help="Export as CSV file"),
     save: str = typer.Option("", "--save", help="Save output as markdown file"),
 ) -> None:
@@ -312,7 +312,9 @@ def modules_add_item(
 @assignments_app.callback()
 def assignments_callback(
     ctx: typer.Context,
-    assignment_id: str = typer.Argument("", help="Assignment ID or name for details"),
+    assignment_id: str = typer.Option(
+        "", "--id", help="Assignment ID or name for details"
+    ),
     csv_out: str = typer.Option("", "--csv", help="Export as CSV file"),
     save: str = typer.Option("", "--save", help="Save output as markdown file"),
 ) -> None:
@@ -393,6 +395,9 @@ def assignment_groups(
 @assignments_app.command(name="create")
 def assignments_create(
     name: str = typer.Argument(..., help="Assignment name"),
+    group: str = typer.Option(
+        ..., "--group", help="Assignment group name (e.g. 'Homeworks', 'Labs')"
+    ),
     points: float = typer.Option(0, "--points", help="Points possible"),
     due: str = typer.Option("", "--due", help="Due date (ISO 8601)"),
     sub_type: str = typer.Option(
@@ -401,11 +406,11 @@ def assignments_create(
         help="Submission type (online_url, online_upload, online_text_entry, etc.)",
     ),
     publish: bool = typer.Option(False, "--publish", help="Publish immediately"),
-    group_id: int | None = typer.Option(None, "--group-id", help="Assignment group ID"),
 ) -> None:
     """Create a new assignment."""
     _require_canvas()
     with _client() as c:
+        group_id = _resolve_assignment_group(c, group)
         a = c.create_assignment(
             name,
             points_possible=points,
@@ -941,6 +946,19 @@ def sync(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _resolve_assignment_group(c, group_name: str) -> int:  # noqa: ANN001
+    """Resolve an assignment group name to its Canvas ID (case-insensitive)."""
+    groups = c.list_assignment_groups()
+    key = group_name.lower()
+    for g in groups:
+        if g.name.lower() == key:
+            return g.id
+    names = ", ".join(g.name for g in sorted(groups, key=lambda g: g.position))
+    console.print(f"[red]Unknown assignment group:[/red] {group_name}")
+    console.print(f"[dim]Available groups: {names}[/dim]")
+    raise typer.Exit(code=1)
 
 
 def _pub(val: bool | None) -> str:
