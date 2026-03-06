@@ -75,6 +75,10 @@ cass grades push                          # dry-run grade sync to Canvas
 cass grades push --post                   # actually push grades
 cass fetch hw-01                          # download student files
 cass fetch all --force                    # re-download existing
+cass backup                               # timestamped backup to backups/
+cass backup --tag "pre-regrade"           # backup with descriptive tag
+cass backup --list                        # list existing backups
+cass restore backups/cass_2026-03-05.duckdb  # restore from backup (with confirmation)
 cass query "SELECT * FROM students"       # raw DuckDB SQL query
 cass query                                # interactive DuckDB REPL
 cass view                                 # open cass.duckdb in Dataflare (GUI viewer)
@@ -123,7 +127,7 @@ Python package (`cass/`) with Typer CLI, DuckDB storage, msgspec models, and Ric
 | `cass/__init__.py` | Package version |
 | `cass/models/` | msgspec.Struct types split into domain.py, github_api.py, canvas_api.py, grading.py |
 | `cass/config.py` | Config discovery (finds `cass.toml`), `has_classroom`/`has_canvas` properties |
-| `cass/cli.py` | Typer app (status, init, students, assignments, submissions, grades, fetch, query, db, export, import) |
+| `cass/cli.py` | Typer app (status, init, students, assignments, submissions, grades, fetch, backup, restore, query, db, export, import) |
 | `cass/cli_canvas.py` | `cass canvas` subcommands: browse and modify Canvas course content |
 | `cass/github_client.py` | Async httpx GitHub API client with caching and concurrency control |
 | `cass/pull.py` | Pull orchestration: students, assignments, submissions, grades, fetch phases |

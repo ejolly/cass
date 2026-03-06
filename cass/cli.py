@@ -635,6 +635,136 @@ def drop(
 
 
 # ---------------------------------------------------------------------------
+# cass backup / cass restore
+# ---------------------------------------------------------------------------
+
+
+def _ensure_backups_gitignored(project_root: Path) -> None:
+    """Append backups/ to .gitignore if not already present."""
+    gitignore = project_root / ".gitignore"
+    if gitignore.exists():
+        text = gitignore.read_text()
+        if "backups/" in text:
+            return
+        gitignore.write_text(text.rstrip("\n") + "\nbackups/\n")
+    else:
+        gitignore.write_text("backups/\n")
+
+
+@app.command()
+def backup(
+    tag: str = typer.Option("", "--tag", "-t", help="Tag appended to filename"),
+    list_backups: bool = typer.Option(
+        False, "--list", "-l", help="List existing backups"
+    ),
+) -> None:
+    """Save a timestamped copy of the database to backups/."""
+    import shutil
+    from datetime import datetime
+
+    from . import db
+
+    db_file = Path(db.db_path())
+    backups_dir = db_file.parent / "backups"
+
+    if list_backups:
+        if not backups_dir.exists():
+            console.print("[dim]No backups directory.[/dim]")
+            return
+        files = sorted(backups_dir.glob("cass_*.duckdb"))
+        if not files:
+            console.print("[dim]No backups found.[/dim]")
+            return
+        for f in files:
+            size_kb = f.stat().st_size / 1024
+            console.print(f"  {f.name}  [dim]({size_kb:.0f} KB)[/dim]")
+        return
+
+    if not db_file.exists():
+        console.print(
+            "[yellow]No database to back up. Run [bold]cass pull[/bold] first.[/yellow]"
+        )
+        raise typer.Exit(code=1)
+
+    backups_dir.mkdir(exist_ok=True)
+    _ensure_backups_gitignored(db_file.parent)
+
+    stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    suffix = f"_{tag}" if tag else ""
+    dest = backups_dir / f"cass_{stamp}{suffix}.duckdb"
+
+    db.reset()
+    shutil.copy2(str(db_file), str(dest))
+
+    size_kb = dest.stat().st_size / 1024
+    console.print(
+        f"[green]Backed up → {dest.relative_to(db_file.parent)} ({size_kb:.0f} KB)[/green]"
+    )
+
+
+@app.command()
+def restore(
+    file: str = typer.Argument(..., help="Path to a .duckdb backup file"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+) -> None:
+    """Replace the current database with a backup file."""
+    import shutil
+
+    import duckdb as _duckdb
+
+    from . import db
+
+    src = Path(file)
+    if not src.exists():
+        console.print(f"[red]File not found: {file}[/red]")
+        raise typer.Exit(code=1)
+    if src.suffix != ".duckdb":
+        console.print("[red]Expected a .duckdb file.[/red]")
+        raise typer.Exit(code=1)
+
+    # Validate the backup
+    try:
+        backup_conn = _duckdb.connect(str(src), read_only=True)
+        row = backup_conn.execute(
+            "SELECT value FROM meta WHERE key = 'schema_version'"
+        ).fetchone()
+        version = int(row[0]) if row else 0
+        counts: dict[str, int] = {}
+        for tbl in ("students", "assignments"):
+            try:
+                r = backup_conn.execute(f"SELECT COUNT(*) FROM {tbl}").fetchone()
+                counts[tbl] = r[0] if r else 0
+            except Exception:
+                counts[tbl] = 0
+        backup_conn.close()
+    except Exception as e:
+        console.print(f"[red]Invalid database file: {e}[/red]")
+        raise typer.Exit(code=1)
+
+    src_kb = src.stat().st_size / 1024
+    console.print(f"  Backup: [bold]{src.name}[/bold] ({src_kb:.0f} KB)")
+    console.print(f"  Schema version: {version}")
+    console.print(
+        f"  Students: {counts['students']}, Assignments: {counts['assignments']}"
+    )
+
+    db_file = Path(db.db_path())
+    if db_file.exists():
+        cur_kb = db_file.stat().st_size / 1024
+        console.print(f"  Current DB: {db_file.name} ({cur_kb:.0f} KB)")
+    else:
+        console.print("  Current DB: [dim]none[/dim]")
+
+    if not yes:
+        if not typer.confirm("\nReplace current database with this backup?"):
+            raise typer.Abort()
+
+    db.reset()
+    shutil.copy2(str(src), str(db_file))
+    console.print(f"[green]Restored {src.name} → {db_file.name}[/green]")
+
+
+# ---------------------------------------------------------------------------
 # cass query
 # ---------------------------------------------------------------------------
 
