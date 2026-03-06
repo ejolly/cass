@@ -46,275 +46,26 @@ __all__ = [
     "track_change",
 ]
 
-
-# ---------------------------------------------------------------------------
-# CSS
-# ---------------------------------------------------------------------------
-
-_CUSTOM_CSS = """
-/* Sidebar styling */
-.sidebar {
-    width: 14rem;
-    min-width: 14rem;
-    background: var(--q-dark-page, #1d1d1d);
-    border-right: 1px solid rgba(255, 255, 255, 0.1);
-    display: flex;
-    flex-direction: column;
-    height: 100vh;
-    overflow: hidden;
-}
-.sidebar-header {
-    padding: 0.75rem 1rem;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-}
-.sidebar-title {
-    font-size: 0.75rem;
-    font-weight: 700;
-    letter-spacing: 0.1em;
-    opacity: 0.6;
-    text-transform: uppercase;
-}
-.sidebar-nav {
-    flex: 1;
-    overflow-y: auto;
-    padding: 0.5rem 0;
-}
-.sidebar-group-label {
-    font-size: 0.7rem;
-    font-weight: 700;
-    letter-spacing: 0.05em;
-    opacity: 0.5;
-    text-transform: uppercase;
-    padding: 0.75rem 1rem 0.25rem 1rem;
-}
-.sidebar-item {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    width: 100%;
-    text-align: left;
-    padding: 0.35rem 1rem;
-    font-size: 0.8rem;
-    font-family: 'SF Mono', 'Fira Code', 'Consolas',
-        ui-monospace, monospace;
-    color: rgba(255, 255, 255, 0.7);
-    cursor: pointer;
-    border: none;
-    background: transparent;
-    border-radius: 0;
-    transition: background 0.15s;
-}
-.sidebar-item:hover {
-    background: rgba(255, 255, 255, 0.08);
-    color: rgba(255, 255, 255, 0.95);
-}
-.sidebar-item.active {
-    background: rgba(59, 130, 246, 0.2);
-    color: white;
-    font-weight: 600;
-}
-.sidebar-pill {
-    font-size: 0.55rem;
-    padding: 0.05rem 0.35rem;
-    border-radius: 9999px;
-    font-weight: 600;
-    white-space: nowrap;
-    margin-left: auto;
-}
-.sidebar-pill-viewonly {
-    background: rgba(255, 255, 255, 0.08);
-    color: rgba(255, 255, 255, 0.35);
-}
-.sidebar-pill-editable {
-    background: rgba(34, 197, 94, 0.15);
-    color: #4ade80;
-}
-/* Toolbar */
-.toolbar {
-    padding: 0.5rem 1rem;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-    display: flex;
-    align-items: center;
-    gap: 0.625rem;
-    min-height: 2.75rem;
-    background: var(--q-dark-page, #1d1d1d);
-}
-.toolbar-label {
-    font-size: 0.875rem;
-    font-weight: 600;
-}
-.toolbar-badge {
-    font-size: 0.65rem;
-    padding: 0.15rem 0.5rem;
-    border-radius: 9999px;
-    font-weight: 600;
-}
-.toolbar-meta {
-    font-size: 0.75rem;
-    opacity: 0.5;
-}
-.pending-badge {
-    font-size: 0.65rem;
-    padding: 0.15rem 0.5rem;
-    border-radius: 9999px;
-    font-weight: 600;
-    background: rgba(245, 158, 11, 0.2);
-    color: #fbbf24;
-}
-.sync-badge {
-    font-size: 0.65rem;
-    padding: 0.15rem 0.5rem;
-    border-radius: 9999px;
-    font-weight: 600;
-    background: rgba(34, 197, 94, 0.15);
-    color: #4ade80;
-}
-.cell-pending {
-    background: rgba(245, 158, 11, 0.15) !important;
-}
-.toolbar-btn-danger {
-    background: rgba(239, 68, 68, 0.15);
-    border-color: rgba(239, 68, 68, 0.4);
-    color: #fca5a5;
-}
-.toolbar-btn-danger:hover {
-    background: rgba(239, 68, 68, 0.3);
-}
-.toolbar-right {
-    margin-left: auto;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding-right: 0.5rem;
-}
-.search-input {
-    font-size: 0.75rem;
-    padding: 0.25rem 0.5rem;
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 0.25rem;
-    background: transparent;
-    color: inherit;
-    width: 18rem;
-    outline: none;
-}
-.search-input:focus {
-    border-color: rgba(59, 130, 246, 0.5);
-}
-.search-input::placeholder {
-    opacity: 0.4;
-}
-/* Search row below toolbar */
-.search-row {
-    padding: 0.35rem 1rem;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-    background: var(--q-dark-page, #1d1d1d);
-}
-.search-row .search-input {
-    width: 33%;
-    min-width: 12rem;
-}
-/* Toolbar buttons */
-.toolbar-btn {
-    font-size: 0.7rem;
-    padding: 0.2rem 0.55rem;
-    border-radius: 0.25rem;
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    background: transparent;
-    color: rgba(255, 255, 255, 0.8);
-    cursor: pointer;
-    white-space: nowrap;
-}
-.toolbar-btn:hover {
-    background: rgba(255, 255, 255, 0.08);
-    color: white;
-}
-.toolbar-btn-primary {
-    background: rgba(59, 130, 246, 0.2);
-    border-color: rgba(59, 130, 246, 0.4);
-    color: #93c5fd;
-}
-.toolbar-btn-primary:hover {
-    background: rgba(59, 130, 246, 0.35);
-}
-/* Sidebar collapse */
-.sidebar-collapsed {
-    display: none !important;
-}
-.expand-btn {
-    position: fixed;
-    left: 0;
-    top: 50%;
-    transform: translateY(-50%);
-    z-index: 100;
-    background: var(--q-dark-page, #1d1d1d);
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    border-left: none;
-    border-radius: 0 0.25rem 0.25rem 0;
-    color: rgba(255, 255, 255, 0.6);
-    cursor: pointer;
-    padding: 0.5rem 0.25rem;
-    font-size: 0.75rem;
-}
-.expand-btn:hover {
-    color: white;
-    background: rgba(255, 255, 255, 0.08);
-}
-.collapse-btn {
-    background: transparent;
-    border: none;
-    color: rgba(255, 255, 255, 0.4);
-    cursor: pointer;
-    font-size: 0.85rem;
-    padding: 0 0.25rem;
-}
-.collapse-btn:hover {
-    color: rgba(255, 255, 255, 0.8);
-}
-/* Push modal tables */
+# Minimal CSS only for things that cannot be expressed via Tailwind/Quasar:
+# - AG Grid cell class rules (applied dynamically by the grid engine)
+# - Push-modal preview HTML tables (rendered via ui.html)
+_GRID_CSS = """
+.cell-pending { background: rgba(245, 158, 11, 0.15) !important; }
 .push-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.8rem;
-    margin: 0.5rem 0;
+    width: 100%; border-collapse: collapse;
+    font-size: 0.8rem; margin: 0.5rem 0;
 }
 .push-table th {
-    text-align: left;
-    padding: 0.3rem 0.5rem;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.2);
-    opacity: 0.6;
-    font-weight: 600;
+    text-align: left; padding: 0.3rem 0.5rem;
+    border-bottom: 1px solid rgba(255,255,255,0.2);
+    opacity: 0.6; font-weight: 600;
 }
 .push-table td {
     padding: 0.3rem 0.5rem;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    border-bottom: 1px solid rgba(255,255,255,0.05);
 }
-.push-table .conflict-row {
-    background: rgba(234, 179, 8, 0.1);
-}
-.push-table .error-row {
-    background: rgba(239, 68, 68, 0.1);
-}
-/* Main layout */
-.app-layout {
-    display: flex;
-    height: 100vh;
-    width: 100vw;
-    overflow: hidden;
-}
-.main-content {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-}
-.grid-container {
-    flex: 1;
-    overflow: hidden;
-    padding: 0;
-}
+.push-table .conflict-row { background: rgba(234,179,8,0.1); }
+.push-table .error-row { background: rgba(239,68,68,0.1); }
 """
 
 
@@ -337,44 +88,47 @@ def start_nicegui_server(port: int = 0) -> None:
 
     @ui.page("/")
     def index() -> None:  # pyright: ignore[reportUnusedFunction]
-        ui.add_head_html(f"<style>{_CUSTOM_CSS}</style>")
+        ui.add_head_html(f"<style>{_GRID_CSS}</style>")
 
-        # State containers for this page
+        # --- State ---
         grid_container: dict[str, Any] = {"ref": None}
-        # Default to gradebook if available, otherwise first table
         default_table = next(
             (t["name"] for t in tables if t["name"] == "canvas_grades"),
             tables[0]["name"] if tables else "",
         )
         current_table: dict[str, str] = {"name": default_table}
-        sidebar_buttons: dict[str, ui.element] = {}
-        pending_label: dict[str, Any] = {"ref": None}
-        table_label: dict[str, Any] = {"ref": None}
-        meta_label: dict[str, Any] = {"ref": None}
-        search_ref: dict[str, Any] = {"ref": None}
-        clear_btn_ref: dict[str, Any] = {"ref": None}
-        push_btn_ref: dict[str, Any] = {"ref": None}
-        export_btn_ref: dict[str, Any] = {"ref": None}
-        sidebar_ref: dict[str, Any] = {"ref": None}
-        expand_btn_ref: dict[str, Any] = {"ref": None}
-        sidebar_state: dict[str, bool] = {"collapsed": False}
+        sidebar_items: dict[str, ui.element] = {}
+        pending_badge: dict[str, ui.badge | None] = {"ref": None}
+        table_label: dict[str, ui.label | None] = {"ref": None}
+        meta_label: dict[str, ui.label | None] = {"ref": None}
+        search_input: dict[str, ui.input | None] = {"ref": None}
+        revert_btn: dict[str, ui.button | None] = {"ref": None}
+        push_btn: dict[str, ui.button | None] = {"ref": None}
+
+        # --- Helpers ---
+
+        _ITEM_BASE = (
+            "w-full items-center gap-1 px-4 py-1 cursor-pointer "
+            "rounded-none text-white/70 hover:bg-white/[0.08] hover:text-white/95"
+        )
+        _ITEM_ACTIVE = "bg-blue-500/20 !text-white font-semibold"
 
         def update_pending_display() -> None:
-            """Update pending/sync badge and toggle revert/push visibility."""
+            """Refresh the pending/sync badge and toggle revert/push visibility."""
             count = pending_count(pending)
             has_pending = count > 0
-            el = pending_label["ref"]
-            if el is not None:
+            badge = pending_badge["ref"]
+            if badge is not None:
                 if has_pending:
-                    el.text = f"{count} pending"
-                    el.classes(remove="sync-badge", add="pending-badge")
+                    badge.text = f"{count} pending"
+                    badge.props("color=amber-8 text-color=white")
                 else:
-                    el.text = "Synchronized"
-                    el.classes(remove="pending-badge", add="sync-badge")
-            cb = clear_btn_ref["ref"]
-            if cb is not None:
-                cb.set_visibility(has_pending)
-            pb = push_btn_ref["ref"]
+                    badge.text = "Synchronized"
+                    badge.props("color=green text-color=white")
+            rb = revert_btn["ref"]
+            if rb is not None:
+                rb.set_visibility(has_pending)
+            pb = push_btn["ref"]
             if pb is not None:
                 pushable = current_table["name"] in CANVAS_PUSHABLE
                 pb.set_visibility(has_pending and pushable)
@@ -385,13 +139,13 @@ def start_nicegui_server(port: int = 0) -> None:
             current_table["name"] = table_name
 
             # Update sidebar active states
-            if old in sidebar_buttons:
-                sidebar_buttons[old].classes(remove="active", add="")
-            if table_name in sidebar_buttons:
-                sidebar_buttons[table_name].classes(add="active")
+            if old in sidebar_items:
+                sidebar_items[old].classes(remove=_ITEM_ACTIVE)
+            if table_name in sidebar_items:
+                sidebar_items[table_name].classes(add=_ITEM_ACTIVE)
 
-            # Update toolbar
-            editable = is_editable(conn, table_name)
+            # Update toolbar labels
+            editable_flag = is_editable(conn, table_name)
             tl = table_label["ref"]
             if tl is not None:
                 tl.text = display_name(table_name)
@@ -404,7 +158,7 @@ def start_nicegui_server(port: int = 0) -> None:
             else:
                 row_data = get_table_rows(conn, table_name)
                 col_defs = build_column_defs(conn, table_name)
-                pk_cols = get_primary_keys(conn, table_name) if editable else []
+                pk_cols = get_primary_keys(conn, table_name) if editable_flag else []
 
             ml = meta_label["ref"]
             if ml is not None:
@@ -449,7 +203,7 @@ def start_nicegui_server(port: int = 0) -> None:
                     grid = (
                         ui.aggrid(grid_options, theme="quartz")
                         .classes("w-full")
-                        .style("height: calc(100vh - 5.5rem)")
+                        .style("height: calc(100vh - 6rem)")
                     )
 
                     if is_gb:
@@ -459,7 +213,7 @@ def start_nicegui_server(port: int = 0) -> None:
                             pending,
                             update_pending_display,
                         )
-                    elif editable:
+                    elif editable_flag:
                         attach_edit_handler(
                             grid,
                             conn,
@@ -469,190 +223,173 @@ def start_nicegui_server(port: int = 0) -> None:
                             update_pending_display,
                         )
 
-                    if is_gb or editable:
+                    if is_gb or editable_flag:
                         attach_date_autocommit(grid)
 
             # Refresh pending/push display for new table context
             update_pending_display()
 
             # Clear search
-            sr = search_ref["ref"]
-            if sr is not None:
-                sr.value = ""
-
-        def toggle_sidebar() -> None:
-            """Toggle sidebar collapsed/expanded state."""
-            collapsed = not sidebar_state["collapsed"]
-            sidebar_state["collapsed"] = collapsed
-            sb = sidebar_ref["ref"]
-            eb = expand_btn_ref["ref"]
-            if sb is not None:
-                if collapsed:
-                    sb.classes(add="sidebar-collapsed")
-                else:
-                    sb.classes(remove="sidebar-collapsed")
-            if eb is not None:
-                eb.set_visibility(collapsed)
+            si = search_input["ref"]
+            if si is not None:
+                si.value = ""
 
         # --- Layout ---
-        with ui.element("div").classes("app-layout"):
-            # Expand button (visible only when sidebar is collapsed)
-            expand_btn = (
-                ui.element("button")
-                .classes("expand-btn")
-                .props('innerHTML="\u203a"')
-                .on("click", lambda _: toggle_sidebar())
-            )
-            expand_btn.set_visibility(False)
-            expand_btn_ref["ref"] = expand_btn
 
-            # --- Sidebar ---
-            sidebar_el = ui.element("div").classes("sidebar")
-            sidebar_ref["ref"] = sidebar_el
-            with sidebar_el:
-                with ui.element("div").classes("sidebar-header"):
-                    ui.element("span").classes("sidebar-title").props(
-                        'innerHTML="CASS"'
+        # Sidebar (Quasar left drawer — toggle, mobile-responsive built-in)
+        drawer = ui.left_drawer(
+            value=True,
+            top_corner=True,
+            bottom_corner=True,
+            fixed=True,
+        ).classes("bg-[#1d1d1d] border-r border-white/10 !w-56 p-0")
+        with drawer:
+            # Header
+            with ui.row().classes(
+                "w-full items-center justify-between px-4 py-3 border-b border-white/10"
+            ):
+                ui.label("CASS").classes(
+                    "text-xs font-bold tracking-widest opacity-60 uppercase"
+                )
+                ui.button(
+                    icon="chevron_left",
+                    on_click=drawer.toggle,
+                ).props("flat dense round size=sm color=grey-6")
+
+            # Navigation
+            scroll = ui.scroll_area().classes("flex-1")
+            with scroll, ui.column().classes("w-full gap-0 py-2"):
+                for group in groups:
+                    ui.label(group["label"]).classes(
+                        "text-[0.7rem] font-bold tracking-wider"
+                        " opacity-50 uppercase px-4 pt-3 pb-1"
                     )
-                    ui.element("button").classes("collapse-btn").props(
-                        'innerHTML="\u2039"'
-                    ).on("click", lambda _: toggle_sidebar())
+                    for t in group["items"]:
+                        tn = t["name"]
+                        dn = display_name(tn)
+                        editable_item = is_editable(conn, tn)
+                        is_active = tn == current_table["name"]
 
-                with ui.element("div").classes("sidebar-nav"):
-                    for group in groups:
-                        ui.element("div").classes("sidebar-group-label").props(
-                            f'innerHTML="{group["label"]}"'
+                        item = (
+                            ui.row()
+                            .classes(
+                                f"{_ITEM_BASE}{' ' + _ITEM_ACTIVE if is_active else ''}"
+                            )
+                            .on(
+                                "click",
+                                lambda _e, n=tn: load_table(n),
+                            )
                         )
-                        for t in group["items"]:
-                            tn = t["name"]
-                            dn = display_name(tn)
-                            editable_item = is_editable(conn, tn)
+                        with item:
+                            ui.label(dn).classes("text-xs font-mono")
+                            ui.space()
                             if editable_item:
-                                pill = (
-                                    "<span class='sidebar-pill"
-                                    " sidebar-pill-editable'>"
-                                    "editable</span>"
-                                )
+                                ui.badge("editable").props(
+                                    "outline color=green"
+                                ).classes("text-[0.55rem]")
                             else:
-                                pill = (
-                                    "<span class='sidebar-pill"
-                                    " sidebar-pill-viewonly'>"
-                                    "view-only</span>"
-                                )
-                            btn = (
-                                ui.element("button")
-                                .classes("sidebar-item")
-                                .props(f'innerHTML="{dn}{pill}"')
-                                .on(
-                                    "click",
-                                    lambda _e, n=tn: load_table(n),
-                                )
-                            )
-                            sidebar_buttons[tn] = btn
-                            if tn == current_table["name"]:
-                                btn.classes(add="active")
+                                ui.badge("view-only").props(
+                                    "outline color=grey-7"
+                                ).classes("text-[0.55rem]")
+                        sidebar_items[tn] = item
 
-            # --- Main content ---
-            with ui.element("div").classes("main-content"):
-                # Toolbar row 1: title, size, export, status pill, push
-                with ui.element("div").classes("toolbar"):
-                    tl = ui.label("").classes("toolbar-label")
-                    table_label["ref"] = tl
-                    ml = ui.label("").classes("toolbar-meta")
-                    meta_label["ref"] = ml
+        # Main content
+        with ui.column().classes("w-full flex-1 gap-0"):
+            # Toolbar row 1: title, metadata, export, status, actions
+            with ui.row().classes(
+                "w-full items-center gap-2 px-4 py-2"
+                " border-b border-white/10 bg-[#1d1d1d]"
+            ):
+                ui.button(
+                    icon="menu",
+                    on_click=drawer.toggle,
+                ).props("flat dense round color=grey-6")
 
-                    # Export CSV button
-                    eb = (
-                        ui.element("button")
-                        .classes("toolbar-btn")
-                        .props('innerHTML="CSV"')
-                        .on("click", lambda _: export_csv(grid_container))
-                    )
-                    export_btn_ref["ref"] = eb
+                tl = ui.label("").classes("text-sm font-semibold")
+                table_label["ref"] = tl
 
-                    # Export Markdown button
-                    (
-                        ui.element("button")
-                        .classes("toolbar-btn")
-                        .props('innerHTML="Markdown"')
-                        .on(
-                            "click",
-                            lambda _: export_markdown(grid_container, current_table),
-                        )
-                    )
+                ml = ui.label("").classes("text-xs opacity-50")
+                meta_label["ref"] = ml
 
-                    with ui.element("div").classes("toolbar-right"):
-                        # Pending / Synchronized pill
-                        pl = ui.label("Synchronized").classes("sync-badge")
-                        pending_label["ref"] = pl
+                ui.button(
+                    "CSV",
+                    on_click=lambda: export_csv(grid_container),
+                ).props("flat dense no-caps size=sm color=grey-5").classes("text-xs")
+                ui.button(
+                    "Markdown",
+                    on_click=lambda: export_markdown(
+                        grid_container,
+                        current_table,
+                    ),
+                ).props("flat dense no-caps size=sm color=grey-5").classes("text-xs")
 
-                        # Revert button (hidden initially)
-                        rb = (
-                            ui.element("button")
-                            .classes("toolbar-btn toolbar-btn-danger")
-                            .props('innerHTML="Revert"')
-                            .on(
-                                "click",
-                                lambda _: revert_pending(
-                                    conn,
-                                    pending,
-                                    update_pending_display,
-                                    grid_container,
-                                    current_table,
-                                ),
-                            )
-                        )
-                        rb.set_visibility(False)
-                        clear_btn_ref["ref"] = rb
+                ui.space()
 
-                        # Push to Canvas button (hidden initially)
-                        pb = (
-                            ui.element("button")
-                            .classes("toolbar-btn toolbar-btn-primary")
-                            .props('innerHTML="Push to Canvas"')
-                            .on(
-                                "click",
-                                lambda _: open_push_modal(
-                                    conn,
-                                    pending,
-                                    update_pending_display,
-                                    grid_container,
-                                    current_table,
-                                ),
-                            )
-                        )
-                        pb.set_visibility(False)
-                        push_btn_ref["ref"] = pb
+                # Status badge
+                badge = ui.badge(
+                    "Synchronized",
+                    color="green",
+                    text_color="white",
+                ).classes("text-[0.65rem] font-semibold")
+                pending_badge["ref"] = badge
 
-                # Toolbar row 2: search bar
-                with ui.element("div").classes("search-row"):
-                    si = (
-                        ui.input(
-                            placeholder="Search rows...",
-                        )
-                        .classes("search-input")
-                        .props("dense outlined")
-                    )
-                    search_ref["ref"] = si
-                    si.on(
-                        "update:model-value",
-                        lambda e: apply_search(
-                            grid_container,
-                            e.args,  # pyright: ignore[reportUnknownMemberType]
-                        ),
-                    )
+                # Revert button (hidden initially)
+                rb = ui.button(
+                    "Revert",
+                    on_click=lambda: revert_pending(
+                        conn,
+                        pending,
+                        update_pending_display,
+                        grid_container,
+                        current_table,
+                    ),
+                ).props("flat dense no-caps size=sm color=red")
+                rb.set_visibility(False)
+                revert_btn["ref"] = rb
 
-                # Grid area
-                gc = ui.element("div").classes("grid-container")
-                grid_container["ref"] = gc
+                # Push to Canvas button (hidden initially)
+                pb = ui.button(
+                    "Push to Canvas",
+                    on_click=lambda: open_push_modal(
+                        conn,
+                        pending,
+                        update_pending_display,
+                        grid_container,
+                        current_table,
+                    ),
+                ).props("dense no-caps size=sm color=primary")
+                pb.set_visibility(False)
+                push_btn["ref"] = pb
 
-        # Keyboard shortcuts: Ctrl/Cmd+K -> focus search
+            # Toolbar row 2: search
+            with ui.row().classes(
+                "w-full px-4 py-1 border-b border-white/10 bg-[#1d1d1d]"
+            ):
+                si = (
+                    ui.input(placeholder="Search rows...")
+                    .props("dense outlined rounded")
+                    .classes("w-1/3 min-w-[12rem] text-xs")
+                )
+                search_input["ref"] = si
+                si.on(
+                    "update:model-value",
+                    lambda e: apply_search(
+                        grid_container,
+                        e.args,  # pyright: ignore[reportUnknownMemberType]
+                    ),
+                )
+
+            # Grid area
+            gc = ui.element("div").classes("flex-1 w-full")
+            grid_container["ref"] = gc
+
+        # Keyboard shortcut: Ctrl/Cmd+K -> focus search
         ui.add_body_html("""
         <script>
         document.addEventListener('keydown', (e) => {
             if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
                 e.preventDefault();
-                const input = document.querySelector('.search-input input');
+                const input = document.querySelector('.q-field__native');
                 if (input) input.focus();
             }
         });
