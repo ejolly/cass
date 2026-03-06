@@ -49,6 +49,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["cass"]
+exclude = ["cass/viewer/elm/"]
 
 [project.scripts]
 cass = "cass.cli:app"
@@ -59,7 +60,7 @@ sequence = [
     { cmd = "ruff format cass/ tests/" },
     { cmd = "ruff check cass/ tests/" },
     { cmd = "ty check" },
-    { shell = "npx --yes @biomejs/biome check cass/viewer/" },
+    { shell = "npx --yes @biomejs/biome check --files-ignore-unknown=true cass/viewer/index.html cass/viewer/index_elm.html" },
 ]
 
 [tool.poe.tasks.test]
@@ -73,6 +74,13 @@ cmd = "pdoc cass/ --docformat google -o docs/api/"
 [tool.poe.tasks.docs-serve]
 help = "Live-preview API docs"
 cmd = "pdoc cass/ --docformat google"
+
+[tool.poe.tasks.elm-build]
+help = "Build the Elm viewer frontend"
+sequence = [
+    { cmd = "elm make src/Main.elm --optimize --output=elm.js", cwd = "cass/viewer/elm" },
+    { cmd = "cp cass/viewer/elm/elm.js cass/viewer/elm.js" },
+]
 
 [tool.poe.tasks.install]
 help = "Install cass as a global CLI tool"
