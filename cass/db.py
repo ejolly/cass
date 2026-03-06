@@ -99,8 +99,6 @@ def _init_schema(conn: duckdb.DuckDBPyConnection) -> None:
             "canvas_grades",
         ):
             conn.execute(f"DROP TABLE IF EXISTS {table}")
-        for view in ("v_submissions", "v_grades"):
-            conn.execute(f"DROP VIEW IF EXISTS {view}")
 
     conn.execute(
         "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)",
@@ -250,18 +248,6 @@ def save_gh_students(students: list[GHStudentInfo]) -> int:
     return len(students)
 
 
-def load_gh_students() -> list[GHStudentInfo]:
-    """Load all GitHub students."""
-    conn = get_db()
-    rows = conn.execute(
-        "SELECT github_username, github_id, name, email FROM gh_students "
-        "ORDER BY github_username"
-    ).fetchall()
-    return [
-        GHStudentInfo(login=r[0], id=str(r[1]), name=r[2], email=r[3]) for r in rows
-    ]
-
-
 # ---------------------------------------------------------------------------
 # Canvas Students (source)
 # ---------------------------------------------------------------------------
@@ -301,26 +287,6 @@ def save_canvas_students(
         ],
     )
     return len(students)
-
-
-def load_canvas_students() -> list[CanvasStudent]:
-    """Load all Canvas students."""
-    conn = get_db()
-    rows = conn.execute(
-        "SELECT canvas_id, name, sortable_name, email, login_id, sis_user_id "
-        "FROM canvas_students ORDER BY name"
-    ).fetchall()
-    return [
-        CanvasStudent(
-            id=r[0],
-            name=r[1],
-            sortable_name=r[2],
-            email=r[3],
-            login_id=r[4],
-            sis_user_id=r[5] or None,
-        )
-        for r in rows
-    ]
 
 
 # ---------------------------------------------------------------------------

@@ -24,7 +24,6 @@ from ..models import (
     GHSubmission,
     Student,
 )
-from . import gh
 from .client import GitHubClient
 
 
@@ -271,35 +270,15 @@ async def fetch_file_submissions(
     return sorted(submissions, key=lambda s: s.github_username)
 
 
-# ---------------------------------------------------------------------------
-# Sync functions (used by fetch.py — subprocess-based, not perf-critical)
-# ---------------------------------------------------------------------------
-
-
-def _resolve_gh_id_sync(slug: str) -> int:
-    """Resolve assignment slug to GH Classroom numeric ID (sync, for fetch.py)."""
-    cfg = get_config()
-    data = gh.api_cached(
-        f"/classrooms/{cfg.classroom_id}/assignments",
-        ttl_hours=24,
-        force_refresh=False,
-        paginate=True,
-    )
-    items = msgspec.convert(data, list[GHAssignment])
-    for a in items:
-        if a.slug == slug:
-            return a.id
-    raise RuntimeError(f"Assignment {slug} not found in GH Classroom API")
-
-
-def build_repo_map(
+async def build_repo_map(
+    client: GitHubClient,
     assignment_slug: str,
     ttl_hours: float = 6,
     force_refresh: bool = False,
 ) -> dict[str, str]:
     """Return ``{handle_lower: repo_short_name}`` for an assignment."""
-    gh_id = _resolve_gh_id_sync(assignment_slug)
-    data = gh.api_cached(
+    gh_id = await _resolve_gh_id(client, assignment_slug)
+    data = await client.get_cached(
         f"/assignments/{gh_id}/accepted_assignments",
         ttl_hours=ttl_hours,
         force_refresh=force_refresh,

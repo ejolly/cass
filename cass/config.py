@@ -200,7 +200,7 @@ class Check:
 
 def check_prerequisites() -> list[Check]:
     """Run all setup checks and return results."""
-    from .github import gh
+    from .github.client import check_auth, check_available
 
     checks: list[Check] = []
 
@@ -246,7 +246,7 @@ def check_prerequisites() -> list[Check]:
         )
 
         # gh CLI
-        gh_ok = gh.check_available()
+        gh_ok = check_available()
         checks.append(
             Check(
                 "gh",
@@ -255,7 +255,7 @@ def check_prerequisites() -> list[Check]:
             )
         )
         if gh_ok:
-            authed, detail = gh.check_auth()
+            authed, detail = check_auth()
             checks.append(Check("gh auth", authed, detail, indent=1))
     else:
         checks.append(Check("classroom", True, "not configured (optional)"))

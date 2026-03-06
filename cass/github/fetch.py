@@ -13,7 +13,7 @@ from rich.console import Console
 from ..config import get_config
 from ..models import Assignment, GHContentItem, Student
 from .classroom import build_repo_map
-from .gh import api_cached
+from .client import GitHubClient
 
 console = Console()
 
@@ -46,7 +46,8 @@ def _download_file(url: str, dest: Path) -> bool:
     return True
 
 
-def _list_contents(
+async def _list_contents(
+    client: GitHubClient,
     repo_short: str,
     path: str = "",
     ttl_hours: float = 6,
@@ -55,15 +56,18 @@ def _list_contents(
     cfg = get_config()
     endpoint = f"/repos/{cfg.org}/{repo_short}/contents/{path}".rstrip("/")
     try:
-        data = api_cached(endpoint, ttl_hours=ttl_hours, force_refresh=force_refresh)
-    except RuntimeError:
+        data = await client.get_cached(
+            endpoint, ttl_hours=ttl_hours, force_refresh=force_refresh
+        )
+    except Exception:
         return []
     if not isinstance(data, list):
         return []
     return msgspec.convert(data, list[GHContentItem])
 
 
-def fetch_assignment(
+async def fetch_assignment(
+    client: GitHubClient,
     assignment: Assignment,
     students: list[Student],
     force: bool = False,
@@ -73,7 +77,9 @@ def fetch_assignment(
 ) -> None:
     """Download files for one assignment across all students."""
     slug = assignment.gh_assignment_slug or assignment.slug
-    repo_map = build_repo_map(slug, ttl_hours=ttl_hours, force_refresh=force_refresh)
+    repo_map = await build_repo_map(
+        client, slug, ttl_hours=ttl_hours, force_refresh=force_refresh
+    )
     is_final = slug == _FINAL_PROJECT_SLUG
     dest_root = get_config().root / STUDENTS_DIR
 
@@ -98,8 +104,12 @@ def fetch_assignment(
         dest_dir = dest_root / student_slug / slug
 
         if is_final:
-            contents = _list_contents(
-                repo_short, "pdfs", ttl_hours=ttl_hours, force_refresh=force_refresh
+            contents = await _list_contents(
+                client,
+                repo_short,
+                "pdfs",
+                ttl_hours=ttl_hours,
+                force_refresh=force_refresh,
             )
             if not contents:
                 console.print(f"  [dim]{student.display_name}: no pdfs/ dir[/dim]")
@@ -107,8 +117,12 @@ def fetch_assignment(
                 continue
             target_exts = _PDF_EXTS
         else:
-            contents = _list_contents(
-                repo_short, "", ttl_hours=ttl_hours, force_refresh=force_refresh
+            contents = await _list_contents(
+                client,
+                repo_short,
+                "",
+                ttl_hours=ttl_hours,
+                force_refresh=force_refresh,
             )
             if not contents:
                 console.print(f"  [dim]{student.display_name}: empty repo[/dim]")

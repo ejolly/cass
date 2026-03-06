@@ -14,7 +14,9 @@ from nicegui import ui
 
 from ..db import db_path
 from ..db import reset as db_reset
-from . import _canvas_apply, _canvas_preview  # pyright: ignore[reportPrivateUsage]
+from . import _canvas_apply as _canvas_apply  # pyright: ignore[reportPrivateUsage]
+from . import _canvas_preview as _canvas_preview  # pyright: ignore[reportPrivateUsage]
+from . import _values_equal as _values_equal  # pyright: ignore[reportPrivateUsage]
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -223,17 +225,6 @@ def _group_tables(
 # ---------------------------------------------------------------------------
 # Cell update + pending change tracking
 # ---------------------------------------------------------------------------
-
-
-def _values_equal(a: object, b: object) -> bool:
-    """Compare values loosely, handling datetime/string equivalence."""
-    if a == b:
-        return True
-    if isinstance(a, (datetime, date)) and isinstance(b, str):
-        return a.isoformat() == b or str(a) == b
-    if isinstance(b, (datetime, date)) and isinstance(a, str):
-        return b.isoformat() == a or str(b) == a
-    return False
 
 
 def _update_cell(
