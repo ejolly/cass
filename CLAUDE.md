@@ -1,6 +1,6 @@
 # CLAUDE.md — cass
 
-CLI grading toolkit for GitHub Classroom and Canvas LMS. DuckDB storage, Typer CLI, Svelte browser viewer.
+CLI grading toolkit for GitHub Classroom and Canvas LMS. DuckDB storage, Typer CLI, NiceGUI browser viewer.
 
 ## Setup
 
@@ -12,10 +12,9 @@ gh auth status   # verify GH CLI auth (if using GitHub Classroom)
 ## Dev
 
 ```bash
-uv run poe lint            # ruff format → ruff check → ty → basedpyright → biome → svelte-check
+uv run poe lint            # ruff format → ruff check → ty → basedpyright
 uv run poe test            # pytest
-uv run poe ui-build        # build Svelte frontend
-uv run poe install         # ui-build + uv tool install . --force
+uv run poe install         # uv tool install . --force
 uv run poe docs            # pdoc → docs/api/
 ```
 
@@ -52,10 +51,8 @@ cass/
 │   ├── matching.py          # roster matching, name normalization, slugify()
 │   └── egrades.py           # UCSD eGrades CSV export
 └── viewer/
-    ├── __init__.py          # stdlib HTTP server, pending change tracking, Canvas sync
-    ├── index_classic.html   # legacy AG Grid viewer (--classic flag)
-    ├── dist/                # Svelte build output (committed, rebuilt via poe ui-build)
-    └── ui/                  # Svelte 5 + shadcn-svelte + TanStack Table source
+    ├── __init__.py          # Canvas sync (preview/apply), pending change types
+    └── nicegui_app.py       # NiceGUI viewer: AG Grid, inline editing, push modal
 ```
 
 ---
@@ -85,36 +82,22 @@ CLI commands query source tables with inline JOINs (no views — removed in v6 a
 
 ## Viewer Architecture
 
-`cass view` opens a Svelte-powered browser UI. `--classic` falls back to AG Grid.
+`cass view` opens a NiceGUI-powered browser UI with AG Grid.
 
-**Python server** (`viewer/__init__.py`):
-- stdlib HTTPServer with ViewerHandler
+**Shared backend** (`viewer/__init__.py`):
+- Canvas sync: `_canvas_preview` (compare pending vs live) and `_canvas_apply` (push + auto-post)
+- Pending change type aliases: `_PendingChanges`, `_TableChanges`, `_RowChanges`, `_ChangeFields`
+
+**NiceGUI viewer** (`viewer/nicegui_app.py`):
+- Pure Python, no build step — NiceGUI + AG Grid (quartz theme)
 - `_READ_ONLY_TABLES`: canvas_submissions, gh_submissions, gh_grades
 - `_CANVAS_PUSHABLE`: canvas_assignments (name, points_possible, due_at, published) + canvas_grades (posted_grade)
 - `_ENRICHED_QUERIES`: JOIN student_name, assignment_name, assignment_group onto ID-heavy tables
 - Pending changes tracked in-memory; preview compares against live Canvas before apply
-- Bulk grade push per assignment + auto-post for post_manually assignments
-
-**Svelte frontend** (`viewer/ui/` → built to `viewer/dist/`):
-- Svelte 5 + Tailwind CSS v4 + DaisyUI v5 (no shadcn, no TanStack Table)
-- Single-click inline cell editing (input replaces cell text on click)
-- Built-in column sort (click headers), DaisyUI `table-pin-rows` for sticky headers
-- Dark mode: automatic via DaisyUI `--prefersdark`
-- Built with `poe ui-build`, output committed to `viewer/dist/`
-
-### Svelte CLI (`svelte`) — ALWAYS use when writing/editing Svelte code
-
-The `svelte` CLI (installed at `~/go/bin/svelte`) provides Svelte 5 documentation and code validation. **You MUST use this tool whenever working on Svelte code in `viewer/ui/`.**
-
-**Workflow for any Svelte task:**
-
-1. **`svelte list-sections`** — Run first to discover relevant documentation. Analyze the `use_cases` field to identify which sections match the task.
-
-2. **`svelte get-documentation --path <path>`** — Fetch docs for all relevant sections identified in step 1. Pass multiple `--path` flags or comma-separated paths. Use this for unfamiliar APIs; prefer your own knowledge + autofixer for straightforward changes.
-
-3. **`svelte svelte-autofixer --code '<component>' --desired-svelte-version 5`** — Validate Svelte code before writing it to files. **Run this on every component you create or modify.** Keep fixing and re-running until no issues remain. Add `--filename Component.svelte` if available. Add `--async` if the component uses top-level await.
-
-4. **`svelte playground-link --code '<component>'`** — Only if the user asks for a playground link. Never use this if code was already written to project files.
+- Inline cell editing, cell flash on save, status messages in toolbar
+- Export CSV, clear pending, push to Canvas modal (loading → preview → pushing → results)
+- Collapsible sidebar, Ctrl/Cmd+K search shortcut
+- Unpublished canvas_assignments dimmed (opacity 0.45)
 
 ---
 
@@ -170,19 +153,19 @@ The `svelte` CLI (installed at `~/go/bin/svelte`) provides Svelte 5 documentatio
 
 ## Testing
 
-161 tests across 9 files. Key patterns:
+151 tests across 9 files. Key patterns:
 - `db_conn` fixture: in-memory DuckDB, monkeypatched as module singleton
 - `project_dir` fixture: tmp_path with minimal cass.toml
 - CanvasClient tests use `_MockTransport` (pre-configured response queue)
 - Parametrized edge cases for grading boundaries, name normalization, struct decoding
-- Viewer tests: HTTPServer on random port with urllib client
+- Viewer tests: unit tests for DB introspection, editability, change tracking
 
 ---
 
 ## Type Checking
 
 basedpyright strict mode — zero errors across all Python source.
-- 4 legitimate `# pyright: ignore` at dynamic boundaries (JSON parsing, list.extend)
+- Legitimate `# pyright: ignore` at dynamic boundaries (JSON parsing, list.extend, NiceGUI AG Grid methods)
 - Viewer uses type aliases: `_ChangeFields`, `_RowChanges`, `_TableChanges`, `_PendingChanges`
 
 ---

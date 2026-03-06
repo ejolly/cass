@@ -7,13 +7,14 @@ __docformat__ = "google"
 import json
 import math
 from datetime import date, datetime, time
-from typing import Any
+from typing import Any, cast
 
 import duckdb
 from nicegui import ui
 
 from ..db import db_path
 from ..db import reset as db_reset
+from . import _canvas_apply, _canvas_preview  # pyright: ignore[reportPrivateUsage]
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -187,10 +188,10 @@ def _get_table_rows(
     result = conn.execute(query)
     col_names = [desc[0] for desc in result.description]
     rows = result.fetchall()
-    return [
-        _sanitize(dict(zip(col_names, row, strict=True)))  # pyright: ignore[reportReturnType]
-        for row in rows
-    ]
+    return cast(
+        list[dict[str, Any]],
+        [_sanitize(dict(zip(col_names, row, strict=True))) for row in rows],
+    )
 
 
 def _classify_table(name: str) -> str:
@@ -526,6 +527,95 @@ _CUSTOM_CSS = """
 .search-input::placeholder {
     opacity: 0.4;
 }
+/* Status message */
+.status-msg {
+    font-size: 0.75rem;
+    font-weight: 600;
+    transition: opacity 0.3s;
+}
+.status-success { color: #4ade80; }
+.status-error { color: #f87171; }
+/* Toolbar buttons */
+.toolbar-btn {
+    font-size: 0.7rem;
+    padding: 0.2rem 0.55rem;
+    border-radius: 0.25rem;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    background: transparent;
+    color: rgba(255, 255, 255, 0.8);
+    cursor: pointer;
+    white-space: nowrap;
+}
+.toolbar-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: white;
+}
+.toolbar-btn-primary {
+    background: rgba(59, 130, 246, 0.2);
+    border-color: rgba(59, 130, 246, 0.4);
+    color: #93c5fd;
+}
+.toolbar-btn-primary:hover {
+    background: rgba(59, 130, 246, 0.35);
+}
+/* Sidebar collapse */
+.sidebar-collapsed {
+    display: none !important;
+}
+.expand-btn {
+    position: fixed;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 100;
+    background: var(--q-dark-page, #1d1d1d);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-left: none;
+    border-radius: 0 0.25rem 0.25rem 0;
+    color: rgba(255, 255, 255, 0.6);
+    cursor: pointer;
+    padding: 0.5rem 0.25rem;
+    font-size: 0.75rem;
+}
+.expand-btn:hover {
+    color: white;
+    background: rgba(255, 255, 255, 0.08);
+}
+.collapse-btn {
+    background: transparent;
+    border: none;
+    color: rgba(255, 255, 255, 0.4);
+    cursor: pointer;
+    font-size: 0.85rem;
+    padding: 0 0.25rem;
+}
+.collapse-btn:hover {
+    color: rgba(255, 255, 255, 0.8);
+}
+/* Push modal tables */
+.push-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8rem;
+    margin: 0.5rem 0;
+}
+.push-table th {
+    text-align: left;
+    padding: 0.3rem 0.5rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+    opacity: 0.6;
+    font-weight: 600;
+}
+.push-table td {
+    padding: 0.3rem 0.5rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+.push-table .conflict-row {
+    background: rgba(234, 179, 8, 0.1);
+}
+.push-table .error-row {
+    background: rgba(239, 68, 68, 0.1);
+}
 /* Main layout */
 .app-layout {
     display: flex;
@@ -580,12 +670,26 @@ def start_nicegui_server(port: int = 0) -> None:
         badge_el: dict[str, Any] = {"ref": None}
         meta_label: dict[str, Any] = {"ref": None}
         search_ref: dict[str, Any] = {"ref": None}
+        status_ref: dict[str, Any] = {"ref": None}
+        clear_btn_ref: dict[str, Any] = {"ref": None}
+        push_btn_ref: dict[str, Any] = {"ref": None}
+        export_btn_ref: dict[str, Any] = {"ref": None}
+        sidebar_ref: dict[str, Any] = {"ref": None}
+        expand_btn_ref: dict[str, Any] = {"ref": None}
+        sidebar_state: dict[str, bool] = {"collapsed": False}
 
         def update_pending_display() -> None:
+            """Update pending count label and toggle clear/push button visibility."""
             count = _pending_count(pending)
             el = pending_label["ref"]
             if el is not None:
                 el.text = f"{count} pending" if count > 0 else ""
+            cb = clear_btn_ref["ref"]
+            if cb is not None:
+                cb.set_visibility(count > 0)
+            pb = push_btn_ref["ref"]
+            if pb is not None:
+                pb.set_visibility(count > 0)
 
         def load_table(table_name: str) -> None:
             """Load a table into the grid area."""
@@ -634,22 +738,29 @@ def start_nicegui_server(port: int = 0) -> None:
             if container is not None:
                 container.clear()
                 with container:
-                    grid = (
-                        ui.aggrid(
-                            {
-                                "columnDefs": col_defs,
-                                "rowData": row_data,
-                                "defaultColDef": {
-                                    "sortable": True,
-                                    "resizable": True,
-                                    "minWidth": 80,
-                                },
-                                "animateRows": True,
-                                "enableCellTextSelection": True,
-                                ":getRowId": (f"(params) => {_row_id_js(pk_cols)}"),
-                            },
-                            theme="quartz",
+                    grid_options: dict[str, Any] = {
+                        "columnDefs": col_defs,
+                        "rowData": row_data,
+                        "defaultColDef": {
+                            "sortable": True,
+                            "resizable": True,
+                            "minWidth": 80,
+                        },
+                        "animateRows": True,
+                        "enableCellTextSelection": True,
+                        ":getRowId": (f"(params) => {_row_id_js(pk_cols)}"),
+                    }
+                    # Dim unpublished rows in canvas_assignments
+                    if table_name == "canvas_assignments":
+                        grid_options[":getRowStyle"] = (
+                            "(params) => {"
+                            "  if (params.data && params.data.published === false)"
+                            "    return { opacity: '0.45' };"
+                            "}"
                         )
+
+                    grid = (
+                        ui.aggrid(grid_options, theme="quartz")
                         .classes("w-full")
                         .style("height: calc(100vh - 3rem)")
                     )
@@ -662,6 +773,7 @@ def start_nicegui_server(port: int = 0) -> None:
                             pk_cols,
                             pending,
                             update_pending_display,
+                            status_ref,
                         )
 
             # Clear search
@@ -669,14 +781,43 @@ def start_nicegui_server(port: int = 0) -> None:
             if sr is not None:
                 sr.value = ""
 
+        def toggle_sidebar() -> None:
+            """Toggle sidebar collapsed/expanded state."""
+            collapsed = not sidebar_state["collapsed"]
+            sidebar_state["collapsed"] = collapsed
+            sb = sidebar_ref["ref"]
+            eb = expand_btn_ref["ref"]
+            if sb is not None:
+                if collapsed:
+                    sb.classes(add="sidebar-collapsed")
+                else:
+                    sb.classes(remove="sidebar-collapsed")
+            if eb is not None:
+                eb.set_visibility(collapsed)
+
         # --- Layout ---
         with ui.element("div").classes("app-layout"):
+            # Expand button (visible only when sidebar is collapsed)
+            expand_btn = (
+                ui.element("button")
+                .classes("expand-btn")
+                .props('innerHTML="\u203a"')
+                .on("click", lambda _: toggle_sidebar())
+            )
+            expand_btn.set_visibility(False)
+            expand_btn_ref["ref"] = expand_btn
+
             # --- Sidebar ---
-            with ui.element("div").classes("sidebar"):
+            sidebar_el = ui.element("div").classes("sidebar")
+            sidebar_ref["ref"] = sidebar_el
+            with sidebar_el:
                 with ui.element("div").classes("sidebar-header"):
                     ui.element("span").classes("sidebar-title").props(
                         'innerHTML="CASS"'
                     )
+                    ui.element("button").classes("collapse-btn").props(
+                        'innerHTML="\u2039"'
+                    ).on("click", lambda _: toggle_sidebar())
 
                 with ui.element("div").classes("sidebar-nav"):
                     for group in groups:
@@ -726,12 +867,75 @@ def start_nicegui_server(port: int = 0) -> None:
                             ),
                         )
 
+                        # Export CSV button
+                        eb = (
+                            ui.element("button")
+                            .classes("toolbar-btn")
+                            .props('innerHTML="Export CSV"')
+                            .on("click", lambda _: _export_csv(grid_container))
+                        )
+                        export_btn_ref["ref"] = eb
+
+                        # Status message label
+                        sl = ui.label("").classes("status-msg")
+                        status_ref["ref"] = sl
+
                         pl = ui.label("").classes("toolbar-meta")
                         pending_label["ref"] = pl
+
+                        # Clear pending button (hidden initially)
+                        cb = (
+                            ui.element("button")
+                            .classes("toolbar-btn")
+                            .props('innerHTML="Clear"')
+                            .on(
+                                "click",
+                                lambda _: _clear_pending(
+                                    pending,
+                                    update_pending_display,
+                                    status_ref,
+                                ),
+                            )
+                        )
+                        cb.set_visibility(False)
+                        clear_btn_ref["ref"] = cb
+
+                        # Push to Canvas button (hidden initially)
+                        pb = (
+                            ui.element("button")
+                            .classes("toolbar-btn toolbar-btn-primary")
+                            .props('innerHTML="Push to Canvas"')
+                            .on(
+                                "click",
+                                lambda _: _open_push_modal(
+                                    conn,
+                                    pending,
+                                    update_pending_display,
+                                    status_ref,
+                                    grid_container,
+                                    current_table,
+                                ),
+                            )
+                        )
+                        pb.set_visibility(False)
+                        push_btn_ref["ref"] = pb
 
                 # Grid area
                 gc = ui.element("div").classes("grid-container")
                 grid_container["ref"] = gc
+
+        # Keyboard shortcuts: Ctrl/Cmd+K → focus search
+        ui.add_body_html("""
+        <script>
+        document.addEventListener('keydown', (e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+                e.preventDefault();
+                const input = document.querySelector('.search-input input');
+                if (input) input.focus();
+            }
+        });
+        </script>
+        """)
 
         # Load initial table
         if tables:
@@ -747,22 +951,339 @@ def start_nicegui_server(port: int = 0) -> None:
     )
 
 
-def _apply_search(grid_container: dict[str, Any], search_text: object) -> None:
-    """Apply quick filter to the AG Grid in the container."""
+def _find_grid(grid_container: dict[str, Any]) -> ui.aggrid | None:
+    """Find the AG Grid element inside a container."""
     container = grid_container.get("ref")
     if container is None:
+        return None
+    for child in container:  # pyright: ignore[reportUnknownVariableType]
+        if isinstance(child, ui.aggrid):
+            return child
+    return None
+
+
+def _apply_search(grid_container: dict[str, Any], search_text: object) -> None:
+    """Apply quick filter to the AG Grid in the container."""
+    grid = _find_grid(grid_container)
+    if grid is None:
         return
     text = str(search_text) if search_text else ""
     escaped = json.dumps(text)
-    for child in container:  # pyright: ignore[reportUnknownVariableType]
-        if isinstance(child, ui.aggrid):
-            child.run_grid_method(  # pyright: ignore[reportUnknownMemberType]
-                "setGridOption", "quickFilterText", text
+    grid.run_grid_method(  # pyright: ignore[reportUnknownMemberType]
+        "setGridOption", "quickFilterText", text
+    )
+    grid.run_grid_method(  # pyright: ignore[reportUnknownMemberType]
+        "setQuickFilter", escaped
+    )
+
+
+def _set_status(
+    status_ref: dict[str, Any],
+    text: str,
+    level: str = "success",
+    delay_ms: int = 3000,
+) -> None:
+    """Set a status message that auto-clears after a delay.
+
+    Args:
+        status_ref: Dict with "ref" pointing to the status label element.
+        text: Message text to display.
+        level: Either "success" or "error".
+        delay_ms: Milliseconds before the message auto-clears.
+    """
+    el = status_ref.get("ref")
+    if el is None:
+        return
+    el.text = text
+    el.classes(remove="status-success status-error", add=f"status-{level}")
+
+    def _clear() -> None:
+        if el.text == text:
+            el.text = ""
+
+    ui.timer(delay_ms / 1000, _clear, once=True)
+
+
+def _build_preview_html(
+    assignment_changes: list[dict[str, object]],
+    grade_changes: list[dict[str, object]],
+    has_conflicts: bool,
+) -> str:
+    """Build HTML for the push preview tables.
+
+    Args:
+        assignment_changes: Preview rows for canvas_assignments.
+        grade_changes: Preview rows for canvas_grades.
+        has_conflicts: Whether any row has a conflict with live Canvas.
+
+    Returns:
+        HTML string for the preview content.
+    """
+    from html import escape
+
+    parts: list[str] = []
+
+    if assignment_changes:
+        parts.append(
+            '<h4 style="font-weight:600;margin-bottom:0.25rem">Assignment changes</h4>'
+        )
+        parts.append('<table class="push-table"><thead><tr>')
+        for h in ("Assignment", "Field", "On Canvas", "New value"):
+            parts.append(f"<th>{h}</th>")
+        parts.append("</tr></thead><tbody>")
+        for ch in assignment_changes:
+            cls = (
+                "error-row"
+                if "error" in ch
+                else "conflict-row"
+                if ch.get("conflict")
+                else ""
             )
-            child.run_grid_method(  # pyright: ignore[reportUnknownMemberType]
-                "setQuickFilter", escaped
+            parts.append(f'<tr class="{cls}">')
+            if "error" in ch:
+                name = escape(str(ch.get("name", "")))
+                err = escape(str(ch.get("error", "")))
+                parts.append(
+                    f'<td colspan="4" style="color:#f87171">{name}: {err}</td>'
+                )
+            else:
+                name = escape(str(ch.get("name", "")))
+                col = escape(str(ch.get("column", "")))
+                warn = " \u26a0" if ch.get("conflict") else ""
+                live = escape(str(ch.get("live", "null")))
+                cur = escape(str(ch.get("current", "null")))
+                parts.append(f"<td>{name}</td>")
+                parts.append(f"<td>{col}{warn}</td>")
+                parts.append(f'<td style="opacity:0.5">{live}</td>')
+                parts.append(f'<td style="font-weight:600">{cur}</td>')
+            parts.append("</tr>")
+        parts.append("</tbody></table>")
+
+    if grade_changes:
+        parts.append(
+            '<h4 style="font-weight:600;margin-top:1rem;'
+            'margin-bottom:0.25rem">Grade changes</h4>'
+        )
+        parts.append('<table class="push-table"><thead><tr>')
+        for h in (
+            "Student \u2014 Assignment",
+            "On Canvas",
+            "New grade",
+        ):
+            parts.append(f"<th>{h}</th>")
+        parts.append("</tr></thead><tbody>")
+        for ch in grade_changes:
+            cls = (
+                "error-row"
+                if "error" in ch
+                else "conflict-row"
+                if ch.get("conflict")
+                else ""
             )
-            break
+            parts.append(f'<tr class="{cls}">')
+            if "error" in ch:
+                name = escape(str(ch.get("name", "")))
+                err = escape(str(ch.get("error", "")))
+                parts.append(
+                    f'<td colspan="3" style="color:#f87171">{name}: {err}</td>'
+                )
+            else:
+                name = escape(str(ch.get("name", "")))
+                warn = " \u26a0" if ch.get("conflict") else ""
+                live = escape(str(ch.get("live", "null")))
+                cur = escape(str(ch.get("current", "null")))
+                parts.append(f"<td>{name}{warn}</td>")
+                parts.append(f'<td style="opacity:0.5">{live}</td>')
+                parts.append(f'<td style="font-weight:600">{cur}</td>')
+            parts.append("</tr>")
+        parts.append("</tbody></table>")
+
+    if has_conflicts:
+        parts.append(
+            '<div style="color:#eab308;font-size:0.8rem;'
+            "margin-top:0.75rem;padding:0.5rem;"
+            "background:rgba(234,179,8,0.1);"
+            'border-radius:0.25rem">'
+            "\u26a0 Some Canvas values differ from when you "
+            "last pulled. Pushing will overwrite.</div>"
+        )
+
+    return "".join(parts)
+
+
+def _export_csv(grid_container: dict[str, Any]) -> None:
+    """Export current grid data as CSV via AG Grid's built-in export."""
+    grid = _find_grid(grid_container)
+    if grid is not None:
+        grid.run_grid_method("exportDataAsCsv")  # pyright: ignore[reportUnknownMemberType]
+
+
+def _clear_pending(
+    pending: _PendingChanges,
+    update_pending_display: Any,
+    status_ref: dict[str, Any],
+) -> None:
+    """Clear all pending changes."""
+    pending.clear()
+    update_pending_display()
+    _set_status(status_ref, "Cleared", "success", 3000)
+
+
+def _open_push_modal(
+    conn: duckdb.DuckDBPyConnection,
+    pending: _PendingChanges,
+    update_pending_display: Any,
+    status_ref: dict[str, Any],
+    grid_container: dict[str, Any],
+    current_table: dict[str, str],
+) -> None:
+    """Open the Push to Canvas modal with preview/push workflow.
+
+    Args:
+        conn: DuckDB connection.
+        pending: Pending changes dict.
+        update_pending_display: Callback to refresh pending count display.
+        status_ref: Status label ref for post-push messages.
+        grid_container: Grid container ref for reloading data after push.
+        current_table: Current table name ref.
+    """
+    with ui.dialog() as dialog, ui.card().style("min-width: 32rem; max-width: 40rem"):
+        dialog.open()
+
+        ui.label("Push to Canvas").style(
+            "font-size: 1.1rem; font-weight: 700; margin-bottom: 0.5rem"
+        )
+        content_area = ui.element("div")
+        action_area = ui.element("div").style(
+            "display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1rem"
+        )
+
+        state: dict[str, Any] = {"phase": "loading", "preview": None}
+
+        def _render_loading() -> None:
+            content_area.clear()
+            with content_area:
+                ui.label("Comparing with Canvas...").style(
+                    "opacity: 0.5; text-align: center; padding: 1rem 0"
+                )
+            action_area.clear()
+            with action_area:
+                ui.button("Cancel", on_click=dialog.close).props("flat")
+
+        def _render_preview(preview: dict[str, object]) -> None:
+            changes = cast(
+                list[dict[str, object]],
+                preview.get("changes", []),
+            )
+            has_conflicts = cast(bool, preview.get("has_conflicts", False))
+            content_area.clear()
+            with content_area:
+                if not changes:
+                    ui.label("No pending changes").style(
+                        "opacity: 0.5; text-align: center; padding: 1rem 0"
+                    )
+                    return
+
+                a_ch = [c for c in changes if c.get("table") == "canvas_assignments"]
+                g_ch = [c for c in changes if c.get("table") == "canvas_grades"]
+                ui.html(_build_preview_html(a_ch, g_ch, has_conflicts))
+
+            pushable = [c for c in changes if "error" not in c]
+            action_area.clear()
+            with action_area:
+                ui.button("Cancel", on_click=dialog.close).props("flat")
+                if pushable:
+                    n = len(pushable)
+                    ui.button(
+                        f"Push {n} change{'s' if n != 1 else ''}",
+                        on_click=lambda: _do_push(),
+                    ).props("color=primary")
+
+        def _render_pushing() -> None:
+            content_area.clear()
+            with content_area:
+                ui.label("Pushing to Canvas...").style(
+                    "opacity: 0.5; text-align: center; padding: 1rem 0"
+                )
+            action_area.clear()
+            with action_area:
+                ui.button("Pushing...", on_click=lambda: None).props(
+                    "color=primary disabled"
+                )
+
+        def _render_results(results: list[dict[str, object]]) -> None:
+            succeeded = [r for r in results if r.get("ok")]
+            failed = [r for r in results if not r.get("ok")]
+            content_area.clear()
+            with content_area:
+                ui.label(f"{len(succeeded)} pushed, {len(failed)} failed").style(
+                    "font-weight: 600; margin-bottom: 0.5rem"
+                )
+                for r in results:
+                    aid = r.get("canvas_id") or r.get("canvas_assignment_id") or "?"
+                    if r.get("ok"):
+                        ui.label(f"\u2713 Assignment {aid}").style("color: #4ade80")
+                    else:
+                        err = r.get("error", "Unknown")
+                        ui.label(f"\u2717 Assignment {aid}: {err}").style(
+                            "color: #f87171"
+                        )
+            action_area.clear()
+            with action_area:
+                ui.button("Close", on_click=dialog.close).props("flat")
+
+        def _render_error(message: str) -> None:
+            content_area.clear()
+            with content_area:
+                ui.label(message).style("color: #f87171")
+            action_area.clear()
+            with action_area:
+                ui.button("Close", on_click=dialog.close).props("flat")
+
+        def _fetch_preview() -> None:
+            try:
+                preview = _canvas_preview(conn, pending)
+                state["phase"] = "preview"
+                state["preview"] = preview
+                _render_preview(preview)
+            except Exception as exc:
+                state["phase"] = "error"
+                _render_error(str(exc))
+
+        def _do_push() -> None:
+            state["phase"] = "pushing"
+            _render_pushing()
+            ui.timer(0.1, _execute_push, once=True)
+
+        def _execute_push() -> None:
+            try:
+                result = _canvas_apply(conn, pending)
+                if result["ok"]:
+                    dialog.close()
+                    update_pending_display()
+                    _set_status(status_ref, "Pushed to Canvas", "success", 6000)
+                    # Reload current table to reflect changes
+                    grid = _find_grid(grid_container)
+                    if grid is not None:
+                        new_rows = _get_table_rows(conn, current_table["name"])
+                        grid.options["rowData"] = new_rows  # pyright: ignore[reportUnknownMemberType]
+                        grid.update()
+                else:
+                    state["phase"] = "results"
+                    _render_results(
+                        cast(
+                            list[dict[str, object]],
+                            result.get("results", []),
+                        )
+                    )
+                    update_pending_display()
+            except Exception as exc:
+                dialog.close()
+                _set_status(status_ref, f"Push failed: {exc}", "error", 6000)
+
+        # Start with loading, then defer the blocking preview call
+        _render_loading()
+        ui.timer(0.1, _fetch_preview, once=True)
 
 
 def _attach_edit_handler(
@@ -772,6 +1293,7 @@ def _attach_edit_handler(
     pk_cols: list[str],
     pending: _PendingChanges,
     update_pending_display: Any,
+    status_ref: dict[str, Any],
 ) -> None:
     """Attach cellValueChanged handler to an AG Grid."""
 
@@ -794,16 +1316,22 @@ def _attach_edit_handler(
                 new_value,
             )
             update_pending_display()
-            ui.notify(
-                f"Updated {col_field}",
-                type="positive",
-                position="bottom-right",
-                close_button=True,
+            _set_status(status_ref, f"Saved {col_field}", "success", 3000)
+            # Flash the edited column
+            grid.run_grid_method(  # pyright: ignore[reportUnknownMemberType]
+                "flashCells",
+                {
+                    "columns": [col_field],
+                    "flashDuration": 300,
+                    "fadeDuration": 200,
+                },
             )
         else:
-            ui.notify(
+            _set_status(
+                status_ref,
                 f"Error: {result.get('error', 'unknown')}",
-                type="negative",
+                "error",
+                5000,
             )
 
     grid.on("cellValueChanged", on_cell_changed)
