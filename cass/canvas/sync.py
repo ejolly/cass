@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 import duckdb
 
 if TYPE_CHECKING:
+    from ..models.domain import CanvasGrade
     from .client import CanvasClient
 
 
@@ -56,6 +57,77 @@ def resolve_row_name(
 
 
 # ---------------------------------------------------------------------------
+# Grade data helpers
+# ---------------------------------------------------------------------------
+
+
+def is_valid_grade(grade: str | None) -> bool:
+    """Return True if grade is non-empty and not a placeholder."""
+    return bool(grade) and grade not in ("-", "?")
+
+
+def build_grade_push_data(
+    grades: list[CanvasGrade],
+) -> tuple[dict[int, dict[int, str]], int]:
+    """Build ``{aid: {uid: grade}}`` from CanvasGrade list, filtering placeholders.
+
+    Returns:
+        Tuple of (grade_data_by_aid, skipped_count).
+    """
+    grade_data_by_aid: dict[int, dict[int, str]] = {}
+    skipped = 0
+    for g in grades:
+        if not is_valid_grade(g.posted_grade):
+            skipped += 1
+            continue
+        grade_data_by_aid.setdefault(g.canvas_assignment_id, {})[g.canvas_user_id] = (
+            g.posted_grade
+        )
+    return grade_data_by_aid, skipped
+
+
+def get_post_manually_map(conn: duckdb.DuckDBPyConnection) -> dict[int, bool]:
+    """Load ``{canvas_assignment_id: post_manually}`` from DB."""
+    rows = conn.execute(
+        "SELECT canvas_id, post_manually FROM canvas_assignments"
+    ).fetchall()
+    return {r[0]: r[1] for r in rows}
+
+
+def build_push_preview(
+    conn: duckdb.DuckDBPyConnection,
+    grade_data_by_aid: dict[int, dict[int, str]],
+    grades: list[CanvasGrade],
+) -> list[dict[str, object]]:
+    """Build a preview summary per assignment for push display.
+
+    Returns:
+        List of dicts with ``name``, ``canvas_id``, ``count``, ``post_manually``.
+    """
+    # Get assignment names
+    rows = conn.execute("SELECT canvas_id, name FROM canvas_assignments").fetchall()
+    aid_to_name: dict[int, str] = {r[0]: r[1] for r in rows}
+
+    post_manually_map = get_post_manually_map(conn)
+
+    # Collect all unique assignment IDs from grades
+    all_aids = sorted({g.canvas_assignment_id for g in grades})
+
+    preview: list[dict[str, object]] = []
+    for aid in all_aids:
+        pushable_count = len(grade_data_by_aid.get(aid, {}))
+        preview.append(
+            {
+                "name": aid_to_name.get(aid, f"Assignment {aid}"),
+                "canvas_id": aid,
+                "count": pushable_count,
+                "post_manually": bool(post_manually_map.get(aid)),
+            }
+        )
+    return preview
+
+
+# ---------------------------------------------------------------------------
 # Core push functions
 # ---------------------------------------------------------------------------
 
@@ -80,11 +152,7 @@ def push_grades(
     if not grade_data_by_aid:
         return results
 
-    # Look up post_manually status
-    manual_rows = conn.execute(
-        "SELECT canvas_id, post_manually FROM canvas_assignments"
-    ).fetchall()
-    post_manually_map = {r[0]: r[1] for r in manual_rows}
+    post_manually_map = get_post_manually_map(conn)
 
     pushed_aids: list[int] = []
     for aid, grade_data in grade_data_by_aid.items():

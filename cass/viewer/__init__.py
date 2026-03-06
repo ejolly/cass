@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 import duckdb
 
 from ..canvas.sync import (
+    is_valid_grade,
     push_assignments,
     push_grades,
     resolve_row_name,
@@ -191,7 +192,7 @@ def _extract_grade_data(
         aid = pk["canvas_assignment_id"]
         uid = pk["canvas_user_id"]
         grade_val = columns.get("posted_grade", {}).get("current")
-        if grade_val is not None:
+        if grade_val is not None and is_valid_grade(str(grade_val)):
             grade_data_by_aid.setdefault(aid, {})[uid] = str(grade_val)
             pk_keys_by_aid.setdefault(aid, []).append(pk_key)
     return grade_data_by_aid, pk_keys_by_aid
