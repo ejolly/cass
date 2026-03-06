@@ -5,10 +5,10 @@ __pycache__/
 canvas-token.txt
 canvas_mapping.json
 classroom_roster.csv
-cass.db
+cass.duckdb
 grade-data/
 .ruff_cache/
 .pytest_cache/
-cass.db.wal
+cass.duckdb.wal
 cass.toml
 docs/api/

@@ -691,7 +691,7 @@ def fetch(
 def drop(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
 ) -> None:
-    """Delete the local database (cass.db)."""
+    """Delete the local database (cass.duckdb)."""
     from . import db
 
     db_file = Path(db.db_path())

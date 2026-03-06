@@ -149,7 +149,7 @@ cass canvas sync --apply             # apply config-as-data sync
 ```bash
 cass query "SELECT * FROM students WHERE canvas_id != ''"
 cass query                    # interactive DuckDB REPL
-cass view                     # open cass.db in Dataflare (GUI viewer)
+cass view                     # open cass.duckdb in Dataflare (GUI viewer)
 ```
 
 [Dataflare](https://dataflare.app/) is a recommended GUI for browsing and editing the database interactively. Install with `brew install --cask dataflare`.
@@ -162,7 +162,7 @@ cass view                     # open cass.db in Dataflare (GUI viewer)
 
 ## How it works
 
-All data lives in a local [DuckDB](https://duckdb.org/) database (`cass.db`) — no external database setup needed.
+All data lives in a local [DuckDB](https://duckdb.org/) database (`cass.duckdb`) — no external database setup needed.
 
 ```
 cass init    → creates cass.toml
@@ -220,7 +220,7 @@ When both `[classroom]` and `[canvas]` are configured, `cass pull` will:
 
 ## Database schema
 
-The `cass.db` file contains these tables (schema version 5):
+The `cass.duckdb` file contains these tables (schema version 5):
 
 | Table | Description | Key columns |
 |-------|-------------|-------------|
@@ -246,14 +246,14 @@ SELECT assignment_id, AVG(numeric_score) FROM grades WHERE source = 'auto' GROUP
 
 ## Collaborative workflow
 
-`cass.db` is the shared source of truth — commit it to git. Clear the `api_cache` table before committing to keep the file small.
+`cass.duckdb` is the shared source of truth — commit it to git. Clear the `api_cache` table before committing to keep the file small.
 
 ```bash
 # TA grades hw-02, pushes
 git pull
 cass pull --grades
 cass db clean                 # clear api_cache (~2MB of API responses)
-git add cass.db && git commit -m "grade hw-02" && git push
+git add cass.duckdb && git commit -m "grade hw-02" && git push
 
 # Instructor pulls, reviews, pushes to Canvas
 git pull
@@ -268,7 +268,7 @@ cass export grades --csv grades.csv
 # Edit in Excel/Numbers
 cass import grades.csv
 cass db clean
-git add cass.db && git commit -m "manual grade adjustments" && git push
+git add cass.duckdb && git commit -m "manual grade adjustments" && git push
 ```
 
 ## Troubleshooting
