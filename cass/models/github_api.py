@@ -46,12 +46,6 @@ class GHAcceptedAssignment(msgspec.Struct):
     grade: str | None = None
 
 
-class GHProfile(msgspec.Struct):
-    login: str
-    name: str | None = None
-    email: str | None = None
-
-
 class GHCommitter(msgspec.Struct):
     date: str = ""
 

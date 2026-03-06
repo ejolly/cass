@@ -377,14 +377,21 @@ def pull_grades(console: Console) -> None:
         console.print(f"  [green]Computed {len(canvas_grades)} Canvas grades[/green]")
 
 
-def pull_fetch(console: Console, ttl: float, no_cache: bool, limit: int) -> None:
+async def pull_fetch(
+    client: GitHubClient,
+    console: Console,
+    ttl: float,
+    no_cache: bool,
+    limit: int,
+) -> None:
     """Download student files from GitHub repos."""
     students = db.load_students()
     assignments = db.load_assignments()
     gh_assignments = [a for a in assignments if a.gh_assignment_slug]
     for a in gh_assignments:
         console.print(f"\n[bold]{a.gh_assignment_slug}[/bold]")
-        fetch_mod.fetch_assignment(
+        await fetch_mod.fetch_assignment(
+            client,
             a,
             students,
             limit=limit,

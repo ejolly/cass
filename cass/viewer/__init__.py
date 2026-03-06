@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 __docformat__ = "google"
-__all__ = ["_canvas_apply", "_canvas_preview"]
+__all__ = ["_canvas_apply", "_canvas_preview", "_values_equal"]
 
 import json
 from datetime import date, datetime

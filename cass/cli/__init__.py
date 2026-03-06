@@ -318,7 +318,12 @@ def pull(
         pull_mod.pull_grades(console)
     if do_fetch:
         _require_classroom()
-        pull_mod.pull_fetch(console, state.ttl, state.no_cache, limit)
+
+        async def _fetch() -> None:
+            async with GitHubClient() as c:
+                await pull_mod.pull_fetch(c, console, state.ttl, state.no_cache, limit)
+
+        asyncio.run(_fetch())
 
 
 # ---------------------------------------------------------------------------
@@ -639,8 +644,11 @@ def fetch(
     limit: int = typer.Option(0, "--limit", help="Limit number of students (0 = all)"),
 ) -> None:
     """Download student submission files."""
+    import asyncio
+
     from .. import db
     from ..github import fetch as fetch_mod
+    from ..github.client import GitHubClient
 
     _require_classroom()
     students = db.load_students()
@@ -655,16 +663,21 @@ def fetch(
             console.print(f"[red]No assignment matching '{slug}'[/red]")
             raise typer.Exit(code=1)
 
-    for target in targets:
-        console.print(f"\n[bold]{target.gh_assignment_slug}[/bold]")
-        fetch_mod.fetch_assignment(
-            target,
-            students,
-            force=force,
-            limit=limit,
-            ttl_hours=state.ttl,
-            force_refresh=state.no_cache,
-        )
+    async def _fetch() -> None:
+        async with GitHubClient() as client:
+            for target in targets:
+                console.print(f"\n[bold]{target.gh_assignment_slug}[/bold]")
+                await fetch_mod.fetch_assignment(
+                    client,
+                    target,
+                    students,
+                    force=force,
+                    limit=limit,
+                    ttl_hours=state.ttl,
+                    force_refresh=state.no_cache,
+                )
+
+    asyncio.run(_fetch())
 
 
 # ---------------------------------------------------------------------------

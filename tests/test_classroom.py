@@ -7,7 +7,6 @@ from cass.models import (
     GHAssignment,
     GHCommit,
     GHContentItem,
-    GHProfile,
     GHRosterEntry,
 )
 
@@ -74,24 +73,6 @@ def test_convert_content_item():
     assert result.type == "file"
     assert result.name == "proposal.pdf"
     assert result.download_url is not None
-
-
-def test_convert_gh_profile_with_email():
-    data = {
-        "login": "alice-gh",
-        "name": "Alice Smith",
-        "email": "alice@example.com",
-    }
-    result = msgspec.convert(data, GHProfile)
-    assert result.login == "alice-gh"
-    assert result.name == "Alice Smith"
-    assert result.email == "alice@example.com"
-
-
-def test_convert_gh_profile_null_email():
-    data = {"login": "bob-gh", "name": "Bob", "email": None}
-    result = msgspec.convert(data, GHProfile)
-    assert result.email is None
 
 
 def test_convert_roster_entry():

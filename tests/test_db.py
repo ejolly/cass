@@ -25,10 +25,12 @@ def test_gh_students_roundtrip(db_conn):
         GHStudentInfo(login="bob-gh", id="2", name="Bob Jones"),
     ]
     assert db.save_gh_students(gh_students) == 2
-    loaded = db.load_gh_students()
-    assert len(loaded) == 2
-    assert loaded[0].login == "alice-gh"
-    assert loaded[0].name == "Alice Smith"
+    rows = db_conn.execute(
+        "SELECT github_username, name FROM gh_students ORDER BY github_username"
+    ).fetchall()
+    assert len(rows) == 2
+    assert rows[0][0] == "alice-gh"
+    assert rows[0][1] == "Alice Smith"
 
 
 # --- Canvas Students (source) ---
@@ -45,11 +47,13 @@ def test_canvas_students_roundtrip(db_conn):
     assert (
         db.save_canvas_students(canvas_students, sis_section_map=sis_section_map) == 2
     )
-    loaded = db.load_canvas_students()
-    assert len(loaded) == 2
-    assert loaded[0].name == "Alice Smith"
-    assert loaded[0].email == "alice@ucsd.edu"
-    assert loaded[0].sis_user_id == "A12345"
+    rows = db_conn.execute(
+        "SELECT name, email, sis_user_id FROM canvas_students ORDER BY name"
+    ).fetchall()
+    assert len(rows) == 2
+    assert rows[0][0] == "Alice Smith"
+    assert rows[0][1] == "alice@ucsd.edu"
+    assert rows[0][2] == "A12345"
     # sis_section_id is stored in DB but not loaded into CanvasStudent
     row = db_conn.execute(
         "SELECT sis_section_id FROM canvas_students WHERE canvas_id = 100"

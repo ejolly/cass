@@ -18,6 +18,30 @@ _LINK_NEXT_RE = re.compile(r'<([^>]+)>;\s*rel="next"')
 MAX_CONCURRENCY = 10
 
 
+def check_available() -> bool:
+    """Return True if ``gh`` is on PATH."""
+    return shutil.which("gh") is not None
+
+
+def check_auth() -> tuple[bool, str]:
+    """Check ``gh auth status``. Returns (is_authed, username_or_error)."""
+    if not check_available():
+        return False, "gh not installed"
+    result = subprocess.run(
+        ["gh", "auth", "status"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return False, result.stderr.strip()
+    for line in result.stderr.splitlines():
+        if "Logged in to" in line and "account" in line:
+            parts = line.split("account")
+            if len(parts) > 1:
+                return True, parts[1].strip().split()[0]
+    return True, "(authenticated)"
+
+
 def _get_token() -> str:
     """Get GitHub token from the gh CLI (one subprocess call)."""
     if not shutil.which("gh"):
