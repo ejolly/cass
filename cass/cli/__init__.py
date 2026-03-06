@@ -1094,10 +1094,12 @@ def view(
     classic: bool = typer.Option(
         False, "--classic", help="Use the classic AG Grid frontend"
     ),
+    nicegui: bool = typer.Option(
+        False, "--nicegui", help="Use the NiceGUI-based viewer (prototype)"
+    ),
 ) -> None:
     """Open the database in a browser-based viewer."""
     from .. import db
-    from ..viewer import start_server
 
     if not db.is_remote():
         db_file = Path(db.db_path())
@@ -1107,7 +1109,14 @@ def view(
             )
             raise typer.Exit(code=1)
 
-    start_server(port=port, classic=classic)
+    if nicegui:
+        from ..viewer.nicegui_app import start_nicegui_server
+
+        start_nicegui_server(port=port)
+    else:
+        from ..viewer import start_server
+
+        start_server(port=port, classic=classic)
 
 
 @db_app.callback()
