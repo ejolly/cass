@@ -44,7 +44,7 @@ quizzes_app = typer.Typer(
 canvas_app.add_typer(quizzes_app, name="quizzes", rich_help_panel="Browse")
 
 
-def _require_canvas() -> None:
+def require_canvas() -> None:
     from ..config import get_config
 
     cfg = get_config()
@@ -54,7 +54,7 @@ def _require_canvas() -> None:
         raise typer.Exit(code=1)
 
 
-def _client() -> CanvasClient:
+def client() -> CanvasClient:
     from ..canvas.client import CanvasClient
 
     return CanvasClient()
@@ -70,7 +70,7 @@ def canvas_callback(ctx: typer.Context) -> None:
     """Canvas LMS — browse and modify course content."""
     if ctx.invoked_subcommand is not None:
         return
-    _require_canvas()
+    require_canvas()
 
     from rich.panel import Panel
 
@@ -106,7 +106,7 @@ def canvas_callback(ctx: typer.Context) -> None:
     console.print()
     console.print(panel)
 
-    _canvas_guide(
+    canvas_guide(
         "Browse content",
         [
             ("cass canvas people", "Student roster"),
@@ -115,14 +115,14 @@ def canvas_callback(ctx: typer.Context) -> None:
             ("cass canvas files", "File tree"),
         ],
     )
-    _canvas_guide(
+    canvas_guide(
         "More",
         [("cass canvas --help", "All canvas commands")],
     )
     console.print()
 
 
-def _canvas_guide(heading: str, commands: list[tuple[str, str]]) -> None:
+def canvas_guide(heading: str, commands: list[tuple[str, str]]) -> None:
     """Print a section of the canvas command guide."""
     console.print(f"\n  [bold]{heading}[/bold]")
     for cmd, desc in commands:
@@ -142,8 +142,8 @@ def people(
     """Show course roster with roles and emails."""
     from . import report
 
-    _require_canvas()
-    with _client() as c:
+    require_canvas()
+    with client() as c:
         users = c.list_users()
 
     headers = ["Name", "Role", "Email", "SIS ID", "Canvas ID"]
@@ -185,11 +185,11 @@ def modules_callback(
     """List modules, or show items in a specific module."""
     if ctx.invoked_subcommand is not None:
         return
-    _require_canvas()
+    require_canvas()
 
     from . import report
 
-    with _client() as c:
+    with client() as c:
         if module_id:
             mod = c.resolve_module(module_id)
             items = c.list_module_items(mod.id)
@@ -200,7 +200,7 @@ def modules_callback(
                     it.title,
                     it.type,
                     str(it.content_id or ""),
-                    _pub(it.published),
+                    pub(it.published),
                 ]
                 for it in items
             ]
@@ -213,7 +213,7 @@ def modules_callback(
                     str(m.id),
                     str(m.position),
                     m.name,
-                    _pub(m.published),
+                    pub(m.published),
                     str(m.items_count),
                 ]
                 for m in modules
@@ -234,8 +234,8 @@ def create(
     position: int | None = typer.Option(None, "--position", help="Position in list"),
 ) -> None:
     """Create a new module."""
-    _require_canvas()
-    with _client() as c:
+    require_canvas()
+    with client() as c:
         mod = c.create_module(name, position=position)
     console.print(f"[green]Created module:[/green] {mod.name} (id={mod.id})")
 
@@ -246,8 +246,8 @@ def modules_publish(
     all_modules: bool = typer.Option(False, "--all", help="Publish all modules"),
 ) -> None:
     """Publish a module (or all modules with --all)."""
-    _require_canvas()
-    with _client() as c:
+    require_canvas()
+    with client() as c:
         if all_modules:
             modules = c.list_modules()
             for m in modules:
@@ -264,8 +264,8 @@ def modules_unpublish(
     id_or_name: str = typer.Argument(..., help="Module ID or name"),
 ) -> None:
     """Unpublish a module."""
-    _require_canvas()
-    with _client() as c:
+    require_canvas()
+    with client() as c:
         mod = c.resolve_module(id_or_name)
         c.unpublish("modules", mod.id)
     console.print(f"[yellow]Unpublished:[/yellow] {mod.name}")
@@ -277,8 +277,8 @@ def modules_delete(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
 ) -> None:
     """Delete a module."""
-    _require_canvas()
-    with _client() as c:
+    require_canvas()
+    with client() as c:
         mod = c.resolve_module(id_or_name)
         if not yes and not typer.confirm(f"Delete module '{mod.name}'?"):
             raise typer.Abort()
@@ -300,8 +300,8 @@ def modules_add_item(
     ),
 ) -> None:
     """Add an item to a module."""
-    _require_canvas()
-    with _client() as c:
+    require_canvas()
+    with client() as c:
         mod = c.resolve_module(id_or_name)
         item = c.create_module_item(
             mod.id, title=title or item_type, item_type=item_type, content_id=content_id
@@ -326,11 +326,11 @@ def assignments_callback(
     """List assignments, or show details for a specific assignment."""
     if ctx.invoked_subcommand is not None:
         return
-    _require_canvas()
+    require_canvas()
 
     from . import report
 
-    with _client() as c:
+    with client() as c:
         if assignment_id:
             a = c.resolve_assignment(assignment_id)
             headers = ["Field", "Value"]
@@ -339,7 +339,7 @@ def assignments_callback(
                 ["Name", a.name],
                 ["Points", str(a.points_possible)],
                 ["Due", a.due_at or ""],
-                ["Published", _pub(a.published)],
+                ["Published", pub(a.published)],
                 ["Submission Types", ", ".join(a.submission_types)],
                 ["Grading Type", a.grading_type],
                 ["Group ID", str(a.assignment_group_id)],
@@ -355,8 +355,8 @@ def assignments_callback(
                     str(a.id),
                     a.name,
                     str(a.points_possible),
-                    _due(a.due_at),
-                    _pub(a.published),
+                    due(a.due_at),
+                    pub(a.published),
                     groups.get(a.assignment_group_id, ""),
                 ]
                 for a in assignments
@@ -379,8 +379,8 @@ def assignment_groups(
     """Show assignment groups with weights."""
     from . import report
 
-    _require_canvas()
-    with _client() as c:
+    require_canvas()
+    with client() as c:
         groups = c.list_assignment_groups()
 
     headers = ["ID", "Name", "Position", "Weight"]
@@ -413,9 +413,9 @@ def assignments_create(
     publish: bool = typer.Option(False, "--publish", help="Publish immediately"),
 ) -> None:
     """Create a new assignment."""
-    _require_canvas()
-    with _client() as c:
-        group_id = _resolve_assignment_group(c, group)
+    require_canvas()
+    with client() as c:
+        group_id = resolve_assignment_group(c, group)
         a = c.create_assignment(
             name,
             points_possible=points,
@@ -432,8 +432,8 @@ def assignments_publish(
     id_or_name: str = typer.Argument(..., help="Assignment ID or name"),
 ) -> None:
     """Publish an assignment."""
-    _require_canvas()
-    with _client() as c:
+    require_canvas()
+    with client() as c:
         a = c.resolve_assignment(id_or_name)
         c.publish("assignments", a.id)
     console.print(f"[green]Published:[/green] {a.name}")
@@ -444,8 +444,8 @@ def assignments_unpublish(
     id_or_name: str = typer.Argument(..., help="Assignment ID or name"),
 ) -> None:
     """Unpublish an assignment."""
-    _require_canvas()
-    with _client() as c:
+    require_canvas()
+    with client() as c:
         a = c.resolve_assignment(id_or_name)
         c.unpublish("assignments", a.id)
     console.print(f"[yellow]Unpublished:[/yellow] {a.name}")
@@ -457,8 +457,8 @@ def assignments_delete(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
 ) -> None:
     """Delete an assignment."""
-    _require_canvas()
-    with _client() as c:
+    require_canvas()
+    with client() as c:
         a = c.resolve_assignment(id_or_name)
         if not yes and not typer.confirm(f"Delete assignment '{a.name}'?"):
             raise typer.Abort()
@@ -480,11 +480,11 @@ def quizzes_callback(
     """List all quizzes."""
     if ctx.invoked_subcommand is not None:
         return
-    _require_canvas()
+    require_canvas()
 
     from . import report
 
-    with _client() as c:
+    with client() as c:
         quizzes = c.list_quizzes()
 
     headers = ["ID", "Title", "Type", "Questions", "Points", "Published"]
@@ -495,7 +495,7 @@ def quizzes_callback(
             q.quiz_type,
             str(q.question_count),
             str(q.points_possible or ""),
-            _pub(q.published),
+            pub(q.published),
         ]
         for q in quizzes
     ]
@@ -523,8 +523,8 @@ def quizzes_create(
     ),
 ) -> None:
     """Create a new quiz."""
-    _require_canvas()
-    with _client() as c:
+    require_canvas()
+    with client() as c:
         q = c.create_quiz(
             title,
             quiz_type=quiz_type,
@@ -540,8 +540,8 @@ def quizzes_publish(
     id_or_name: str = typer.Argument(..., help="Quiz ID or title"),
 ) -> None:
     """Publish a quiz."""
-    _require_canvas()
-    with _client() as c:
+    require_canvas()
+    with client() as c:
         q = c.resolve_quiz(id_or_name)
         c.publish("quizzes", q.id)
     console.print(f"[green]Published:[/green] {q.title}")
@@ -552,8 +552,8 @@ def quizzes_unpublish(
     id_or_name: str = typer.Argument(..., help="Quiz ID or title"),
 ) -> None:
     """Unpublish a quiz."""
-    _require_canvas()
-    with _client() as c:
+    require_canvas()
+    with client() as c:
         q = c.resolve_quiz(id_or_name)
         c.unpublish("quizzes", q.id)
     console.print(f"[yellow]Unpublished:[/yellow] {q.title}")
@@ -565,8 +565,8 @@ def quizzes_delete(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
 ) -> None:
     """Delete a quiz."""
-    _require_canvas()
-    with _client() as c:
+    require_canvas()
+    with client() as c:
         q = c.resolve_quiz(id_or_name)
         if not yes and not typer.confirm(f"Delete quiz '{q.title}'?"):
             raise typer.Abort()
@@ -589,8 +589,8 @@ def files(
 
     from . import report
 
-    _require_canvas()
-    with _client() as c:
+    require_canvas()
+    with client() as c:
         folders = c.list_folders()
         all_files = c.list_files()
 
@@ -601,7 +601,7 @@ def files(
             [
                 str(f.id),
                 f.display_name,
-                _size(f.size),
+                size(f.size),
                 f.content_type,
                 folder_names.get(f.folder_id, ""),
                 f.created_at[:10] if f.created_at else "",
@@ -627,7 +627,7 @@ def files(
 
     # Add files to their folders
     for f in sorted(all_files, key=lambda f: f.display_name):
-        label = f"{f.display_name}  [dim]{_size(f.size)}[/dim]"
+        label = f"{f.display_name}  [dim]{size(f.size)}[/dim]"
         parent = folder_nodes.get(f.folder_id)
         if parent:
             parent.add(label)
@@ -647,12 +647,12 @@ def files_upload(
     """Upload a file to the course."""
     import os
 
-    _require_canvas()
+    require_canvas()
     if not os.path.isfile(path):
         console.print(f"[red]File not found: {path}[/red]")
         raise typer.Exit(code=1)
 
-    with _client() as c:
+    with client() as c:
         f = c.upload_file(path, folder=folder)
     console.print(f"[green]Uploaded:[/green] {f.display_name} (id={f.id})")
 
@@ -663,10 +663,10 @@ def files_delete(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
 ) -> None:
     """Delete a file from the course."""
-    _require_canvas()
+    require_canvas()
     if not yes and not typer.confirm(f"Delete file {file_id}?"):
         raise typer.Abort()
-    with _client() as c:
+    with client() as c:
         c.delete_file(file_id)
     console.print(f"[red]Deleted file {file_id}[/red]")
 
@@ -684,12 +684,12 @@ def announcements(
     """List course announcements."""
     from . import report
 
-    _require_canvas()
-    with _client() as c:
+    require_canvas()
+    with client() as c:
         anns = c.list_announcements()
 
     headers = ["ID", "Title", "Posted", "Author"]
-    rows = [[str(a.id), a.title, _due(a.posted_at), a.user_name] for a in anns]
+    rows = [[str(a.id), a.title, due(a.posted_at), a.user_name] for a in anns]
 
     if csv_out:
         report.write_csv_file(csv_out, headers=headers, rows=rows)
@@ -705,8 +705,8 @@ def announcements_create(
     message: str = typer.Option(..., "--message", "-m", help="HTML message body"),
 ) -> None:
     """Create an announcement."""
-    _require_canvas()
-    with _client() as c:
+    require_canvas()
+    with client() as c:
         a = c.create_announcement(title, message)
     console.print(f"[green]Created announcement:[/green] {a.title} (id={a.id})")
 
@@ -718,7 +718,7 @@ def announcements_update(
     message: str = typer.Option("", "--message", "-m", help="New message body"),
 ) -> None:
     """Update an announcement."""
-    _require_canvas()
+    require_canvas()
     kwargs: dict[str, str] = {}
     if title:
         kwargs["title"] = title
@@ -727,7 +727,7 @@ def announcements_update(
     if not kwargs:
         console.print("[yellow]Nothing to update.[/yellow]")
         return
-    with _client() as c:
+    with client() as c:
         a = c.update_announcement(topic_id, **kwargs)
     console.print(f"[green]Updated:[/green] {a.title}")
 
@@ -738,10 +738,10 @@ def announcements_delete(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
 ) -> None:
     """Delete an announcement."""
-    _require_canvas()
+    require_canvas()
     if not yes and not typer.confirm(f"Delete announcement {topic_id}?"):
         raise typer.Abort()
-    with _client() as c:
+    with client() as c:
         c.delete_announcement(topic_id)
     console.print(f"[red]Deleted announcement {topic_id}[/red]")
 
@@ -759,8 +759,8 @@ def tabs(
     """List course navigation tabs."""
     from . import report
 
-    _require_canvas()
-    with _client() as c:
+    require_canvas()
+    with client() as c:
         tab_list = c.list_tabs()
 
     headers = ["ID", "Label", "Type", "Position", "Visibility"]
@@ -788,8 +788,8 @@ def tabs_show(
     tab_id: str = typer.Argument(..., help="Tab ID to show"),
 ) -> None:
     """Make a navigation tab visible."""
-    _require_canvas()
-    with _client() as c:
+    require_canvas()
+    with client() as c:
         t = c.update_tab(tab_id, hidden=False)
     console.print(f"[green]Visible:[/green] {t.label}")
 
@@ -799,8 +799,8 @@ def tabs_hide(
     tab_id: str = typer.Argument(..., help="Tab ID to hide"),
 ) -> None:
     """Hide a navigation tab."""
-    _require_canvas()
-    with _client() as c:
+    require_canvas()
+    with client() as c:
         t = c.update_tab(tab_id, hidden=True)
     console.print(f"[yellow]Hidden:[/yellow] {t.label}")
 
@@ -828,7 +828,7 @@ def sync(
 
     from ..config import get_config
 
-    _require_canvas()
+    require_canvas()
     cfg = get_config()
 
     if not cfg.canvas_modules and not cfg.canvas_assignments:
@@ -838,7 +838,7 @@ def sync(
         )
         return
 
-    with _client() as c:
+    with client() as c:
         actions: list[tuple[str, str, str]] = []  # (action, type, name)
 
         # --- Modules ---
@@ -955,7 +955,7 @@ def sync(
 # ---------------------------------------------------------------------------
 
 
-def _resolve_assignment_group(c: CanvasClient, group_name: str) -> int:
+def resolve_assignment_group(c: CanvasClient, group_name: str) -> int:
     """Resolve an assignment group name to its Canvas ID (case-insensitive)."""
     groups = c.list_assignment_groups()
     key = group_name.lower()
@@ -968,20 +968,20 @@ def _resolve_assignment_group(c: CanvasClient, group_name: str) -> int:
     raise typer.Exit(code=1)
 
 
-def _pub(val: bool | None) -> str:
+def pub(val: bool | None) -> str:
     if val is None:
         return ""
     return "[green]yes[/green]" if val else "[dim]no[/dim]"
 
 
-def _due(val: str | None) -> str:
+def due(val: str | None) -> str:
     if not val:
         return ""
     # Show date portion only
     return val[:10] if len(val) >= 10 else val
 
 
-def _size(bytes_: int) -> str:
+def size(bytes_: int) -> str:
     if bytes_ < 1024:
         return f"{bytes_} B"
     if bytes_ < 1024 * 1024:

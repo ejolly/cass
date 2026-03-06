@@ -158,7 +158,7 @@ def push_grade(
 _NON_ALPHA_RE = re.compile(r"[^a-z\s]")
 
 
-def _normalize(name: str) -> str:
+def normalize(name: str) -> str:
     name = name.lower().strip()
     if "," in name:
         parts = [p.strip() for p in name.split(",", 1)]
@@ -175,7 +175,7 @@ def match_students(
     canvas_by_name: dict[str, CanvasStudent] = {}
     for cs in canvas_students:
         for field in (cs.name, cs.sortable_name):
-            key = _normalize(field)
+            key = normalize(field)
             if key:
                 canvas_by_name[key] = cs
 
@@ -185,7 +185,7 @@ def match_students(
 
     for gh in gh_students:
         if gh.name:
-            key = _normalize(gh.name)
+            key = normalize(gh.name)
             if key in canvas_by_name:
                 cs = canvas_by_name[key]
                 matched[gh.login] = cs.id
@@ -222,13 +222,13 @@ def find_candidates(
 ) -> list[CanvasStudent]:
     """Rank Canvas students by name similarity to a GitHub student."""
     gh_name = gh_student.name or gh_student.login
-    gh_tokens = set(_normalize(gh_name).split())
+    gh_tokens = set(normalize(gh_name).split())
     if not gh_tokens:
         return canvas_pool[:5]
 
     scored: list[tuple[int, CanvasStudent]] = []
     for c in canvas_pool:
-        c_tokens = set(_normalize(c.name).split())
+        c_tokens = set(normalize(c.name).split())
         overlap = len(gh_tokens & c_tokens)
         if overlap > 0:
             scored.append((overlap, c))

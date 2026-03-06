@@ -42,7 +42,7 @@ def check_auth() -> tuple[bool, str]:
     return True, "(authenticated)"
 
 
-def _get_token() -> str:
+def get_token() -> str:
     """Get GitHub token from the gh CLI (one subprocess call)."""
     if not shutil.which("gh"):
         raise SystemExit(
@@ -58,7 +58,7 @@ class GitHubClient:
     """Async GitHub API client with caching and concurrency control."""
 
     def __init__(self) -> None:
-        token = _get_token()
+        token = get_token()
         self._client = httpx.AsyncClient(
             base_url="https://api.github.com",
             headers={

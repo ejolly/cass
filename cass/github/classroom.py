@@ -27,7 +27,7 @@ from ..models import (
 from .client import GitHubClient
 
 
-class _RepoInfo(TypedDict):
+class RepoInfo(TypedDict):
     repo_name: str
     repo_short: str
     commit_count: int
@@ -40,7 +40,7 @@ class _RepoInfo(TypedDict):
 # ---------------------------------------------------------------------------
 
 
-async def _resolve_gh_id(client: GitHubClient, slug: str) -> int:
+async def resolve_gh_id(client: GitHubClient, slug: str) -> int:
     """Resolve assignment slug to GH Classroom numeric ID."""
     cfg = get_config()
     data = await client.get_cached(
@@ -121,7 +121,7 @@ async def fetch_submissions(
 ) -> list[GHSubmission]:
     """Fetch per-student submission data for a GitHub Classroom assignment."""
     cfg = get_config()
-    gh_id = await _resolve_gh_id(client, assignment_slug)
+    gh_id = await resolve_gh_id(client, assignment_slug)
     data = await client.get_cached(
         f"/assignments/{gh_id}/accepted_assignments",
         ttl_hours=ttl_hours,
@@ -131,7 +131,7 @@ async def fetch_submissions(
     accepted = msgspec.convert(data, list[GHAcceptedAssignment])
 
     # Build per-student info from accepted_assignments
-    student_repo_info: dict[str, _RepoInfo] = {}
+    student_repo_info: dict[str, RepoInfo] = {}
     for entry in accepted:
         repo_name = entry.repository.full_name if entry.repository else ""
         for student in entry.students:
@@ -224,7 +224,7 @@ async def fetch_file_submissions(
 ) -> list[GHSubmission]:
     """Check if a specific file exists in each student's repo (parallel)."""
     cfg = get_config()
-    gh_id = await _resolve_gh_id(client, assignment_slug)
+    gh_id = await resolve_gh_id(client, assignment_slug)
     data = await client.get_cached(
         f"/assignments/{gh_id}/accepted_assignments",
         ttl_hours=ttl_hours,
@@ -277,7 +277,7 @@ async def build_repo_map(
     force_refresh: bool = False,
 ) -> dict[str, str]:
     """Return ``{handle_lower: repo_short_name}`` for an assignment."""
-    gh_id = await _resolve_gh_id(client, assignment_slug)
+    gh_id = await resolve_gh_id(client, assignment_slug)
     data = await client.get_cached(
         f"/assignments/{gh_id}/accepted_assignments",
         ttl_hours=ttl_hours,

@@ -6,10 +6,10 @@ import duckdb
 import pytest
 
 from cass.viewer.nicegui_app import (
-    _get_tables,
-    _is_editable,
-    _pending_count,
-    _track_change,
+    get_tables,
+    is_editable,
+    pending_count,
+    track_change,
 )
 
 
@@ -46,8 +46,8 @@ def viewer_conn():
 # --- Unit tests ---
 
 
-def test_get_tables_excludes_meta(viewer_conn):
-    tables = _get_tables(viewer_conn)
+def testget_tables_excludes_meta(viewer_conn):
+    tables = get_tables(viewer_conn)
     names = [t["name"] for t in tables]
     assert "meta" not in names
     assert "students" in names
@@ -55,8 +55,8 @@ def test_get_tables_excludes_meta(viewer_conn):
     assert "logs" in names
 
 
-def test_get_tables_types(viewer_conn):
-    tables = _get_tables(viewer_conn)
+def testget_tables_types(viewer_conn):
+    tables = get_tables(viewer_conn)
     by_name = {t["name"]: t["type"] for t in tables}
     assert by_name["students"] == "table"
     assert by_name["logs"] == "table"
@@ -64,13 +64,13 @@ def test_get_tables_types(viewer_conn):
 
 def test_editable_table(viewer_conn):
     """Tables with a PK that aren't read-only should be editable."""
-    assert _is_editable(viewer_conn, "students") is True
-    assert _is_editable(viewer_conn, "assignments") is True
+    assert is_editable(viewer_conn, "students") is True
+    assert is_editable(viewer_conn, "assignments") is True
 
 
 def test_no_pk_not_editable(viewer_conn):
     """Tables without a primary key are not editable."""
-    assert _is_editable(viewer_conn, "logs") is False
+    assert is_editable(viewer_conn, "logs") is False
 
 
 # --- Grade editing and change tracking ---
@@ -88,7 +88,7 @@ def test_canvas_grades_editable(viewer_conn):
         "  PRIMARY KEY (canvas_user_id, canvas_assignment_id)"
         ")"
     )
-    assert _is_editable(viewer_conn, "canvas_grades") is True
+    assert is_editable(viewer_conn, "canvas_grades") is True
 
 
 def test_canvas_submissions_readonly(viewer_conn):
@@ -101,38 +101,38 @@ def test_canvas_submissions_readonly(viewer_conn):
         "  PRIMARY KEY (canvas_user_id, canvas_assignment_id)"
         ")"
     )
-    assert _is_editable(viewer_conn, "canvas_submissions") is False
+    assert is_editable(viewer_conn, "canvas_submissions") is False
 
 
-def test_track_change_grade():
+def testtrack_change_grade():
     """Track changes for canvas_grades (pushable column: posted_grade)."""
     pending: dict = {}
     pk = {"canvas_user_id": 100, "canvas_assignment_id": 42}
-    _track_change(pending, "canvas_grades", pk, "posted_grade", "8", "9")
+    track_change(pending, "canvas_grades", pk, "posted_grade", "8", "9")
 
-    assert _pending_count(pending) == 1
+    assert pending_count(pending) == 1
     assert "canvas_grades" in pending
     pk_key = json.dumps(pk, sort_keys=True)
     assert pk_key in pending["canvas_grades"]
     assert pending["canvas_grades"][pk_key]["posted_grade"]["current"] == "9"
 
 
-def test_track_change_grade_revert():
+def testtrack_change_grade_revert():
     """Reverting a grade change to baseline removes it from pending."""
     pending: dict = {}
     pk = {"canvas_user_id": 100, "canvas_assignment_id": 42}
-    _track_change(pending, "canvas_grades", pk, "posted_grade", "8", "9")
-    assert _pending_count(pending) == 1
+    track_change(pending, "canvas_grades", pk, "posted_grade", "8", "9")
+    assert pending_count(pending) == 1
 
     # Revert back to baseline
-    _track_change(pending, "canvas_grades", pk, "posted_grade", "8", "8")
-    assert _pending_count(pending) == 0
+    track_change(pending, "canvas_grades", pk, "posted_grade", "8", "8")
+    assert pending_count(pending) == 0
     assert "canvas_grades" not in pending
 
 
-def test_track_change_ignores_non_pushable():
+def testtrack_change_ignores_non_pushable():
     """Changes to non-pushable columns (like score) are not tracked."""
     pending: dict = {}
     pk = {"canvas_user_id": 100, "canvas_assignment_id": 42}
-    _track_change(pending, "canvas_grades", pk, "score", 8.0, 9.0)
-    assert _pending_count(pending) == 0
+    track_change(pending, "canvas_grades", pk, "score", 8.0, 9.0)
+    assert pending_count(pending) == 0
