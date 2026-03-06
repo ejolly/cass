@@ -52,17 +52,13 @@ course_id = 72335
 
 For Canvas, provide your API token via a `canvas-token.txt` file in the project root or the `CANVAS_TOKEN` environment variable.
 
-## Configuration (advanced)
+### Declarative sync (optional)
 
-Declare Canvas modules and assignments in `cass.toml` for declarative sync:
+Declare Canvas modules and assignments in `cass.toml`:
 
 ```toml
 [[canvas.modules]]
 name = "Week 1"
-published = false
-
-[[canvas.modules]]
-name = "Week 2"
 published = true
 
 [[canvas.assignments]]
@@ -115,7 +111,7 @@ cass egrades                  # export eGrades CSV (UCSD final grade format)
 cass egrades -o custom.csv    # custom output path
 ```
 
-Assignments with a manual posting policy (`post_manually`) are auto-posted after grade push — grades become visible to students in one step.
+Assignments with a manual posting policy (`post_manually`) are auto-posted after grade push.
 
 ### Export & import
 
@@ -139,22 +135,19 @@ cass fetch all --force        # re-download everything
 cass canvas                   # course overview with resource counts
 cass canvas people            # enrolled students
 cass canvas modules           # list modules
-cass canvas modules 123       # module detail with items
-cass canvas modules create "Week 3"  # create a module
-cass canvas modules publish 123      # publish a module
-cass canvas modules add-item 123 --page "Welcome"  # add item to module
-cass canvas assignments              # list assignments
-cass canvas assignments 456          # assignment detail
-cass canvas assignments groups       # assignment groups
+cass canvas modules create "Week 3"
+cass canvas modules publish 123
+cass canvas assignments       # list assignments
+cass canvas assignments groups
 cass canvas assignments create "HW2" --points 10
-cass canvas quizzes                  # list quizzes
-cass canvas files                    # file tree
-cass canvas upload ./file.pdf        # upload a file
-cass canvas announcements            # list announcements
-cass canvas announce "Title" "Body"  # post announcement
-cass canvas tabs                     # list navigation tabs
-cass canvas sync --dry-run           # preview config-as-data sync
-cass canvas sync --apply             # apply config-as-data sync
+cass canvas quizzes           # list quizzes
+cass canvas files             # file tree
+cass canvas upload ./file.pdf
+cass canvas announcements     # list announcements
+cass canvas announce "Title" "Body"
+cass canvas tabs              # list navigation tabs
+cass canvas sync --dry-run    # preview config-as-data sync
+cass canvas sync --apply      # apply config-as-data sync
 ```
 
 ### Backup & restore
@@ -163,27 +156,36 @@ cass canvas sync --apply             # apply config-as-data sync
 cass backup                               # timestamped copy → backups/
 cass backup --tag "pre-regrade"           # add a descriptive tag
 cass backup --list                        # list existing backups
-cass restore backups/cass_2026-03-05_14-30-00.duckdb  # restore (with confirmation)
+cass restore backups/cass_2026-03-05.duckdb  # restore (with confirmation)
 ```
-
-Backups are saved to a `backups/` directory (auto-created, gitignored).
 
 ### Database tools
 
 ```bash
 cass query "SELECT * FROM students WHERE github_username IS NOT NULL"
 cass query                    # interactive DuckDB REPL
-cass view                     # browser-based spreadsheet viewer (AG Grid)
+cass view                     # browser-based database viewer
 cass view --port 8080         # use a fixed port
+cass view --classic           # legacy AG Grid viewer
 ```
-
-`cass view` opens a browser-based spreadsheet UI for browsing and editing the database — no external apps to install. Tables are sortable, filterable, and editable with changes written back to DuckDB. Views are shown read-only.
 
 ### Global flags
 
 - `--no-cache` — bypass API cache
 - `--ttl N` — cache TTL in hours (default: 6)
 - `-V` / `--version` — show version
+
+## Browser viewer
+
+`cass view` opens an Elm-powered spreadsheet UI for browsing and editing the database.
+
+- **Browse**: sidebar navigation by table group (Combined / Canvas / GitHub), sortable columns, search (Ctrl+K)
+- **Edit**: double-click cells to edit, changes tracked as pending until pushed
+- **Push to Canvas**: preview diff against live Canvas state, bulk push with conflict warnings
+- **Export**: CSV export from any table
+- **Dark mode**: automatic, follows system preference
+
+Tables are grouped by source with read-only/editable badges. Combined (master) tables are always read-only. JOINed columns (student names, assignment names) are display-only.
 
 ## How it works
 
@@ -193,18 +195,19 @@ All data lives in a local [DuckDB](https://duckdb.org/) database (`cass.duckdb`)
 cass init    → creates cass.toml
 cass pull    → fetches APIs → populates DuckDB
 cass grades  → reads from DB → renders Rich tables
-cass query   → direct SQL access for custom analysis
+cass view    → browse/edit in browser
+cass query   → direct SQL access
 ```
 
 ### Combined mode
 
 When both `[classroom]` and `[canvas]` are configured, `cass pull` will:
 
-1. Fetch the Canvas course roster (authoritative source of truth for students)
+1. Fetch the Canvas roster (authoritative source of truth for students)
 2. Discover GitHub Classroom students from accepted assignments
-3. Auto-match GitHub ↔ Canvas students by name (with interactive resolution for ambiguous cases)
+3. Auto-match GitHub <> Canvas students by name (with interactive resolution for ambiguous cases)
 4. Store source data in separate tables (`gh_*`, `canvas_*`) and merge into unified master tables
-5. `cass grades push` syncs pre-computed Canvas grades directly — no mapping needed at push time
+5. `cass grades push` syncs pre-computed Canvas grades directly
 
 ### Grading logic
 
@@ -221,80 +224,44 @@ When both `[classroom]` and `[canvas]` are configured, `cass pull` will:
 
 | Condition | Grade | Numeric |
 |-----------|-------|---------|
-| Not submitted | `-` | — |
-| Submitted, not graded | `?` | — |
+| Not submitted | `-` | -- |
+| Submitted, not graded | `?` | -- |
 | Graded | `42/50` | 42 |
-
-## Architecture
-
-| Module | Purpose |
-|--------|---------|
-| `cli.py` | Typer CLI — all commands, flags, and output |
-| `cli_canvas.py` | `cass canvas` subcommands — browse and modify Canvas course content |
-| `config.py` | Config discovery (`cass.toml`), prerequisite checks, config-as-data specs |
-| `pull.py` | Orchestrates the students → assignments → submissions → grades pipeline |
-| `classroom.py` | GitHub Classroom API — async with parallel per-student fetching |
-| `canvas.py` | Canvas business logic — roster matching, name normalization, grade sync |
-| `canvas_api.py` | Canvas HTTP client — typed `CanvasClient`, retry transport, GraphQL grade posting |
-| `github_client.py` | Async httpx GitHub API client with caching and concurrency control |
-| `gh.py` | Subprocess wrapper for `gh api` (used by fetch.py) |
-| `db.py` | DuckDB database — schema, CRUD for all tables, raw queries |
-| `cache.py` | API response cache in separate `.cass_cache.duckdb` file |
-| `egrades.py` | eGrades CSV export — grading scheme conversion, UCSD format |
-| `fetch.py` | Download student files from GitHub repos |
-| `viewer/` | Browser-based DB viewer — stdlib HTTP server + AG Grid frontend |
-| `report.py` | Output formatting — Rich tables, CSV, and markdown |
-| `models/` | msgspec.Struct types split into domain, github_api, canvas_api, grading |
 
 ## Database schema
 
-The `cass.duckdb` file contains these tables (schema version 9). API cache lives in a separate `.cass_cache.duckdb` file to keep the shared DB lean.
+`cass.duckdb` contains these tables (schema v9). API cache lives in `.cass_cache.duckdb` (gitignored).
 
 **Source tables** (raw data from each platform):
 
-| Table | Description | Primary key |
-|-------|-------------|-------------|
-| `gh_students` | GitHub Classroom students | `github_username` |
-| `canvas_students` | Canvas enrolled students | `canvas_id` |
-| `gh_assignments` | GitHub Classroom assignments | `slug` |
-| `canvas_assignments` | Canvas assignments | `canvas_id` |
-| `gh_submissions` | GitHub submission records | `(github_username, assignment_slug)` |
-| `canvas_submissions` | Canvas submission records | `(canvas_user_id, canvas_assignment_id)` |
+| Table | Primary key |
+|-------|-------------|
+| `gh_students` | `github_username` |
+| `canvas_students` | `canvas_id` |
+| `gh_assignments` | `slug` |
+| `canvas_assignments` | `canvas_id` |
+| `gh_submissions` | `(github_username, assignment_slug)` |
+| `canvas_submissions` | `(canvas_user_id, canvas_assignment_id)` |
 
-**Master tables** (unified joins with all metadata):
+**Master tables** (unified):
 
-| Table | Description | Primary key |
-|-------|-------------|-------------|
-| `students` | Unified roster (Canvas-authoritative) | `canvas_id`, `github_username` UNIQUE |
-| `assignments` | Unified assignment mapping | `slug`, `gh_assignment_slug` UNIQUE, `canvas_assignment_id` UNIQUE |
+| Table | Primary key |
+|-------|-------------|
+| `students` | `canvas_id`, `github_username` UNIQUE |
+| `assignments` | `slug`, `gh_assignment_slug` UNIQUE, `canvas_assignment_id` UNIQUE |
 
 **Grade tables**:
 
-| Table | Description | Primary key |
-|-------|-------------|-------------|
-| `gh_grades` | GitHub computed grades | `(github_username, assignment_slug)` |
-| `canvas_grades` | Canvas grades (ready for push) | `(canvas_user_id, canvas_assignment_id)` |
+| Table | Primary key |
+|-------|-------------|
+| `gh_grades` | `(github_username, assignment_slug)` |
+| `canvas_grades` | `(canvas_user_id, canvas_assignment_id)` |
 
-Example queries:
-
-```sql
--- Students with GitHub links
-SELECT name, github_username, canvas_id FROM students WHERE github_username IS NOT NULL;
-
--- Late GitHub submissions
-SELECT github_username, assignment_slug, lateness_seconds FROM gh_submissions WHERE late = true;
-
--- Canvas grades ready for push
-SELECT s.name, a.slug, cg.posted_grade
-FROM canvas_grades cg
-JOIN students s ON s.canvas_id = cg.canvas_user_id
-JOIN assignments a ON a.canvas_assignment_id = cg.canvas_assignment_id
-ORDER BY s.name, a.slug;
-```
+All tables are queryable via `cass query "SQL"` or directly with the `duckdb` CLI.
 
 ## Collaborative workflow
 
-`cass.duckdb` is the shared source of truth — commit it to git. API cache lives in a separate `.cass_cache.duckdb` file (gitignored), so the shared DB stays lean.
+`cass.duckdb` is the shared source of truth — commit it to git. The API cache (`.cass_cache.duckdb`) is gitignored.
 
 ```bash
 # TA grades hw-02, pushes
@@ -308,7 +275,7 @@ cass grades
 cass grades push --post
 ```
 
-For manual edits (adjustments, overrides):
+For manual edits:
 
 ```bash
 cass export grades --csv grades.csv
@@ -320,29 +287,29 @@ git add cass.duckdb && git commit -m "manual grade adjustments" && git push
 ## Troubleshooting
 
 **`gh auth` fails or `gh` not found**
-Install the [GitHub CLI](https://cli.github.com/) and run `gh auth login`. Verify with `gh auth status`.
+Install the [GitHub CLI](https://cli.github.com/) and run `gh auth login`.
 
 **Canvas token not found**
-Create `canvas-token.txt` in the project root containing your API token, or set the `CANVAS_TOKEN` environment variable. Generate a token in Canvas under Account → Settings → Approved Integrations.
+Create `canvas-token.txt` in the project root or set `CANVAS_TOKEN`. Generate a token in Canvas under Account > Settings > Approved Integrations.
 
 **Students missing from roster**
-GitHub Classroom only discovers students who have accepted at least one assignment. Run `cass pull --students` after students accept. For Canvas-only mode, all enrolled students are pulled automatically.
+GitHub Classroom only discovers students who have accepted at least one assignment. For Canvas-only mode, all enrolled students are pulled automatically.
 
 **Name matching failures (combined mode)**
-When GitHub and Canvas names don't match automatically, `cass pull --students` will prompt for interactive resolution. Matched pairs are saved to the database — you only need to resolve once.
+`cass pull --students` will prompt for interactive resolution when names don't match. Matched pairs are saved to the database.
 
 **Stale data**
-Use `--no-cache` to bypass the API cache, or `--ttl 0` for immediate expiry. Run `cass db clean` to clear all cached API responses.
+Use `--no-cache` or `--ttl 0` for immediate expiry. Run `cass db clean` to clear all cached API responses.
 
 ## Development
 
 ```bash
 uv sync                       # install all dependencies
-uv run poe lint               # format + lint + type check
+uv run poe lint               # format + lint + type check (ruff, ty, basedpyright, biome, elm-format)
 uv run poe test               # run test suite
+uv run poe elm-build          # compile Elm frontend
 uv run poe install            # install as global CLI tool
 uv run poe docs               # generate API docs to docs/api/
-uv run poe docs-serve         # live-preview API docs
 ```
 
 ## License
