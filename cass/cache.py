@@ -15,15 +15,15 @@ CACHE_FILENAME = ".cass_cache.duckdb"
 _conn: duckdb.DuckDBPyConnection | None = None
 
 
-def _cache_path() -> str:
+def cache_path() -> str:
     return str(get_config().root / CACHE_FILENAME)
 
 
-def _get_conn() -> duckdb.DuckDBPyConnection:
+def get_conn() -> duckdb.DuckDBPyConnection:
     global _conn
     if _conn is not None:
         return _conn
-    _conn = duckdb.connect(_cache_path())
+    _conn = duckdb.connect(cache_path())
     _conn.execute("""
         CREATE TABLE IF NOT EXISTS api_cache (
             endpoint TEXT PRIMARY KEY,
@@ -43,7 +43,7 @@ def reset() -> None:
 
 def cache_load(key: str, ttl_hours: float = 6) -> str | None:
     """Return cached JSON string if fresh, else None."""
-    conn = _get_conn()
+    conn = get_conn()
     row = conn.execute(
         "SELECT data, fetched_at FROM api_cache WHERE endpoint = ?", [key]
     ).fetchone()
@@ -57,7 +57,7 @@ def cache_load(key: str, ttl_hours: float = 6) -> str | None:
 
 def cache_save(key: str, data: str) -> None:
     """Write JSON string to cache."""
-    conn = _get_conn()
+    conn = get_conn()
     conn.execute(
         "INSERT OR REPLACE INTO api_cache (endpoint, data, fetched_at) "
         "VALUES (?, ?, ?)",
@@ -66,13 +66,13 @@ def cache_save(key: str, data: str) -> None:
 
 
 def cache_clear() -> None:
-    conn = _get_conn()
+    conn = get_conn()
     conn.execute("DELETE FROM api_cache")
 
 
 def cache_count() -> int:
     try:
-        conn = _get_conn()
+        conn = get_conn()
         row = conn.execute("SELECT COUNT(*) FROM api_cache").fetchone()
         return row[0] if row else 0
     except Exception:
@@ -83,12 +83,12 @@ def cache_size_kb() -> float:
     """Return the cache file size in KB."""
     from pathlib import Path
 
-    p = Path(_cache_path())
+    p = Path(cache_path())
     return p.stat().st_size / 1024 if p.exists() else 0.0
 
 
 def cache_list() -> list[tuple[str, float]]:
-    conn = _get_conn()
+    conn = get_conn()
     return conn.execute(
         "SELECT endpoint, fetched_at FROM api_cache ORDER BY fetched_at DESC"
     ).fetchall()

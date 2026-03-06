@@ -74,10 +74,10 @@ def main(
     state.no_cache = no_cache
     state.ttl = ttl
     if ctx.invoked_subcommand is None:
-        _status()
+        status_display()
 
 
-def _require_classroom() -> None:
+def require_classroom() -> None:
     from ..config import get_config
 
     cfg = get_config()
@@ -89,7 +89,7 @@ def _require_classroom() -> None:
         raise typer.Exit(code=1)
 
 
-def _require_canvas() -> None:
+def require_canvas() -> None:
     from ..config import get_config
 
     cfg = get_config()
@@ -104,7 +104,7 @@ def _require_canvas() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _status() -> None:
+def status_display() -> None:
     from .. import cache, db
     from ..config import config_file_path, get_config
 
@@ -317,7 +317,7 @@ def pull(
     if pull_all or do_grades:
         pull_mod.pull_grades(console)
     if do_fetch:
-        _require_classroom()
+        require_classroom()
 
         async def _fetch() -> None:
             async with GitHubClient() as c:
@@ -534,7 +534,7 @@ def push(
 
     from .. import db
 
-    _require_canvas()
+    require_canvas()
 
     canvas_grades = db.load_canvas_grades()
     if not canvas_grades:
@@ -650,7 +650,7 @@ def fetch(
     from ..github import fetch as fetch_mod
     from ..github.client import GitHubClient
 
-    _require_classroom()
+    require_classroom()
     students = db.load_students()
     assignments = db.load_assignments()
     gh_assignments = [a for a in assignments if a.gh_assignment_slug]
@@ -719,7 +719,7 @@ def drop(
 # ---------------------------------------------------------------------------
 
 
-def _ensure_backups_gitignored(project_root: Path) -> None:
+def ensure_backups_gitignored(project_root: Path) -> None:
     """Append backups/ to .gitignore if not already present."""
     gitignore = project_root / ".gitignore"
     if gitignore.exists():
@@ -768,7 +768,7 @@ def backup(
     if db.is_remote():
         # Snapshot MotherDuck to a local file via hybrid attach
         backups_dir.mkdir(exist_ok=True)
-        _ensure_backups_gitignored(project_root)
+        ensure_backups_gitignored(project_root)
         conn = db.get_db()
         conn.execute(f"ATTACH '{dest}' AS _backup")
         for (name,) in conn.execute(
@@ -787,7 +787,7 @@ def backup(
             raise typer.Exit(code=1)
 
         backups_dir.mkdir(exist_ok=True)
-        _ensure_backups_gitignored(project_root)
+        ensure_backups_gitignored(project_root)
         db.reset()
         shutil.copy2(str(db_file), str(dest))
 
@@ -884,7 +884,7 @@ def restore(
 # ---------------------------------------------------------------------------
 
 
-def _run_repl() -> None:
+def run_repl() -> None:
     import shutil
     import subprocess
 
@@ -942,7 +942,7 @@ def query(
     from . import report
 
     if not sql:
-        _run_repl()
+        run_repl()
         return
 
     result = db.run_query(sql)
@@ -1011,7 +1011,7 @@ def egrades(
     """
     from ..canvas.egrades import generate_egrades
 
-    _require_canvas()
+    require_canvas()
 
     try:
         path, count, warnings = generate_egrades(output)
@@ -1125,7 +1125,7 @@ def view(
 def db_callback(ctx: typer.Context) -> None:
     """Open an interactive DuckDB REPL against the project database."""
     if ctx.invoked_subcommand is None:
-        _run_repl()
+        run_repl()
 
 
 @db_app.command()

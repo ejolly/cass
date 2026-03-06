@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 __docformat__ = "google"
-__all__ = ["_canvas_apply", "_canvas_preview", "_values_equal"]
+__all__ = ["canvas_apply", "canvas_preview", "values_equal"]
 
 import json
 from datetime import date, datetime
@@ -27,7 +27,7 @@ _PendingChanges = dict[str, _TableChanges]
 # ---------------------------------------------------------------------------
 
 
-def _values_equal(a: object, b: object) -> bool:
+def values_equal(a: object, b: object) -> bool:
     """Compare values loosely, handling datetime/string equivalence."""
     if a == b:
         return True
@@ -38,7 +38,7 @@ def _values_equal(a: object, b: object) -> bool:
     return False
 
 
-def _resolve_row_name(
+def resolve_row_name(
     conn: duckdb.DuckDBPyConnection,
     table: str,
     pk_key: str,
@@ -70,7 +70,7 @@ def _resolve_row_name(
 # ---------------------------------------------------------------------------
 
 
-def _preview_assignments(
+def preview_assignments(
     conn: duckdb.DuckDBPyConnection,
     table_changes: _TableChanges,
     client: CanvasClient,
@@ -89,7 +89,7 @@ def _preview_assignments(
             live = client.get_assignment(canvas_id)
             for col, vals in columns.items():
                 live_val = getattr(live, col, None)
-                conflict = not _values_equal(live_val, vals["baseline"])
+                conflict = not values_equal(live_val, vals["baseline"])
                 results.append(
                     {
                         "table": "canvas_assignments",
@@ -114,7 +114,7 @@ def _preview_assignments(
     return results
 
 
-def _preview_grades(
+def preview_grades(
     conn: duckdb.DuckDBPyConnection,
     table_changes: _TableChanges,
     client: CanvasClient,
@@ -131,7 +131,7 @@ def _preview_grades(
         by_assignment.setdefault(aid, []).append((uid, columns))
 
     for aid, student_changes in by_assignment.items():
-        assignment_name = _resolve_row_name(conn, "canvas_assignments", str(aid))
+        assignment_name = resolve_row_name(conn, "canvas_assignments", str(aid))
 
         try:
             live_subs = client.list_submissions(aid)
@@ -152,7 +152,7 @@ def _preview_grades(
                             live_val = live_sub.grade
                         elif col == "score":
                             live_val = live_sub.score
-                    conflict = not _values_equal(live_val, vals["baseline"])
+                    conflict = not values_equal(live_val, vals["baseline"])
                     results.append(
                         {
                             "table": "canvas_grades",
@@ -179,7 +179,7 @@ def _preview_grades(
     return results
 
 
-def _canvas_preview(
+def canvas_preview(
     conn: duckdb.DuckDBPyConnection,
     pending: _PendingChanges,
 ) -> dict[str, object]:
@@ -194,9 +194,9 @@ def _canvas_preview(
     results: list[dict[str, object]] = []
     with CanvasClient() as c:
         if assignment_changes:
-            results.extend(_preview_assignments(conn, assignment_changes, c))
+            results.extend(preview_assignments(conn, assignment_changes, c))
         if grade_changes:
-            results.extend(_preview_grades(conn, grade_changes, c))
+            results.extend(preview_grades(conn, grade_changes, c))
 
     return {
         "ok": True,
@@ -206,7 +206,7 @@ def _canvas_preview(
     }
 
 
-def _apply_assignments(
+def apply_assignments(
     table_changes: _TableChanges,
     client: CanvasClient,
 ) -> list[dict[str, object]]:
@@ -224,7 +224,7 @@ def _apply_assignments(
     return results
 
 
-def _apply_grades(
+def apply_grades(
     table_changes: _TableChanges,
     client: CanvasClient,
     conn: duckdb.DuckDBPyConnection,
@@ -309,7 +309,7 @@ def _apply_grades(
     return results
 
 
-def _canvas_apply(
+def canvas_apply(
     conn: duckdb.DuckDBPyConnection,
     pending: _PendingChanges,
 ) -> dict[str, object]:
@@ -324,9 +324,9 @@ def _canvas_apply(
     results: list[dict[str, object]] = []
     with CanvasClient() as c:
         if assignment_changes:
-            results.extend(_apply_assignments(assignment_changes, c))
+            results.extend(apply_assignments(assignment_changes, c))
         if grade_changes:
-            results.extend(_apply_grades(grade_changes, c, conn))
+            results.extend(apply_grades(grade_changes, c, conn))
 
     # Clean up empty table entries
     if not assignment_changes:

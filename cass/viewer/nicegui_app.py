@@ -14,9 +14,7 @@ from nicegui import ui
 
 from ..db import db_path
 from ..db import reset as db_reset
-from . import _canvas_apply as _canvas_apply  # pyright: ignore[reportPrivateUsage]
-from . import _canvas_preview as _canvas_preview  # pyright: ignore[reportPrivateUsage]
-from . import _values_equal as _values_equal  # pyright: ignore[reportPrivateUsage]
+from . import canvas_apply, canvas_preview, values_equal
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -120,16 +118,16 @@ _PendingChanges = dict[str, _TableChanges]
 # ---------------------------------------------------------------------------
 
 
-def _sanitize(obj: object) -> object:  # pyright: ignore[reportUnknownParameterType]
+def sanitize(obj: object) -> object:  # pyright: ignore[reportUnknownParameterType]
     """Replace float NaN/Inf with None and convert datetimes for JSON."""
     if isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
         return None
     if isinstance(obj, (datetime, date, time)):
         return obj.isoformat()
     if isinstance(obj, list):
-        return [_sanitize(v) for v in obj]  # pyright: ignore[reportUnknownArgumentType,reportUnknownVariableType]
+        return [sanitize(v) for v in obj]  # pyright: ignore[reportUnknownArgumentType,reportUnknownVariableType]
     if isinstance(obj, dict):
-        return {k: _sanitize(v) for k, v in obj.items()}  # pyright: ignore[reportUnknownArgumentType,reportUnknownVariableType]
+        return {k: sanitize(v) for k, v in obj.items()}  # pyright: ignore[reportUnknownArgumentType,reportUnknownVariableType]
     return obj
 
 
@@ -138,7 +136,7 @@ def _sanitize(obj: object) -> object:  # pyright: ignore[reportUnknownParameterT
 # ---------------------------------------------------------------------------
 
 
-def _get_tables(
+def get_tables(
     conn: duckdb.DuckDBPyConnection,
 ) -> list[dict[str, str]]:
     """Return list of tables with their type."""
@@ -153,7 +151,7 @@ def _get_tables(
     ]
 
 
-def _get_primary_keys(conn: duckdb.DuckDBPyConnection, table: str) -> list[str]:
+def get_primary_keys(conn: duckdb.DuckDBPyConnection, table: str) -> list[str]:
     """Return primary key column names for a table."""
     try:
         pk_rows = conn.execute(
@@ -168,23 +166,21 @@ def _get_primary_keys(conn: duckdb.DuckDBPyConnection, table: str) -> list[str]:
     return []
 
 
-def _get_column_names(conn: duckdb.DuckDBPyConnection, table: str) -> list[str]:
+def get_column_names(conn: duckdb.DuckDBPyConnection, table: str) -> list[str]:
     """Return column names for a table."""
     cols_raw = conn.execute(f"DESCRIBE {table}").fetchall()
     return [row[0] for row in cols_raw]
 
 
-def _is_editable(conn: duckdb.DuckDBPyConnection, table: str) -> bool:
+def is_editable(conn: duckdb.DuckDBPyConnection, table: str) -> bool:
     """Check if a table is editable."""
-    tables = _get_tables(conn)
+    tables = get_tables(conn)
     table_type = next((t["type"] for t in tables if t["name"] == table), None)
-    pk_cols = _get_primary_keys(conn, table)
+    pk_cols = get_primary_keys(conn, table)
     return table_type == "table" and len(pk_cols) > 0 and table not in _READ_ONLY_TABLES
 
 
-def _get_table_rows(
-    conn: duckdb.DuckDBPyConnection, table: str
-) -> list[dict[str, Any]]:
+def get_table_rows(conn: duckdb.DuckDBPyConnection, table: str) -> list[dict[str, Any]]:
     """Return all rows from a table as list of dicts."""
     query = _ENRICHED_QUERIES.get(table, f"SELECT * FROM {table}")
     result = conn.execute(query)
@@ -192,11 +188,11 @@ def _get_table_rows(
     rows = result.fetchall()
     return cast(
         list[dict[str, Any]],
-        [_sanitize(dict(zip(col_names, row, strict=True))) for row in rows],
+        [sanitize(dict(zip(col_names, row, strict=True))) for row in rows],
     )
 
 
-def _classify_table(name: str) -> str:
+def classify_table(name: str) -> str:
     """Classify a table into a sidebar group."""
     if name.startswith("canvas_"):
         return "canvas"
@@ -205,13 +201,13 @@ def _classify_table(name: str) -> str:
     return "combined"
 
 
-def _group_tables(
+def group_tables(
     tables: list[dict[str, str]],
 ) -> list[dict[str, Any]]:
     """Group tables into sidebar sections."""
-    combined = [t for t in tables if _classify_table(t["name"]) == "combined"]
-    canvas = [t for t in tables if _classify_table(t["name"]) == "canvas"]
-    github = [t for t in tables if _classify_table(t["name"]) == "github"]
+    combined = [t for t in tables if classify_table(t["name"]) == "combined"]
+    canvas = [t for t in tables if classify_table(t["name"]) == "canvas"]
+    github = [t for t in tables if classify_table(t["name"]) == "github"]
     groups: list[dict[str, Any]] = []
     if combined:
         groups.append({"label": "Combined Data", "items": combined})
@@ -227,7 +223,7 @@ def _group_tables(
 # ---------------------------------------------------------------------------
 
 
-def _update_cell(
+def update_cell(
     conn: duckdb.DuckDBPyConnection,
     table: str,
     pk: dict[str, object],
@@ -235,11 +231,11 @@ def _update_cell(
     value: object,
 ) -> dict[str, object]:
     """Update a single cell in a table."""
-    pk_cols = _get_primary_keys(conn, table)
+    pk_cols = get_primary_keys(conn, table)
     if not pk_cols:
         return {"ok": False, "error": "Table is not editable"}
 
-    valid_cols = _get_column_names(conn, table)
+    valid_cols = get_column_names(conn, table)
     if column not in valid_cols:
         return {"ok": False, "error": f"Unknown column: {column}"}
 
@@ -262,7 +258,7 @@ def _update_cell(
     return {"ok": True, "old_value": old_value}
 
 
-def _track_change(
+def track_change(
     pending: _PendingChanges,
     table: str,
     pk: dict[str, object],
@@ -284,7 +280,7 @@ def _track_change(
 
     if column in row_changes:
         row_changes[column]["current"] = new_value
-        if _values_equal(row_changes[column]["baseline"], new_value):
+        if values_equal(row_changes[column]["baseline"], new_value):
             del row_changes[column]
             if not row_changes:
                 del table_changes[pk_key]
@@ -297,7 +293,7 @@ def _track_change(
         }
 
 
-def _pending_count(pending: _PendingChanges) -> int:
+def pending_count(pending: _PendingChanges) -> int:
     """Total number of pending field changes."""
     return sum(len(cols) for rows in pending.values() for cols in rows.values())
 
@@ -307,7 +303,7 @@ def _pending_count(pending: _PendingChanges) -> int:
 # ---------------------------------------------------------------------------
 
 
-def _get_display_columns(table: str, all_cols: list[str]) -> list[str]:
+def get_display_columns(table: str, all_cols: list[str]) -> list[str]:
     """Get visible columns in display order for a table."""
     hidden = _HIDDEN_COLUMNS.get(table, [])
     visible = [c for c in all_cols if c not in hidden]
@@ -321,7 +317,7 @@ def _get_display_columns(table: str, all_cols: list[str]) -> list[str]:
     return [*ordered, *remaining]
 
 
-def _build_column_defs(
+def build_column_defs(
     conn: duckdb.DuckDBPyConnection, table: str
 ) -> list[dict[str, Any]]:
     """Build AG Grid column definitions for a table."""
@@ -330,11 +326,11 @@ def _build_column_defs(
     col_names = [desc[0] for desc in result.description]
     col_types = {str(desc[0]): str(desc[1]) for desc in result.description}
 
-    display_cols = _get_display_columns(table, col_names)
+    display_cols = get_display_columns(table, col_names)
     hidden_cols = _HIDDEN_COLUMNS.get(table, [])
 
-    editable = _is_editable(conn, table)
-    pk_cols = _get_primary_keys(conn, table) if editable else []
+    editable = is_editable(conn, table)
+    pk_cols = get_primary_keys(conn, table) if editable else []
     pushable_cols = _CANVAS_PUSHABLE.get(table, set())
 
     defs: list[dict[str, Any]] = []
@@ -387,7 +383,7 @@ def _build_column_defs(
     return defs
 
 
-def _row_id_js(pk_cols: list[str]) -> str:
+def row_id_js(pk_cols: list[str]) -> str:
     """Generate a JS expression for AG Grid getRowId."""
     if not pk_cols:
         return "String(params.data.__rowIndex || Math.random())"
@@ -641,8 +637,8 @@ def start_nicegui_server(port: int = 0) -> None:
     """
     db_reset()
     conn = duckdb.connect(db_path())
-    tables = _get_tables(conn)
-    groups = _group_tables(tables)
+    tables = get_tables(conn)
+    groups = group_tables(tables)
     pending: _PendingChanges = {}
 
     @ui.page("/")
@@ -671,7 +667,7 @@ def start_nicegui_server(port: int = 0) -> None:
 
         def update_pending_display() -> None:
             """Update pending count label and toggle clear/push button visibility."""
-            count = _pending_count(pending)
+            count = pending_count(pending)
             el = pending_label["ref"]
             if el is not None:
                 el.text = f"{count} pending" if count > 0 else ""
@@ -694,7 +690,7 @@ def start_nicegui_server(port: int = 0) -> None:
                 sidebar_buttons[table_name].classes(add="active")
 
             # Update toolbar
-            editable = _is_editable(conn, table_name)
+            editable = is_editable(conn, table_name)
             tl = table_label["ref"]
             if tl is not None:
                 tl.text = table_name
@@ -715,9 +711,9 @@ def start_nicegui_server(port: int = 0) -> None:
                     )
 
             # Build grid
-            row_data = _get_table_rows(conn, table_name)
-            col_defs = _build_column_defs(conn, table_name)
-            pk_cols = _get_primary_keys(conn, table_name) if editable else []
+            row_data = get_table_rows(conn, table_name)
+            col_defs = build_column_defs(conn, table_name)
+            pk_cols = get_primary_keys(conn, table_name) if editable else []
 
             ml = meta_label["ref"]
             if ml is not None:
@@ -739,7 +735,7 @@ def start_nicegui_server(port: int = 0) -> None:
                         },
                         "animateRows": True,
                         "enableCellTextSelection": True,
-                        ":getRowId": (f"(params) => {_row_id_js(pk_cols)}"),
+                        ":getRowId": (f"(params) => {row_id_js(pk_cols)}"),
                     }
                     # Dim unpublished rows in canvas_assignments
                     if table_name == "canvas_assignments":
@@ -757,7 +753,7 @@ def start_nicegui_server(port: int = 0) -> None:
                     )
 
                     if editable:
-                        _attach_edit_handler(
+                        attach_edit_handler(
                             grid,
                             conn,
                             table_name,
@@ -852,7 +848,7 @@ def start_nicegui_server(port: int = 0) -> None:
                         search_ref["ref"] = si
                         si.on(
                             "update:model-value",
-                            lambda e: _apply_search(
+                            lambda e: apply_search(
                                 grid_container,
                                 e.args,  # pyright: ignore[reportUnknownMemberType]
                             ),
@@ -863,7 +859,7 @@ def start_nicegui_server(port: int = 0) -> None:
                             ui.element("button")
                             .classes("toolbar-btn")
                             .props('innerHTML="Export CSV"')
-                            .on("click", lambda _: _export_csv(grid_container))
+                            .on("click", lambda _: export_csv(grid_container))
                         )
                         export_btn_ref["ref"] = eb
 
@@ -881,7 +877,7 @@ def start_nicegui_server(port: int = 0) -> None:
                             .props('innerHTML="Clear"')
                             .on(
                                 "click",
-                                lambda _: _clear_pending(
+                                lambda _: clear_pending(
                                     pending,
                                     update_pending_display,
                                     status_ref,
@@ -898,7 +894,7 @@ def start_nicegui_server(port: int = 0) -> None:
                             .props('innerHTML="Push to Canvas"')
                             .on(
                                 "click",
-                                lambda _: _open_push_modal(
+                                lambda _: open_push_modal(
                                     conn,
                                     pending,
                                     update_pending_display,
@@ -942,7 +938,7 @@ def start_nicegui_server(port: int = 0) -> None:
     )
 
 
-def _find_grid(grid_container: dict[str, Any]) -> ui.aggrid | None:
+def find_grid(grid_container: dict[str, Any]) -> ui.aggrid | None:
     """Find the AG Grid element inside a container."""
     container = grid_container.get("ref")
     if container is None:
@@ -953,9 +949,9 @@ def _find_grid(grid_container: dict[str, Any]) -> ui.aggrid | None:
     return None
 
 
-def _apply_search(grid_container: dict[str, Any], search_text: object) -> None:
+def apply_search(grid_container: dict[str, Any], search_text: object) -> None:
     """Apply quick filter to the AG Grid in the container."""
-    grid = _find_grid(grid_container)
+    grid = find_grid(grid_container)
     if grid is None:
         return
     text = str(search_text) if search_text else ""
@@ -968,7 +964,7 @@ def _apply_search(grid_container: dict[str, Any], search_text: object) -> None:
     )
 
 
-def _set_status(
+def set_status(
     status_ref: dict[str, Any],
     text: str,
     level: str = "success",
@@ -988,14 +984,14 @@ def _set_status(
     el.text = text
     el.classes(remove="status-success status-error", add=f"status-{level}")
 
-    def _clear() -> None:
+    def clear() -> None:
         if el.text == text:
             el.text = ""
 
-    ui.timer(delay_ms / 1000, _clear, once=True)
+    ui.timer(delay_ms / 1000, clear, once=True)
 
 
-def _build_preview_html(
+def build_preview_html(
     assignment_changes: list[dict[str, object]],
     grade_changes: list[dict[str, object]],
     has_conflicts: bool,
@@ -1102,14 +1098,14 @@ def _build_preview_html(
     return "".join(parts)
 
 
-def _export_csv(grid_container: dict[str, Any]) -> None:
+def export_csv(grid_container: dict[str, Any]) -> None:
     """Export current grid data as CSV via AG Grid's built-in export."""
-    grid = _find_grid(grid_container)
+    grid = find_grid(grid_container)
     if grid is not None:
         grid.run_grid_method("exportDataAsCsv")  # pyright: ignore[reportUnknownMemberType]
 
 
-def _clear_pending(
+def clear_pending(
     pending: _PendingChanges,
     update_pending_display: Any,
     status_ref: dict[str, Any],
@@ -1117,10 +1113,10 @@ def _clear_pending(
     """Clear all pending changes."""
     pending.clear()
     update_pending_display()
-    _set_status(status_ref, "Cleared", "success", 3000)
+    set_status(status_ref, "Cleared", "success", 3000)
 
 
-def _open_push_modal(
+def open_push_modal(
     conn: duckdb.DuckDBPyConnection,
     pending: _PendingChanges,
     update_pending_display: Any,
@@ -1151,7 +1147,7 @@ def _open_push_modal(
 
         state: dict[str, Any] = {"phase": "loading", "preview": None}
 
-        def _render_loading() -> None:
+        def render_loading() -> None:
             content_area.clear()
             with content_area:
                 ui.label("Comparing with Canvas...").style(
@@ -1161,7 +1157,7 @@ def _open_push_modal(
             with action_area:
                 ui.button("Cancel", on_click=dialog.close).props("flat")
 
-        def _render_preview(preview: dict[str, object]) -> None:
+        def render_preview(preview: dict[str, object]) -> None:
             changes = cast(
                 list[dict[str, object]],
                 preview.get("changes", []),
@@ -1177,7 +1173,7 @@ def _open_push_modal(
 
                 a_ch = [c for c in changes if c.get("table") == "canvas_assignments"]
                 g_ch = [c for c in changes if c.get("table") == "canvas_grades"]
-                ui.html(_build_preview_html(a_ch, g_ch, has_conflicts))
+                ui.html(build_preview_html(a_ch, g_ch, has_conflicts))
 
             pushable = [c for c in changes if "error" not in c]
             action_area.clear()
@@ -1187,10 +1183,10 @@ def _open_push_modal(
                     n = len(pushable)
                     ui.button(
                         f"Push {n} change{'s' if n != 1 else ''}",
-                        on_click=lambda: _do_push(),
+                        on_click=lambda: do_push(),
                     ).props("color=primary")
 
-        def _render_pushing() -> None:
+        def render_pushing() -> None:
             content_area.clear()
             with content_area:
                 ui.label("Pushing to Canvas...").style(
@@ -1202,7 +1198,7 @@ def _open_push_modal(
                     "color=primary disabled"
                 )
 
-        def _render_results(results: list[dict[str, object]]) -> None:
+        def render_results(results: list[dict[str, object]]) -> None:
             succeeded = [r for r in results if r.get("ok")]
             failed = [r for r in results if not r.get("ok")]
             content_area.clear()
@@ -1223,7 +1219,7 @@ def _open_push_modal(
             with action_area:
                 ui.button("Close", on_click=dialog.close).props("flat")
 
-        def _render_error(message: str) -> None:
+        def render_error(message: str) -> None:
             content_area.clear()
             with content_area:
                 ui.label(message).style("color: #f87171")
@@ -1231,37 +1227,37 @@ def _open_push_modal(
             with action_area:
                 ui.button("Close", on_click=dialog.close).props("flat")
 
-        def _fetch_preview() -> None:
+        def fetch_preview() -> None:
             try:
-                preview = _canvas_preview(conn, pending)
+                preview = canvas_preview(conn, pending)
                 state["phase"] = "preview"
                 state["preview"] = preview
-                _render_preview(preview)
+                render_preview(preview)
             except Exception as exc:
                 state["phase"] = "error"
-                _render_error(str(exc))
+                render_error(str(exc))
 
-        def _do_push() -> None:
+        def do_push() -> None:
             state["phase"] = "pushing"
-            _render_pushing()
-            ui.timer(0.1, _execute_push, once=True)
+            render_pushing()
+            ui.timer(0.1, execute_push, once=True)
 
-        def _execute_push() -> None:
+        def execute_push() -> None:
             try:
-                result = _canvas_apply(conn, pending)
+                result = canvas_apply(conn, pending)
                 if result["ok"]:
                     dialog.close()
                     update_pending_display()
-                    _set_status(status_ref, "Pushed to Canvas", "success", 6000)
+                    set_status(status_ref, "Pushed to Canvas", "success", 6000)
                     # Reload current table to reflect changes
-                    grid = _find_grid(grid_container)
+                    grid = find_grid(grid_container)
                     if grid is not None:
-                        new_rows = _get_table_rows(conn, current_table["name"])
+                        new_rows = get_table_rows(conn, current_table["name"])
                         grid.options["rowData"] = new_rows  # pyright: ignore[reportUnknownMemberType]
                         grid.update()
                 else:
                     state["phase"] = "results"
-                    _render_results(
+                    render_results(
                         cast(
                             list[dict[str, object]],
                             result.get("results", []),
@@ -1270,14 +1266,14 @@ def _open_push_modal(
                     update_pending_display()
             except Exception as exc:
                 dialog.close()
-                _set_status(status_ref, f"Push failed: {exc}", "error", 6000)
+                set_status(status_ref, f"Push failed: {exc}", "error", 6000)
 
         # Start with loading, then defer the blocking preview call
-        _render_loading()
-        ui.timer(0.1, _fetch_preview, once=True)
+        render_loading()
+        ui.timer(0.1, fetch_preview, once=True)
 
 
-def _attach_edit_handler(
+def attach_edit_handler(
     grid: ui.aggrid,
     conn: duckdb.DuckDBPyConnection,
     table_name: str,
@@ -1295,10 +1291,10 @@ def _attach_edit_handler(
         row = data["data"]
 
         pk = {col: row[col] for col in pk_cols}
-        result = _update_cell(conn, table_name, pk, col_field, new_value)
+        result = update_cell(conn, table_name, pk, col_field, new_value)
 
         if result["ok"]:
-            _track_change(
+            track_change(
                 pending,
                 table_name,
                 pk,
@@ -1307,7 +1303,7 @@ def _attach_edit_handler(
                 new_value,
             )
             update_pending_display()
-            _set_status(status_ref, f"Saved {col_field}", "success", 3000)
+            set_status(status_ref, f"Saved {col_field}", "success", 3000)
             # Flash the edited column
             grid.run_grid_method(  # pyright: ignore[reportUnknownMemberType]
                 "flashCells",
@@ -1318,7 +1314,7 @@ def _attach_edit_handler(
                 },
             )
         else:
-            _set_status(
+            set_status(
                 status_ref,
                 f"Error: {result.get('error', 'unknown')}",
                 "error",

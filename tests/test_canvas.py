@@ -3,16 +3,16 @@
 import httpx
 import pytest
 
-from cass.canvas.client import _RetryTransport
+from cass.canvas.client import RetryTransport
 from cass.canvas.matching import (
-    _normalize,
     find_candidates,
     match_students,
+    normalize,
     slugify,
 )
 from cass.models import CanvasStudent, GHStudentInfo
 
-# --- _normalize ---
+# --- normalize ---
 
 
 @pytest.mark.parametrize(
@@ -34,8 +34,8 @@ from cass.models import CanvasStudent, GHStudentInfo
         "empty",
     ],
 )
-def test_normalize(name, expected):
-    assert _normalize(name) == expected
+def testnormalize(name, expected):
+    assert normalize(name) == expected
 
 
 # --- slugify ---
@@ -119,7 +119,7 @@ def test_find_candidates_empty():
     assert len(result) == 5
 
 
-# --- _RetryTransport ---
+# --- RetryTransport ---
 
 
 def _mock_transport(responses: list[httpx.Response]) -> httpx.BaseTransport:
@@ -136,7 +136,7 @@ def _mock_transport(responses: list[httpx.Response]) -> httpx.BaseTransport:
 def test_retry_transport_success():
     """Normal 200 passes through immediately."""
     inner = _mock_transport([httpx.Response(200, json={"ok": True})])
-    transport = _RetryTransport.__new__(_RetryTransport)
+    transport = RetryTransport.__new__(RetryTransport)
     transport._wrapped = inner
     resp = transport.handle_request(httpx.Request("GET", "https://example.com"))
     assert resp.status_code == 200
@@ -151,7 +151,7 @@ def test_retry_transport_429_then_success(monkeypatch):
             httpx.Response(200, json={"ok": True}),
         ]
     )
-    transport = _RetryTransport.__new__(_RetryTransport)
+    transport = RetryTransport.__new__(RetryTransport)
     transport._wrapped = inner
     resp = transport.handle_request(httpx.Request("GET", "https://example.com"))
     assert resp.status_code == 200
@@ -161,7 +161,7 @@ def test_retry_transport_429_exhausted(monkeypatch):
     """After MAX_RETRIES 429s, the last 429 response is returned."""
     monkeypatch.setattr("cass.canvas.client.time.sleep", lambda _: None)
     inner = _mock_transport([httpx.Response(429)] * 4)
-    transport = _RetryTransport.__new__(_RetryTransport)
+    transport = RetryTransport.__new__(RetryTransport)
     transport._wrapped = inner
     resp = transport.handle_request(httpx.Request("GET", "https://example.com"))
     assert resp.status_code == 429
@@ -176,7 +176,7 @@ def test_retry_transport_throttle(monkeypatch):
             httpx.Response(200, headers={"X-Rate-Limit-Remaining": "10"}),
         ]
     )
-    transport = _RetryTransport.__new__(_RetryTransport)
+    transport = RetryTransport.__new__(RetryTransport)
     transport._wrapped = inner
     transport.handle_request(httpx.Request("GET", "https://example.com"))
     assert len(delays) == 1

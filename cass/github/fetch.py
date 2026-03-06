@@ -26,13 +26,13 @@ STUDENTS_DIR = "students"
 _FINAL_PROJECT_SLUG = "final-project"
 
 
-def _student_dir(student: Student) -> str:
+def student_dir(student: Student) -> str:
     if student.github_username:
         return student.github_username.lower()
     return student.display_name.lower().replace(" ", "-")
 
 
-def _download_file(url: str, dest: Path) -> bool:
+def download_file(url: str, dest: Path) -> bool:
     dest.parent.mkdir(parents=True, exist_ok=True)
     result = subprocess.run(
         ["curl", "-sL", "-o", str(dest), url],
@@ -46,7 +46,7 @@ def _download_file(url: str, dest: Path) -> bool:
     return True
 
 
-async def _list_contents(
+async def list_contents(
     client: GitHubClient,
     repo_short: str,
     path: str = "",
@@ -100,11 +100,11 @@ async def fetch_assignment(
             errors += 1
             continue
 
-        student_slug = _student_dir(student)
+        student_slug = student_dir(student)
         dest_dir = dest_root / student_slug / slug
 
         if is_final:
-            contents = await _list_contents(
+            contents = await list_contents(
                 client,
                 repo_short,
                 "pdfs",
@@ -117,7 +117,7 @@ async def fetch_assignment(
                 continue
             target_exts = _PDF_EXTS
         else:
-            contents = await _list_contents(
+            contents = await list_contents(
                 client,
                 repo_short,
                 "",
@@ -146,7 +146,7 @@ async def fetch_assignment(
                 continue
             download_url = item.download_url
 
-            if _download_file(download_url, dest_path):
+            if download_file(download_url, dest_path):
                 downloaded += 1
             else:
                 console.print(

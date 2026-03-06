@@ -101,9 +101,9 @@ def test_load_canvas_modules(tmp_path, monkeypatch):
     )
     monkeypatch.chdir(tmp_path)
     reset_config()
-    from cass.config import _load_config
+    from cass.config import load_config
 
-    cfg = _load_config()
+    cfg = load_config()
     assert len(cfg.canvas_modules) == 2
     assert cfg.canvas_modules[0] == CanvasModuleSpec(name="Week 1", published=False)
     assert cfg.canvas_modules[1] == CanvasModuleSpec(name="Week 2", published=True)
@@ -120,9 +120,9 @@ def test_load_canvas_assignments(tmp_path, monkeypatch):
     )
     monkeypatch.chdir(tmp_path)
     reset_config()
-    from cass.config import _load_config
+    from cass.config import load_config
 
-    cfg = _load_config()
+    cfg = load_config()
     assert len(cfg.canvas_assignments) == 1
     spec = cfg.canvas_assignments[0]
     assert spec.name == "HW1"
@@ -140,9 +140,9 @@ def test_load_no_declarations(tmp_path, monkeypatch):
     )
     monkeypatch.chdir(tmp_path)
     reset_config()
-    from cass.config import _load_config
+    from cass.config import load_config
 
-    cfg = _load_config()
+    cfg = load_config()
     assert cfg.canvas_modules == []
     assert cfg.canvas_assignments == []
 
@@ -172,9 +172,9 @@ def test_load_motherduck(tmp_path, monkeypatch):
     )
     monkeypatch.chdir(tmp_path)
     reset_config()
-    from cass.config import _load_config
+    from cass.config import load_config
 
-    cfg = _load_config()
+    cfg = load_config()
     assert cfg.motherduck_db == "my_cass_db"
     assert cfg.has_motherduck is True
 
@@ -187,8 +187,8 @@ def test_load_no_database_section(tmp_path, monkeypatch):
     )
     monkeypatch.chdir(tmp_path)
     reset_config()
-    from cass.config import _load_config
+    from cass.config import load_config
 
-    cfg = _load_config()
+    cfg = load_config()
     assert cfg.motherduck_db == ""
     assert cfg.has_motherduck is False

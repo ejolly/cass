@@ -173,7 +173,7 @@ async def pull_assignments(
             # Try to auto-match with GH assignment by slug
             gh_slug = ""
             for ga in gh_assignments:
-                if ga.slug not in used_gh_slugs and _slug_match(ga.slug, slug):
+                if ga.slug not in used_gh_slugs and slug_match(ga.slug, slug):
                     gh_slug = ga.slug
                     used_gh_slugs.add(ga.slug)
                     break
@@ -224,7 +224,7 @@ async def pull_assignments(
     console.print(f"  [green]Master: {len(master)} assignments[/green]")
 
 
-def _slug_match(gh_slug: str, canvas_slug: str) -> bool:
+def slug_match(gh_slug: str, canvas_slug: str) -> bool:
     """Check if a GH slug matches a Canvas slug by token overlap."""
     gh_tokens = set(gh_slug.replace("-", " ").split())
     cv_tokens = set(canvas_slug.replace("-", " ").split())

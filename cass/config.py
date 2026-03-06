@@ -88,7 +88,7 @@ def config_file_path() -> Path | None:
     return path if path.exists() else None
 
 
-def _load_config() -> Config:
+def load_config() -> Config:
     root = find_project_root()
     path = root / CONFIG_FILENAME
     if not path.exists():
@@ -150,7 +150,7 @@ def get_config() -> Config:
     """Return the lazily-loaded project config."""
     global _config
     if _config is None:
-        _config = _load_config()
+        _config = load_config()
     return _config
 
 

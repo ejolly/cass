@@ -54,7 +54,7 @@ def get_db() -> duckdb.DuckDBPyConnection:
     if _conn is not None:
         return _conn
     _conn = duckdb.connect(db_path())
-    _init_schema(_conn)
+    init_schema(_conn)
     return _conn
 
 
@@ -70,7 +70,7 @@ def reset() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _init_schema(conn: duckdb.DuckDBPyConnection) -> None:
+def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
     conn.execute("""
         CREATE TABLE IF NOT EXISTS meta (
             key TEXT PRIMARY KEY,

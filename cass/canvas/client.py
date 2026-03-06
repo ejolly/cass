@@ -87,7 +87,7 @@ def save_token(token: str) -> None:
 # --- HTTP transport ---
 
 
-class _RetryTransport(httpx.BaseTransport):
+class RetryTransport(httpx.BaseTransport):
     """Wraps HTTPTransport with 429 retry, backoff, and proactive throttling."""
 
     def __init__(self, *, retries: int = 0) -> None:
@@ -169,7 +169,7 @@ class CanvasClient:
                     "Authorization": f"Bearer {self._token}",
                     "User-Agent": f"cass-cli/{__version__}",
                 },
-                transport=_RetryTransport(retries=1),
+                transport=RetryTransport(retries=1),
                 timeout=30.0,
             )
         return self._http
@@ -972,7 +972,7 @@ mutation ($assignmentId: ID!) {
             resource: Resource type (``modules``, ``assignments``, ``quizzes``).
             resource_id: Canvas resource ID.
         """
-        key = _resource_key(resource)
+        key = resource_key(resource)
         resp = self._client.put(
             self._course(f"/{resource}/{resource_id}"),
             data={f"{key}[published]": True},
@@ -986,7 +986,7 @@ mutation ($assignmentId: ID!) {
             resource: Resource type (``modules``, ``assignments``, ``quizzes``).
             resource_id: Canvas resource ID.
         """
-        key = _resource_key(resource)
+        key = resource_key(resource)
         resp = self._client.put(
             self._course(f"/{resource}/{resource_id}"),
             data={f"{key}[published]": False},
@@ -1059,7 +1059,7 @@ mutation ($assignmentId: ID!) {
         raise RuntimeError(f"Quiz not found: {id_or_name}")
 
 
-def _resource_key(resource: str) -> str:
+def resource_key(resource: str) -> str:
     """Map a plural resource name to Canvas API parameter key."""
     return {
         "modules": "module",

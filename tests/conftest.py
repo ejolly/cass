@@ -10,7 +10,7 @@ from cass import db
 def db_conn(monkeypatch):
     """Fresh in-memory DuckDB with schema initialized."""
     conn = duckdb.connect(":memory:")
-    db._init_schema(conn)
+    db.init_schema(conn)
     monkeypatch.setattr(db, "_conn", conn)
     yield conn
     conn.close()
