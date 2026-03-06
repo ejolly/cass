@@ -10,7 +10,6 @@ from __future__ import annotations
 __docformat__ = "google"
 
 import time
-from collections.abc import Callable
 
 import duckdb
 
@@ -27,7 +26,7 @@ from .models import (
 )
 
 DB_FILENAME = "cass.duckdb"
-_SCHEMA_VERSION = 7
+_SCHEMA_VERSION = 8
 
 _conn: duckdb.DuckDBPyConnection | None = None
 
@@ -130,10 +129,10 @@ def _init_schema(conn: duckdb.DuckDBPyConnection) -> None:
         CREATE TABLE IF NOT EXISTS canvas_assignments (
             canvas_id INTEGER PRIMARY KEY,
             name TEXT NOT NULL,
-            slug TEXT NOT NULL,
             points_possible DOUBLE NOT NULL DEFAULT 0,
             due_at TIMESTAMPTZ,
-            published BOOLEAN NOT NULL DEFAULT false
+            published BOOLEAN NOT NULL DEFAULT false,
+            assignment_group TEXT NOT NULL DEFAULT ''
         )
     """)
     conn.execute("""
@@ -400,19 +399,20 @@ def save_gh_assignments(assignments: list) -> int:
 
 def save_canvas_assignments(
     assignments: list,
-    slugify_fn: Callable[[str], str] | None = None,
+    group_names: dict[int, str] | None = None,
 ) -> int:
-    """Save Canvas assignments from CanvasAssignment API types."""
+    """Save Canvas assignments from CanvasAssignment API types.
+
+    Args:
+        assignments: CanvasAssignment API objects.
+        group_names: Optional mapping of assignment_group_id → group name.
+    """
     conn = get_db()
     if not assignments:
         return 0
     from datetime import datetime
 
-    if slugify_fn is None:
-        from .canvas import _slugify
-
-        slugify_fn = _slugify
-
+    groups = group_names or {}
     rows = []
     for a in assignments:
         due_at = None
@@ -425,15 +425,15 @@ def save_canvas_assignments(
             (
                 a.id,
                 a.name,
-                slugify_fn(a.name),
                 a.points_possible,
                 due_at,
                 a.published,
+                groups.get(a.assignment_group_id, ""),
             )
         )
     conn.executemany(
         "INSERT OR REPLACE INTO canvas_assignments "
-        "(canvas_id, name, slug, points_possible, due_at, published) "
+        "(canvas_id, name, points_possible, due_at, published, assignment_group) "
         "VALUES (?, ?, ?, ?, ?, ?)",
         rows,
     )

@@ -47,6 +47,7 @@ def server(viewer_conn):
     """HTTPServer on a random port using the test DuckDB connection."""
     ViewerHandler.conn = viewer_conn
     ViewerHandler.valid_tables = _get_table_names(viewer_conn)
+    ViewerHandler.pending_changes = {}
 
     srv = HTTPServer(("127.0.0.1", 0), ViewerHandler)
     port = srv.server_address[1]

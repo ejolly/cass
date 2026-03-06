@@ -21,6 +21,11 @@ console = Console()
 
 _EXCLUDED_TABLES = {"meta"}
 
+# Columns on canvas tables that can be pushed back to the Canvas API.
+_CANVAS_PUSHABLE: dict[str, set[str]] = {
+    "canvas_assignments": {"name", "points_possible", "due_at", "published"},
+}
+
 
 class _ViewerEncoder(json.JSONEncoder):
     """JSON encoder that handles DuckDB types."""
@@ -47,6 +52,11 @@ def _sanitize(obj: object) -> object:
 
 def _json_bytes(obj: object) -> bytes:
     return json.dumps(obj, cls=_ViewerEncoder).encode()
+
+
+# ---------------------------------------------------------------------------
+# DB introspection helpers
+# ---------------------------------------------------------------------------
 
 
 def _get_tables(conn: duckdb.DuckDBPyConnection) -> list[dict[str, str]]:
@@ -89,7 +99,7 @@ def _get_primary_keys(conn: duckdb.DuckDBPyConnection, table: str) -> list[str]:
 
 
 def _get_schema(conn: duckdb.DuckDBPyConnection, table: str) -> dict[str, object]:
-    """Return column defs, primary keys, and editability for a table."""
+    """Return column defs, primary keys, editability, and pushable info."""
     cols_raw = conn.execute(f"DESCRIBE {table}").fetchall()  # noqa: S608
     columns: list[dict[str, object]] = [
         {"name": row[0], "type": row[1], "nullable": row[2] == "YES"}
@@ -107,6 +117,7 @@ def _get_schema(conn: duckdb.DuckDBPyConnection, table: str) -> dict[str, object
         "columns": columns,
         "primary_keys": pk_cols,
         "editable": editable,
+        "canvas_pushable": sorted(_CANVAS_PUSHABLE.get(table, set())),
     }
 
 
@@ -124,6 +135,11 @@ def _get_table_data(conn: duckdb.DuckDBPyConnection, table: str) -> dict[str, ob
     }
 
 
+# ---------------------------------------------------------------------------
+# Cell update
+# ---------------------------------------------------------------------------
+
+
 def _update_cell(
     conn: duckdb.DuckDBPyConnection,
     table: str,
@@ -131,8 +147,11 @@ def _update_cell(
     column: str,
     value: object,
 ) -> dict[str, object]:
-    """Update a single cell in a table."""
-    # Check editability
+    """Update a single cell in a table.
+
+    Returns:
+        Dict with ``ok``, and ``old_value`` on success.
+    """
     tables = _get_tables(conn)
     table_type = next((t["type"] for t in tables if t["name"] == table), None)
     pk_cols = _get_primary_keys(conn, table)
@@ -150,10 +169,16 @@ def _update_cell(
     where_clause = " AND ".join(where_parts)
     pk_values = [pk[col] for col in pk_cols]
 
+    # Capture old value before update
+    old_row = conn.execute(
+        f"SELECT {column} FROM {table} WHERE {where_clause}",  # noqa: S608
+        pk_values,
+    ).fetchone()
+    old_value = old_row[0] if old_row else None
+
     sql = f"UPDATE {table} SET {column} = ? WHERE {where_clause}"  # noqa: S608
     conn.execute(sql, [value, *pk_values])
 
-    # Verify the update took effect
     verify = conn.execute(
         f"SELECT {column} FROM {table} WHERE {where_clause}",  # noqa: S608
         pk_values,
@@ -162,8 +187,199 @@ def _update_cell(
     if verify is None:
         return {"ok": False, "error": "No matching row found"}
 
-    return {"ok": True}
+    return {"ok": True, "old_value": old_value}
 
+
+# ---------------------------------------------------------------------------
+# Pending change tracking (server-side, in-memory)
+# ---------------------------------------------------------------------------
+
+
+def _values_equal(a: object, b: object) -> bool:
+    """Compare values loosely, handling datetime/string equivalence."""
+    if a == b:
+        return True
+    if isinstance(a, (datetime, date)) and isinstance(b, str):
+        return a.isoformat() == b or str(a) == b
+    if isinstance(b, (datetime, date)) and isinstance(a, str):
+        return b.isoformat() == a or str(b) == a
+    return False
+
+
+def _track_change(
+    pending: dict,
+    table: str,
+    pk: dict[str, object],
+    column: str,
+    old_value: object,
+    new_value: object,
+) -> None:
+    """Record a cell edit as a pending Canvas change.
+
+    Tracks baseline (original value before first edit) and current value.
+    If the user edits back to baseline, the entry is removed.
+    """
+    pushable = _CANVAS_PUSHABLE.get(table)
+    if not pushable or column not in pushable:
+        return
+
+    pk_key = (
+        str(list(pk.values())[0]) if len(pk) == 1 else json.dumps(pk, sort_keys=True)
+    )
+
+    table_changes = pending.setdefault(table, {})
+    row_changes = table_changes.setdefault(pk_key, {})
+
+    if column in row_changes:
+        row_changes[column]["current"] = new_value
+        if _values_equal(row_changes[column]["baseline"], new_value):
+            del row_changes[column]
+            if not row_changes:
+                del table_changes[pk_key]
+            if not table_changes:
+                del pending[table]
+    else:
+        row_changes[column] = {"baseline": old_value, "current": new_value}
+
+
+def _pending_count(pending: dict) -> int:
+    """Total number of pending field changes."""
+    return sum(len(cols) for rows in pending.values() for cols in rows.values())
+
+
+def _get_pending_summary(
+    conn: duckdb.DuckDBPyConnection,
+    pending: dict,
+) -> dict[str, object]:
+    """Return pending changes with assignment names for display."""
+    changes = []
+    for table, rows in pending.items():
+        pk_col = _get_primary_keys(conn, table)
+        pk_name = pk_col[0] if pk_col else "id"
+
+        for pk_key, columns in rows.items():
+            row_name = pk_key
+            if table == "canvas_assignments":
+                name_row = conn.execute(
+                    "SELECT name FROM canvas_assignments WHERE canvas_id = ?",
+                    [int(pk_key)],
+                ).fetchone()
+                if name_row:
+                    row_name = name_row[0]
+
+            for col, vals in columns.items():
+                changes.append(
+                    {
+                        "table": table,
+                        "pk_column": pk_name,
+                        "pk_value": pk_key,
+                        "row_name": row_name,
+                        "column": col,
+                        "baseline": vals["baseline"],
+                        "current": vals["current"],
+                    }
+                )
+
+    return {"ok": True, "count": len(changes), "changes": changes}
+
+
+# ---------------------------------------------------------------------------
+# Canvas sync: preview and apply
+# ---------------------------------------------------------------------------
+
+
+def _canvas_preview(
+    conn: duckdb.DuckDBPyConnection,
+    pending: dict,
+) -> dict[str, object]:
+    """Compare pending changes against live Canvas state (dry-run)."""
+    from ..canvas_api import CanvasClient
+
+    table_changes = pending.get("canvas_assignments", {})
+    if not table_changes:
+        return {"ok": True, "changes": []}
+
+    results: list[dict[str, object]] = []
+    with CanvasClient() as c:
+        for pk_key, columns in table_changes.items():
+            canvas_id = int(pk_key)
+            name_row = conn.execute(
+                "SELECT name FROM canvas_assignments WHERE canvas_id = ?",
+                [canvas_id],
+            ).fetchone()
+            assignment_name = name_row[0] if name_row else f"ID {canvas_id}"
+
+            try:
+                live = c.get_assignment(canvas_id)
+                for col, vals in columns.items():
+                    live_val = getattr(live, col, None)
+                    conflict = not _values_equal(live_val, vals["baseline"])
+                    results.append(
+                        {
+                            "canvas_id": canvas_id,
+                            "name": assignment_name,
+                            "column": col,
+                            "baseline": vals["baseline"],
+                            "current": vals["current"],
+                            "live": live_val,
+                            "conflict": conflict,
+                        }
+                    )
+            except Exception as e:
+                results.append(
+                    {
+                        "canvas_id": canvas_id,
+                        "name": assignment_name,
+                        "error": str(e),
+                    }
+                )
+
+    return {
+        "ok": True,
+        "changes": results,
+        "has_conflicts": any(r.get("conflict") for r in results),
+        "has_errors": any("error" in r for r in results),
+    }
+
+
+def _canvas_apply(
+    conn: duckdb.DuckDBPyConnection,
+    pending: dict,
+) -> dict[str, object]:
+    """Push pending changes to Canvas and clear them on success."""
+    from ..canvas_api import CanvasClient
+
+    table_changes = pending.get("canvas_assignments", {})
+    if not table_changes:
+        return {"ok": True, "results": []}
+
+    results: list[dict[str, object]] = []
+    with CanvasClient() as c:
+        for pk_key, columns in list(table_changes.items()):
+            canvas_id = int(pk_key)
+            kwargs = {col: vals["current"] for col, vals in columns.items()}
+            try:
+                c.update_assignment(canvas_id, **kwargs)
+                results.append({"canvas_id": canvas_id, "ok": True})
+                del table_changes[pk_key]
+            except Exception as e:
+                results.append(
+                    {
+                        "canvas_id": canvas_id,
+                        "ok": False,
+                        "error": str(e),
+                    }
+                )
+
+    if not table_changes:
+        pending.pop("canvas_assignments", None)
+
+    return {"ok": all(r["ok"] for r in results), "results": results}
+
+
+# ---------------------------------------------------------------------------
+# HTTP handler
+# ---------------------------------------------------------------------------
 
 _PATH_RE = re.compile(r"^/api/(tables|schema|table|update)/?([\w]*)$")
 
@@ -173,6 +389,7 @@ class ViewerHandler(BaseHTTPRequestHandler):
 
     conn: duckdb.DuckDBPyConnection
     valid_tables: set[str]
+    pending_changes: dict
 
     def log_message(self, format: str, *args: object) -> None:  # noqa: A002
         """Suppress default stderr logging."""
@@ -195,11 +412,20 @@ class ViewerHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(content)
 
+    def _read_body(self) -> bytes:
+        """Read the request body."""
+        length = int(self.headers.get("Content-Length", 0))
+        return self.rfile.read(length)
+
     def do_GET(self) -> None:  # noqa: N802
         """Handle GET requests."""
         if self.path == "/":
             html = files("cass.viewer").joinpath("index.html").read_bytes()
             self._send_html(html)
+            return
+
+        if self.path == "/api/pending":
+            self._send_json(_get_pending_summary(self.conn, self.pending_changes))
             return
 
         match = _PATH_RE.match(self.path)
@@ -230,6 +456,29 @@ class ViewerHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         """Handle POST requests."""
+        if self.path == "/api/canvas/preview":
+            try:
+                result = _canvas_preview(self.conn, self.pending_changes)
+                self._send_json(result)
+            except Exception as e:
+                self._send_error_json(500, str(e))
+            return
+
+        if self.path == "/api/canvas/apply":
+            try:
+                result = _canvas_apply(self.conn, self.pending_changes)
+                status = 200 if result["ok"] else 207
+                self._send_json(result, status)
+            except Exception as e:
+                self._send_error_json(500, str(e))
+            return
+
+        if self.path == "/api/pending/clear":
+            self.pending_changes.clear()
+            self._send_json({"ok": True})
+            return
+
+        # --- Cell update ---
         match = _PATH_RE.match(self.path)
         if not match or match.group(1) != "update":
             self._send_error_json(404, "Not found")
@@ -244,10 +493,8 @@ class ViewerHandler(BaseHTTPRequestHandler):
             self._send_error_json(404, f"Unknown table: {name}")
             return
 
-        content_length = int(self.headers.get("Content-Length", 0))
-        body = self.rfile.read(content_length)
         try:
-            data = json.loads(body)
+            data = json.loads(self._read_body())
         except json.JSONDecodeError:
             self._send_error_json(400, "Invalid JSON")
             return
@@ -261,8 +508,24 @@ class ViewerHandler(BaseHTTPRequestHandler):
             return
 
         result = _update_cell(self.conn, name, pk, column, value)
+        if result["ok"]:
+            _track_change(
+                self.pending_changes,
+                name,
+                pk,
+                column,
+                result["old_value"],
+                value,
+            )
+            result["pending_count"] = _pending_count(self.pending_changes)
+
         status = 200 if result["ok"] else 400
         self._send_json(result, status)
+
+
+# ---------------------------------------------------------------------------
+# Server entry point
+# ---------------------------------------------------------------------------
 
 
 def start_server(port: int = 0) -> None:
@@ -281,6 +544,7 @@ def start_server(port: int = 0) -> None:
 
     ViewerHandler.conn = conn
     ViewerHandler.valid_tables = valid_tables
+    ViewerHandler.pending_changes = {}
 
     server = HTTPServer(("127.0.0.1", port), ViewerHandler)
     actual_port = server.server_address[1]
