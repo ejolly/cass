@@ -32,6 +32,7 @@ from .models import (
     CanvasGradingStandard,
     CanvasModule,
     CanvasModuleItem,
+    CanvasProgress,
     CanvasQuiz,
     CanvasSection,
     CanvasStudent,
@@ -512,6 +513,68 @@ class CanvasClient:
                 "Failed to push grade for student %s: %s", student_canvas_id, exc
             )
             return False
+
+    def bulk_push_grades(
+        self, assignment_id: int, grade_data: dict[int, str]
+    ) -> CanvasProgress:
+        """Push grades in bulk for one assignment via the update_grades endpoint.
+
+        Args:
+            assignment_id: Canvas assignment ID.
+            grade_data: Mapping of student_canvas_id → posted_grade string.
+
+        Returns:
+            Progress object for tracking completion.
+        """
+        params: dict[str, str] = {}
+        for student_id, grade in grade_data.items():
+            params[f"grade_data[{student_id}][posted_grade]"] = grade
+        resp = self._client.post(
+            self._course(f"/assignments/{assignment_id}/submissions/update_grades"),
+            data=params,
+        )
+        resp.raise_for_status()
+        return msgspec.convert(resp.json(), CanvasProgress, strict=False)
+
+    def check_progress(self, progress_id: int) -> CanvasProgress:
+        """Check the status of an async Canvas operation.
+
+        Args:
+            progress_id: Progress object ID.
+
+        Returns:
+            Current progress state.
+        """
+        resp = self._client.get(f"/progress/{progress_id}")
+        resp.raise_for_status()
+        return msgspec.convert(resp.json(), CanvasProgress, strict=False)
+
+    def wait_for_progress(
+        self, progress_id: int, *, timeout: float = 120.0
+    ) -> CanvasProgress:
+        """Poll a progress object until completion or timeout.
+
+        Args:
+            progress_id: Progress object ID.
+            timeout: Maximum seconds to wait.
+
+        Returns:
+            Completed or failed progress object.
+
+        Raises:
+            RuntimeError: If the progress times out or fails.
+        """
+        start = time.time()
+        while time.time() - start < timeout:
+            p = self.check_progress(progress_id)
+            if p.workflow_state == "completed":
+                return p
+            if p.workflow_state == "failed":
+                raise RuntimeError(
+                    f"Canvas bulk operation failed: {p.message or 'unknown error'}"
+                )
+            time.sleep(1.0)
+        raise RuntimeError(f"Canvas bulk operation timed out after {timeout:.0f}s")
 
     # --- Quizzes ---
 

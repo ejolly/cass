@@ -794,8 +794,12 @@
 
       setStatus("");
 
+      // Actual table columns (excludes JOINed/enriched columns)
+      const realCols = new Set(schema.columns.map(c => c.name));
+
       let columnDefs = tableData.columns.map((col, i) => {
         const isPK = schema.primary_keys.includes(col);
+        const isRealCol = realCols.has(col);
         const colType = tableData.types[i];
         const def = {
           field: col,
@@ -803,7 +807,7 @@
           sortable: true,
           filter: true,
           resizable: true,
-          editable: editable && !isPK,
+          editable: editable && !isPK && isRealCol,
           minWidth: 80,
         };
 
@@ -990,25 +994,46 @@
           return;
         }
 
-        let html = '<table class="modal-table"><thead><tr>';
-        html += '<th>Assignment</th><th>Field</th><th>On Canvas</th><th>New value</th>';
-        html += '</tr></thead><tbody>';
+        // Group changes by table for organized display
+        const assignmentChanges = data.changes.filter(c => c.table === 'canvas_assignments');
+        const gradeChanges = data.changes.filter(c => c.table === 'canvas_grades');
 
-        for (const ch of data.changes) {
-          if (ch.error) {
-            html += `<tr class="conflict"><td colspan="4" style="color:var(--error)">${esc(ch.name)}: ${esc(ch.error)}</td></tr>`;
-            continue;
+        let html = '';
+
+        if (assignmentChanges.length) {
+          html += '<div style="font-weight:600;margin-bottom:6px">Assignment changes</div>';
+          html += '<table class="modal-table"><thead><tr>';
+          html += '<th>Assignment</th><th>Field</th><th>On Canvas</th><th>New value</th>';
+          html += '</tr></thead><tbody>';
+          for (const ch of assignmentChanges) {
+            if (ch.error) {
+              html += `<tr class="conflict"><td colspan="4" style="color:var(--error)">${esc(ch.name)}: ${esc(ch.error)}</td></tr>`;
+              continue;
+            }
+            const cls = ch.conflict ? ' class="conflict"' : '';
+            const icon = ch.conflict ? ' <span title="Canvas value differs from baseline">⚠</span>' : '';
+            html += `<tr${cls}><td>${esc(ch.name)}</td><td>${esc(ch.column)}${icon}</td><td>${fmtVal(ch.live)}</td><td><strong>${fmtVal(ch.current)}</strong></td></tr>`;
           }
-          const cls = ch.conflict ? ' class="conflict"' : '';
-          const icon = ch.conflict ? ' <span title="Canvas value differs from baseline">⚠</span>' : '';
-          html += `<tr${cls}>`;
-          html += `<td>${esc(ch.name)}</td>`;
-          html += `<td>${esc(ch.column)}${icon}</td>`;
-          html += `<td>${fmtVal(ch.live)}</td>`;
-          html += `<td><strong>${fmtVal(ch.current)}</strong></td>`;
-          html += '</tr>';
+          html += '</tbody></table>';
         }
-        html += '</tbody></table>';
+
+        if (gradeChanges.length) {
+          if (assignmentChanges.length) html += '<div style="margin-top:16px"></div>';
+          html += '<div style="font-weight:600;margin-bottom:6px">Grade changes</div>';
+          html += '<table class="modal-table"><thead><tr>';
+          html += '<th>Student — Assignment</th><th>On Canvas</th><th>New grade</th>';
+          html += '</tr></thead><tbody>';
+          for (const ch of gradeChanges) {
+            if (ch.error) {
+              html += `<tr class="conflict"><td colspan="3" style="color:var(--error)">${esc(ch.name)}: ${esc(ch.error)}</td></tr>`;
+              continue;
+            }
+            const cls = ch.conflict ? ' class="conflict"' : '';
+            const icon = ch.conflict ? ' <span title="Canvas value differs from baseline">⚠</span>' : '';
+            html += `<tr${cls}><td>${esc(ch.name)}${icon}</td><td>${fmtVal(ch.live)}</td><td><strong>${fmtVal(ch.current)}</strong></td></tr>`;
+          }
+          html += '</tbody></table>';
+        }
 
         if (data.has_conflicts) {
           html += '<div class="conflict-warning">Some Canvas values differ from when you last pulled. Pushing will overwrite the current Canvas values.</div>';

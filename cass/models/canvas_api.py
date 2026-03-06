@@ -243,6 +243,17 @@ class CanvasSubmissionResponse(msgspec.Struct):
     workflow_state: str = ""
 
 
+class CanvasProgress(msgspec.Struct):
+    """Canvas async operation progress tracker."""
+
+    id: int
+    workflow_state: str = ""  # queued, running, completed, failed
+    completion: float | None = None
+    message: str | None = None
+    tag: str = ""
+    url: str = ""
+
+
 # --- Matching ---
 
 
