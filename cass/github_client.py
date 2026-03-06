@@ -12,7 +12,7 @@ import subprocess
 
 import httpx
 
-from . import db
+from . import cache
 
 _LINK_NEXT_RE = re.compile(r'<([^>]+)>;\s*rel="next"')
 MAX_CONCURRENCY = 10
@@ -93,11 +93,11 @@ class GitHubClient:
     ) -> dict | list:
         """Cache-through fetch — checks DuckDB cache first."""
         if not force_refresh:
-            raw = db.cache_load(endpoint, ttl_hours)
+            raw = cache.cache_load(endpoint, ttl_hours)
             if raw is not None:
                 return json.loads(raw)
         data = await self._fetch(endpoint, paginate)
-        db.cache_save(endpoint, json.dumps(data))
+        cache.cache_save(endpoint, json.dumps(data))
         return data
 
     async def exists_cached(
@@ -108,7 +108,7 @@ class GitHubClient:
     ) -> bool:
         """Check if a resource exists (200 -> True, 404 -> False). Cached."""
         if not force_refresh:
-            raw = db.cache_load(endpoint, ttl_hours)
+            raw = cache.cache_load(endpoint, ttl_hours)
             if raw is not None:
                 return json.loads(raw) is True
         try:
@@ -117,5 +117,5 @@ class GitHubClient:
                 exists = resp.status_code == 200
         except httpx.HTTPError:
             exists = False
-        db.cache_save(endpoint, json.dumps(exists))
+        cache.cache_save(endpoint, json.dumps(exists))
         return exists

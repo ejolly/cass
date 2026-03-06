@@ -127,7 +127,8 @@ Python package (`cass/`) with Typer CLI, DuckDB storage, msgspec models, and Ric
 | `cass/cli_canvas.py` | `cass canvas` subcommands: browse and modify Canvas course content |
 | `cass/github_client.py` | Async httpx GitHub API client with caching and concurrency control |
 | `cass/pull.py` | Pull orchestration: students, assignments, submissions, grades, fetch phases |
-| `cass/db.py` | DuckDB database: schema, CRUD for all models, cache, raw query |
+| `cass/db.py` | DuckDB database: schema, CRUD for all tables, raw query |
+| `cass/cache.py` | API response cache in separate `.cass_cache.duckdb` file |
 | `cass/gh.py` | Subprocess wrapper for `gh api` with inline cache |
 | `cass/classroom.py` | GH Classroom API: typed response structs, assignments, submissions, student discovery |
 | `cass/canvas.py` | Canvas business logic: roster matching, name normalization, grade sync |
@@ -139,15 +140,29 @@ Python package (`cass/`) with Typer CLI, DuckDB storage, msgspec models, and Ric
 
 ## Database
 
-Per-project DuckDB file (`cass.duckdb`) in the project root. Auto-created on first use.
+Per-project DuckDB file (`cass.duckdb`) in the project root. Auto-created on first use. API cache is in a separate `.cass_cache.duckdb` file (gitignored) to keep the shared DB lean.
 
-Schema version 5. Tables:
-- `meta` — schema version tracking
-- `api_cache` — API responses with TTL (ephemeral, cleared by `cass db clean`)
-- `students` — roster (identifier, github_username, github_id, name, email, canvas_id, excluded)
-- `assignments` — unified metadata (id, source, title, slug, canvas_id, deadline, points_possible, accepted, submissions_count, passing_count)
-- `submissions` — unified GH+Canvas (student_id, assignment_id, source, submitted, late, lateness_seconds, repo_name, commits_after_deadline, commit_count, passing, gh_autograder_score, score, workflow_state)
-- `grades` — computed grades (student_id, assignment_id, grade, numeric_score, source)
+Schema version 6. Tables:
+
+Source tables (raw data from each platform):
+- `gh_students` — GitHub Classroom students (PK: github_username)
+- `canvas_students` — Canvas enrolled students (PK: canvas_id)
+- `gh_assignments` — GitHub Classroom assignments (PK: slug, UNIQUE: gh_id)
+- `canvas_assignments` — Canvas assignments (PK: canvas_id)
+- `gh_submissions` — GitHub submission records (PK: github_username, assignment_slug)
+- `canvas_submissions` — Canvas submission records (PK: canvas_user_id, canvas_assignment_id)
+
+Master tables (unified joins):
+- `students` — roster (PK: canvas_id, UNIQUE: github_username, name, email, excluded)
+- `assignments` — unified metadata (PK: slug, UNIQUE: gh_assignment_slug, UNIQUE: canvas_assignment_id, title, points_possible, deadline)
+
+Grade tables:
+- `gh_grades` — GitHub computed grades (PK: github_username, assignment_slug)
+- `canvas_grades` — Canvas grades ready for push (PK: canvas_user_id, canvas_assignment_id)
+
+Views:
+- `v_submissions` — unified submission view joining through master tables
+- `v_grades` — unified grade view joining through master tables
 
 All tables are queryable via `cass query "SQL"`, the interactive REPL (`cass query`), or directly with the `duckdb` CLI:
 
@@ -178,13 +193,12 @@ Prefer `duckdb` CLI over Python for quick inspection, ad-hoc queries, and data c
 
 ## Collaborative Workflow
 
-`cass.duckdb` is the shared source of truth — commit it to git. The `api_cache` table is ephemeral (~2MB of API responses); clear it before committing to keep the file small.
+`cass.duckdb` is the shared source of truth — commit it to git. API cache lives in a separate `.cass_cache.duckdb` file (gitignored), so the shared DB stays lean.
 
 ```bash
 # TA grades hw-02, pushes
 git pull
 cass pull --grades
-cass db clean
 git add cass.duckdb && git commit -m "grade hw-02" && git push
 
 # Instructor pulls, reviews, pushes to Canvas
@@ -196,7 +210,6 @@ cass grades push --post
 cass export grades --csv grades.csv
 # edit in Excel/Numbers
 cass import grades.csv
-cass db clean
 git add cass.duckdb && git commit -m "manual grade adjustments" && git push
 ```
 
@@ -206,7 +219,7 @@ At this scale (15 students, <20 assignments), concurrent edits are unlikely. If 
 
 ## Grading Logic
 
-`compute_grade()` in `cass/models/grading.py`:
+`compute_gh_grade()` and `compute_canvas_grade()` in `cass/models/grading.py`:
 
 **GitHub submissions:**
 - No repo → `0` (numeric: 0)

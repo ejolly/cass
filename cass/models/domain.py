@@ -10,19 +10,16 @@ from typing import Literal
 import msgspec
 import msgspec.structs
 
-DataSource = Literal["github", "canvas"]
 GradeSource = Literal["auto", "manual"]
 
 
 class Student(msgspec.Struct):
-    """A student in the course roster."""
+    """A student in the unified course roster (Canvas-authoritative)."""
 
-    identifier: str
+    canvas_id: int
     github_username: str = ""
-    github_id: str = ""
     name: str = ""
     email: str = ""
-    canvas_id: str = ""
     excluded: bool = False
 
     @property
@@ -31,32 +28,26 @@ class Student(msgspec.Struct):
 
     @property
     def display_name(self) -> str:
-        return self.identifier or self.name or self.github_username or self.canvas_id
+        return self.name or self.github_username or str(self.canvas_id)
 
 
 class Assignment(msgspec.Struct):
-    """An assignment from GitHub Classroom or Canvas LMS."""
+    """A unified assignment mapping GH Classroom and Canvas."""
 
-    id: str
-    source: DataSource
+    slug: str
     title: str
-    slug: str = ""
-    canvas_id: int = 0
-    deadline: datetime | None = None
+    gh_assignment_slug: str = ""
+    canvas_assignment_id: int = 0
     points_possible: float = 0.0
-    accepted: int = 0
-    submissions_count: int = 0
-    passing_count: int = 0
+    deadline: datetime | None = None
 
 
-class Submission(msgspec.Struct):
-    """A student's submission for an assignment."""
+class GHSubmission(msgspec.Struct):
+    """A GitHub Classroom submission record."""
 
-    student_id: str
-    assignment_id: str
-    source: DataSource
+    github_username: str
+    assignment_slug: str
     submitted: bool = False
-    submitted_at: datetime | None = None
     late: bool = False
     lateness_seconds: int = 0
     repo_name: str = ""
@@ -64,19 +55,39 @@ class Submission(msgspec.Struct):
     commit_count: int = 0
     passing: bool = False
     gh_autograder_score: str = ""
+
+    def with_assignment_slug(self, slug: str) -> GHSubmission:
+        """Return a copy with a different assignment_slug."""
+        return msgspec.structs.replace(self, assignment_slug=slug)
+
+
+class CanvasSubmission(msgspec.Struct):
+    """A Canvas LMS submission record."""
+
+    canvas_user_id: int
+    canvas_assignment_id: int
+    submitted: bool = False
+    submitted_at: datetime | None = None
+    late: bool = False
+    lateness_seconds: int = 0
     score: float | None = None
     workflow_state: str = ""
 
-    def with_assignment_id(self, assignment_id: str) -> Submission:
-        """Return a copy with a different assignment_id."""
-        return msgspec.structs.replace(self, assignment_id=assignment_id)
 
+class GHGrade(msgspec.Struct):
+    """A computed or manual grade for a GitHub assignment."""
 
-class Grade(msgspec.Struct):
-    """A computed or manual grade for a student-assignment pair."""
-
-    student_id: str
-    assignment_id: str
-    grade: str  # display: "0", "1", "1+ (2)", "2/2", etc.
+    github_username: str
+    assignment_slug: str
+    grade: str
     numeric_score: float | None = None
     source: GradeSource = "auto"
+
+
+class CanvasGrade(msgspec.Struct):
+    """A grade ready for Canvas API push."""
+
+    canvas_user_id: int
+    canvas_assignment_id: int
+    score: float | None = None
+    posted_grade: str = ""

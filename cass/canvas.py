@@ -1,6 +1,6 @@
 """Canvas LMS integration — roster matching, grade sync, and domain conversion.
 
-Business logic for matching GitHub ↔ Canvas students, converting Canvas API
+Business logic for matching GitHub and Canvas students, converting Canvas API
 responses to domain types, and pushing grades. All raw API calls are delegated
 to ``CanvasClient`` in ``canvas_api.py``.
 """
@@ -14,12 +14,10 @@ from datetime import datetime
 
 from .canvas_api import CanvasClient, get_token, save_token
 from .models import (
-    Assignment,
     CanvasStudent,
+    CanvasSubmission,
     GHStudentInfo,
     MatchResult,
-    Student,
-    Submission,
 )
 
 # Re-export for backwards compatibility (used by cli.py init)
@@ -27,12 +25,11 @@ __all__ = [
     "get_token",
     "save_token",
     "fetch_students",
-    "fetch_assignments",
-    "fetch_submissions",
+    "fetch_canvas_assignments",
+    "fetch_canvas_submissions",
     "push_grade",
     "match_students",
     "find_candidates",
-    "mapping_from_roster",
 ]
 
 
@@ -40,90 +37,38 @@ __all__ = [
 
 
 def fetch_students(course_id: int) -> list[CanvasStudent]:
-    """Fetch all students enrolled in a Canvas course.
-
-    Args:
-        course_id: Canvas course ID.
-
-    Returns:
-        Students sorted by Canvas enrollment order.
-    """
+    """Fetch all students enrolled in a Canvas course."""
     with CanvasClient(course_id=course_id) as c:
         return c.list_students()
 
 
-def fetch_assignments(course_id: int) -> list[Assignment]:
-    """Fetch all assignments from a Canvas course.
-
-    Converts Canvas API responses to domain ``Assignment`` objects with
-    slugified IDs and parsed deadlines.
-
-    Args:
-        course_id: Canvas course ID.
-
-    Returns:
-        Assignments sorted by slug ID.
-    """
+def fetch_canvas_assignments(course_id: int) -> list:
+    """Fetch all assignments from Canvas (returns CanvasAssignment API types)."""
     with CanvasClient(course_id=course_id) as c:
-        raw = c.list_assignments()
-
-    assignments = []
-    for a in raw:
-        deadline = None
-        if a.due_at:
-            try:
-                deadline = datetime.fromisoformat(a.due_at.replace("Z", "+00:00"))
-            except ValueError:
-                pass
-        assignments.append(
-            Assignment(
-                id=_slugify(a.name),
-                source="canvas",
-                title=a.name,
-                canvas_id=a.id,
-                deadline=deadline,
-                points_possible=a.points_possible,
-            )
-        )
-    return sorted(assignments, key=lambda a: a.id)
+        return c.list_assignments()
 
 
-def fetch_submissions(
+def fetch_canvas_submissions(
     course_id: int,
-    assignment_id: int,
-    students: list[Student],
-) -> list[Submission]:
-    """Fetch submission data for a Canvas assignment.
-
-    Retrieves all submissions via paginated Canvas API calls and maps
-    them to known students by ``canvas_id``.
+    canvas_assignment_id: int,
+    known_canvas_ids: set[int],
+) -> list[CanvasSubmission]:
+    """Fetch submissions for a Canvas assignment, filtered to known students.
 
     Args:
         course_id: Canvas course ID.
-        assignment_id: Canvas assignment ID.
-        students: Roster to match submissions against.
+        canvas_assignment_id: Canvas assignment ID.
+        known_canvas_ids: Set of canvas_ids from the students table.
 
     Returns:
-        Submissions sorted by student_id. Students not in the roster
-        are silently skipped.
+        CanvasSubmission domain objects for known students.
     """
     with CanvasClient(course_id=course_id) as c:
-        raw = c.list_submissions(assignment_id)
+        raw = c.list_submissions(canvas_assignment_id)
 
-    # canvas_id -> student identifier
-    canvas_to_student: dict[int, str] = {}
-    for s in students:
-        if s.canvas_id:
-            try:
-                canvas_to_student[int(s.canvas_id)] = s.display_name
-            except ValueError:
-                pass
-
-    assignment_id_str = _slugify_canvas_id(assignment_id)
     submissions = []
     for r in raw:
-        student_id = canvas_to_student.get(r.user_id)
-        if not student_id:
+        if r.user_id not in known_canvas_ids:
             continue
 
         submitted_at = None
@@ -135,20 +80,20 @@ def fetch_submissions(
             except ValueError:
                 pass
 
-        sub = Submission(
-            student_id=student_id,
-            assignment_id=assignment_id_str,
-            source="canvas",
-            submitted=r.workflow_state in ("submitted", "graded", "pending_review"),
-            submitted_at=submitted_at,
-            late=r.late,
-            lateness_seconds=int(r.seconds_late),
-            score=r.score,
-            workflow_state=r.workflow_state,
+        submissions.append(
+            CanvasSubmission(
+                canvas_user_id=r.user_id,
+                canvas_assignment_id=canvas_assignment_id,
+                submitted=r.workflow_state in ("submitted", "graded", "pending_review"),
+                submitted_at=submitted_at,
+                late=r.late,
+                lateness_seconds=int(r.seconds_late),
+                score=r.score,
+                workflow_state=r.workflow_state,
+            )
         )
-        submissions.append(sub)
 
-    return sorted(submissions, key=lambda s: s.student_id)
+    return submissions
 
 
 def push_grade(
@@ -176,19 +121,7 @@ def match_students(
     gh_students: list[GHStudentInfo],
     canvas_students: list[CanvasStudent],
 ) -> MatchResult:
-    """Match GitHub students to Canvas students by normalized name.
-
-    Uses exact normalized-name matching first, then falls back to
-    token-subset matching for partial name overlaps.
-
-    Args:
-        gh_students: Students discovered from GitHub Classroom.
-        canvas_students: Students enrolled in the Canvas course.
-
-    Returns:
-        A ``MatchResult`` with matched pairs, unmatched GitHub students,
-        and unmatched Canvas students.
-    """
+    """Match GitHub students to Canvas students by normalized name."""
     canvas_by_name: dict[str, CanvasStudent] = {}
     for cs in canvas_students:
         for field in (cs.name, cs.sortable_name):
@@ -237,17 +170,7 @@ def find_candidates(
     gh_student: GHStudentInfo,
     canvas_pool: list[CanvasStudent],
 ) -> list[CanvasStudent]:
-    """Rank Canvas students by name similarity to a GitHub student.
-
-    Used during interactive resolution of unmatched students.
-
-    Args:
-        gh_student: The unmatched GitHub student.
-        canvas_pool: Remaining unmatched Canvas students to search.
-
-    Returns:
-        Canvas students sorted by descending name-token overlap.
-    """
+    """Rank Canvas students by name similarity to a GitHub student."""
     gh_name = gh_student.name or gh_student.login
     gh_tokens = set(_normalize(gh_name).split())
     if not gh_tokens:
@@ -264,26 +187,6 @@ def find_candidates(
     return [c for _, c in scored]
 
 
-def mapping_from_roster(students: list[Student]) -> dict[str, int]:
-    """Build a GitHub-username-to-Canvas-ID mapping from the roster.
-
-    Args:
-        students: The full student roster.
-
-    Returns:
-        Dict mapping ``github_username`` to ``canvas_id`` for students
-        that have both fields populated.
-    """
-    mapping: dict[str, int] = {}
-    for s in students:
-        if s.canvas_id and s.github_username:
-            try:
-                mapping[s.github_username] = int(s.canvas_id)
-            except ValueError:
-                pass
-    return mapping
-
-
 # --- Helpers ---
 
 
@@ -295,7 +198,3 @@ def _slugify(name: str) -> str:
     while "--" in name:
         name = name.replace("--", "-")
     return name.strip("-")
-
-
-def _slugify_canvas_id(assignment_id: int) -> str:
-    return f"canvas-{assignment_id}"

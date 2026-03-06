@@ -1,4 +1,4 @@
-"""Pull orchestration — fetch APIs → populate DuckDB.
+"""Pull orchestration — fetch APIs, populate source tables, merge to master tables.
 
 GitHub API calls use async httpx with parallel per-student fetching.
 Canvas calls remain synchronous (fewer calls, not the bottleneck).
@@ -16,7 +16,7 @@ from . import classroom, db
 from . import fetch as fetch_mod
 from .config import Config
 from .github_client import GitHubClient
-from .models import Student, compute_grade
+from .models import Assignment, CanvasGrade, GHGrade, Student
 
 # Course-specific constants for final project handling
 FINAL_PROJECT_SLUG = "final-project"
@@ -31,37 +31,47 @@ async def pull_students(
     ttl: float,
     no_cache: bool,
 ) -> None:
-    """Fetch students from GitHub Classroom and/or Canvas.
+    """Fetch students from Canvas (authoritative) and optionally GitHub Classroom.
 
-    In combined mode, automatically matches GitHub and Canvas students by
-    name, with interactive resolution for ambiguous cases.
-
-    Args:
-        client: Async GitHub API client (None if Classroom not configured).
-        cfg: Project configuration.
-        console: Rich console for status output.
-        ttl: Cache TTL in hours.
-        no_cache: Bypass cache if True.
+    Canvas students are the source of truth. GitHub students are matched to
+    Canvas students by name. Previous matches are preserved across repulls.
     """
-    students_list: list[Student] = []
-    if cfg.has_classroom:
-        assert client is not None
+    # Step 1: Canvas students (always — Canvas is required)
+    console.print("[bold]Pulling students from Canvas...[/bold]")
+    canvas_students = canvas_mod.fetch_students(cfg.canvas_course_id)
+    db.save_canvas_students(canvas_students)
+    console.print(f"  Found {len(canvas_students)} Canvas students")
+
+    # Step 2: Create/update master students from Canvas (authoritative)
+    master_students = [
+        Student(canvas_id=cs.id, name=cs.name, email=cs.email) for cs in canvas_students
+    ]
+    db.upsert_students(master_students)
+
+    # Step 3: GitHub Classroom students (if configured)
+    if cfg.has_classroom and client is not None:
         console.print("[bold]Pulling students from GitHub Classroom...[/bold]")
         gh_students = await classroom.fetch_all_students(
             client, ttl_hours=ttl, force_refresh=no_cache
         )
-        console.print(f"  Found {len(gh_students)} via GitHub")
+        db.save_gh_students(gh_students)
+        console.print(f"  Found {len(gh_students)} GitHub students")
 
-        canvas_mapping: dict[str, int] = {}
-        if cfg.has_canvas:
-            console.print("  Fetching Canvas enrollment...")
-            canvas_students = canvas_mod.fetch_students(cfg.canvas_course_id)
-            console.print(f"  Found {len(canvas_students)} on Canvas")
-            result = canvas_mod.match_students(gh_students, canvas_students)
-            canvas_mapping = result.matched
-            console.print(f"  Auto-matched {len(canvas_mapping)}/{len(gh_students)}")
+        # Load existing master students to check for previous mappings
+        existing = db.load_students(include_excluded=True)
+        already_mapped = {s.github_username for s in existing if s.github_username}
 
-            # Interactive resolution
+        # Auto-match by name (only for unmapped GH students)
+        unmapped_gh = [g for g in gh_students if g.login.lower() not in already_mapped]
+        if unmapped_gh:
+            result = canvas_mod.match_students(unmapped_gh, canvas_students)
+            # Apply auto-matches
+            for gh_login, canvas_id in result.matched.items():
+                db.update_student_github(canvas_id, gh_login)
+            if result.matched:
+                console.print(f"  Auto-matched {len(result.matched)} new student(s)")
+
+            # Interactive resolution for remaining unmatched
             if result.unmatched_gh and result.unmatched_canvas:
                 console.print(
                     f"\n  [yellow]{len(result.unmatched_gh)} unmatched GitHub student(s)[/yellow]"
@@ -82,46 +92,19 @@ async def pull_students(
                         idx = int(choice)
                         if 1 <= idx <= len(candidates[:5]):
                             c = candidates[idx - 1]
-                            canvas_mapping[gh_s.login] = c.id
+                            db.update_student_github(c.id, gh_s.login)
                             unmatched_canvas = [
                                 uc for uc in unmatched_canvas if uc.id != c.id
                             ]
                     except ValueError:
                         pass
 
-        for gh_s in gh_students:
-            cid = canvas_mapping.get(gh_s.login, "")
-            identifier = gh_s.name if gh_s.name else gh_s.login
-            students_list.append(
-                Student(
-                    identifier=identifier,
-                    github_username=gh_s.login,
-                    github_id=gh_s.id,
-                    name=gh_s.name,
-                    email=gh_s.email,
-                    canvas_id=str(cid) if cid else "",
-                )
-            )
-
-    elif cfg.has_canvas:
-        console.print("[bold]Pulling students from Canvas...[/bold]")
-        canvas_students = canvas_mod.fetch_students(cfg.canvas_course_id)
-        students_list = [
-            Student(
-                identifier=cs.name,
-                name=cs.name,
-                canvas_id=str(cs.id),
-            )
-            for cs in canvas_students
-        ]
-        console.print(f"  Found {len(students_list)} students")
-
-    if students_list:
-        db.save_students(students_list)
-        matched = sum(1 for s in students_list if s.canvas_id)
-        console.print(
-            f"  [green]Saved {len(students_list)} students ({matched} with Canvas IDs)[/green]"
-        )
+    # Report final state
+    final = db.load_students(include_excluded=True)
+    matched = sum(1 for s in final if s.github_username)
+    console.print(
+        f"  [green]Roster: {len(final)} students ({matched} with GitHub links)[/green]"
+    )
 
 
 async def pull_assignments(
@@ -131,34 +114,110 @@ async def pull_assignments(
     ttl: float,
     no_cache: bool,
 ) -> None:
-    """Fetch assignments from GitHub Classroom and/or Canvas.
+    """Fetch assignments from Canvas and/or GitHub Classroom, merge to master table."""
+    # Step 1: Canvas assignments (always present)
+    console.print("[bold]Pulling assignments from Canvas...[/bold]")
+    canvas_assignments = canvas_mod.fetch_canvas_assignments(cfg.canvas_course_id)
+    db.save_canvas_assignments(canvas_assignments)
+    console.print(f"  Found {len(canvas_assignments)} Canvas assignments")
 
-    Args:
-        client: Async GitHub API client (None if Classroom not configured).
-        cfg: Project configuration.
-        console: Rich console for status output.
-        ttl: Cache TTL in hours.
-        no_cache: Bypass cache if True.
-    """
-    all_assignments = []
-    if cfg.has_classroom:
-        assert client is not None
+    # Step 2: GitHub assignments (if configured)
+    gh_assignments = []
+    if cfg.has_classroom and client is not None:
         console.print("[bold]Pulling assignments from GitHub Classroom...[/bold]")
         gh_assignments = await classroom.fetch_assignments(
             client, ttl_hours=ttl, force_refresh=no_cache
         )
-        all_assignments.extend(gh_assignments)
+        db.save_gh_assignments(gh_assignments)
         console.print(f"  Found {len(gh_assignments)} GitHub assignments")
 
-    if cfg.has_canvas:
-        console.print("[bold]Pulling assignments from Canvas...[/bold]")
-        canvas_assignments = canvas_mod.fetch_assignments(cfg.canvas_course_id)
-        all_assignments.extend(canvas_assignments)
-        console.print(f"  Found {len(canvas_assignments)} Canvas assignments")
+    # Step 3: Merge into master assignments table
+    # Load existing master to preserve manual mappings
+    existing_master = {a.slug: a for a in db.load_assignments()}
 
-    if all_assignments:
-        db.save_assignments(all_assignments)
-        console.print(f"  [green]Saved {len(all_assignments)} assignments[/green]")
+    # Build canvas assignment lookup by slug
+    from .canvas import _slugify
+
+    canvas_by_slug: dict[str, object] = {}
+    for ca in canvas_assignments:
+        canvas_by_slug[_slugify(ca.name)] = ca
+
+    master: list[Assignment] = []
+
+    # Start from Canvas assignments as the base
+    used_gh_slugs: set[str] = set()
+    for ca in canvas_assignments:
+        slug = _slugify(ca.name)
+
+        # Check if there's an existing mapping to preserve
+        if slug in existing_master:
+            ex = existing_master[slug]
+            gh_slug = ex.gh_assignment_slug
+            if gh_slug:
+                used_gh_slugs.add(gh_slug)
+        else:
+            # Try to auto-match with GH assignment by slug
+            gh_slug = ""
+            for ga in gh_assignments:
+                if ga.slug not in used_gh_slugs and _slug_match(ga.slug, slug):
+                    gh_slug = ga.slug
+                    used_gh_slugs.add(ga.slug)
+                    break
+
+        from datetime import datetime
+
+        deadline = None
+        if ca.due_at:
+            try:
+                deadline = datetime.fromisoformat(ca.due_at.replace("Z", "+00:00"))
+            except ValueError:
+                pass
+
+        master.append(
+            Assignment(
+                slug=slug,
+                title=ca.name,
+                gh_assignment_slug=gh_slug,
+                canvas_assignment_id=ca.id,
+                points_possible=ca.points_possible,
+                deadline=deadline,
+            )
+        )
+
+    # Add GH-only assignments (not matched to any Canvas assignment)
+    for ga in gh_assignments:
+        if ga.slug not in used_gh_slugs:
+            from datetime import datetime
+
+            deadline = None
+            if ga.deadline:
+                try:
+                    deadline = datetime.fromisoformat(
+                        ga.deadline.replace("Z", "+00:00")
+                    )
+                except ValueError:
+                    pass
+            master.append(
+                Assignment(
+                    slug=ga.slug,
+                    title=ga.title,
+                    gh_assignment_slug=ga.slug,
+                    canvas_assignment_id=0,
+                    points_possible=1.0,
+                    deadline=deadline,
+                )
+            )
+
+    db.upsert_assignments(master)
+    console.print(f"  [green]Master: {len(master)} assignments[/green]")
+
+
+def _slug_match(gh_slug: str, canvas_slug: str) -> bool:
+    """Check if a GH slug matches a Canvas slug by token overlap."""
+    gh_tokens = set(gh_slug.replace("-", " ").split())
+    cv_tokens = set(canvas_slug.replace("-", " ").split())
+    overlap = len(gh_tokens & cv_tokens)
+    return overlap > 0 and overlap >= min(len(gh_tokens), len(cv_tokens)) / 2
 
 
 async def pull_submissions(
@@ -168,18 +227,7 @@ async def pull_submissions(
     ttl: float,
     no_cache: bool,
 ) -> None:
-    """Fetch submissions for all assignments.
-
-    GitHub submissions are fetched with parallel per-student commit checks.
-    Canvas submissions use synchronous paginated API calls.
-
-    Args:
-        client: Async GitHub API client (None if Classroom not configured).
-        cfg: Project configuration.
-        console: Rich console for status output.
-        ttl: Cache TTL in hours.
-        no_cache: Bypass cache if True.
-    """
+    """Fetch submissions for all assignments into source tables."""
     if not db.students_exist():
         console.print("[yellow]No roster. Pull students first.[/yellow]")
         return
@@ -190,77 +238,142 @@ async def pull_submissions(
         console.print("[yellow]No assignments. Pull assignments first.[/yellow]")
         return
 
-    all_subs = []
-
-    # GitHub submissions — async with parallel per-student checks
-    gh_assignments = [a for a in assignments if a.source == "github"]
+    # GitHub submissions
+    gh_assignments = [a for a in assignments if a.gh_assignment_slug]
     if gh_assignments and cfg.has_classroom and client is not None:
+        all_gh_subs = []
         for i, a in enumerate(gh_assignments, 1):
-            console.print(f"  Fetching submissions… ({i}/{len(gh_assignments)} {a.id})")
-            if a.slug == FINAL_PROJECT_SLUG:
+            console.print(
+                f"  Fetching GH submissions... ({i}/{len(gh_assignments)} {a.slug})"
+            )
+            if a.gh_assignment_slug == FINAL_PROJECT_SLUG:
                 for phase_name, file_path in [
                     ("proposal", PROPOSAL_FILE),
                     ("report", REPORT_FILE),
                 ]:
                     subs = await classroom.fetch_file_submissions(
                         client,
-                        a,
+                        a.gh_assignment_slug,
                         students,
                         file_path,
                         ttl_hours=ttl,
                         force_refresh=no_cache,
                     )
                     for s in subs:
-                        all_subs.append(s.with_assignment_id(phase_name))
+                        all_gh_subs.append(s.with_assignment_slug(phase_name))
                 continue
             subs = await classroom.fetch_submissions(
-                client, a, students, ttl_hours=ttl, force_refresh=no_cache
+                client,
+                a.gh_assignment_slug,
+                a.deadline,
+                students,
+                ttl_hours=ttl,
+                force_refresh=no_cache,
             )
-            all_subs.extend(subs)
+            all_gh_subs.extend(subs)
+        if all_gh_subs:
+            db.save_gh_submissions(all_gh_subs)
+            console.print(
+                f"  [green]Saved {len(all_gh_subs)} GitHub submissions[/green]"
+            )
 
-    # Canvas submissions — sync (single paginated call per assignment)
-    canvas_assignments = [
-        a for a in assignments if a.source == "canvas" and a.canvas_id
-    ]
-    if canvas_assignments and cfg.has_canvas:
+    # Canvas submissions
+    canvas_assignments = [a for a in assignments if a.canvas_assignment_id]
+    if canvas_assignments:
+        known_ids = {s.canvas_id for s in students}
+        all_canvas_subs = []
         for a in canvas_assignments:
-            subs = canvas_mod.fetch_submissions(
-                cfg.canvas_course_id, a.canvas_id, students
+            subs = canvas_mod.fetch_canvas_submissions(
+                cfg.canvas_course_id, a.canvas_assignment_id, known_ids
             )
-            for s in subs:
-                all_subs.append(s.with_assignment_id(a.id))
-
-    if all_subs:
-        db.save_submissions(all_subs)
-        console.print(f"  [green]Saved {len(all_subs)} submissions[/green]")
+            all_canvas_subs.extend(subs)
+        if all_canvas_subs:
+            db.save_canvas_submissions(all_canvas_subs)
+            console.print(
+                f"  [green]Saved {len(all_canvas_subs)} Canvas submissions[/green]"
+            )
 
 
 def pull_grades(console: Console) -> None:
-    """Compute grades from submissions."""
-    assignments = db.load_assignments()
-    all_submissions = db.load_submissions()
-    if not all_submissions:
-        console.print("[yellow]No submissions. Pull submissions first.[/yellow]")
-        return
+    """Compute grades from submissions and populate grade tables."""
+    from .models import compute_canvas_grade, compute_gh_grade
 
-    assign_map = {a.id: a for a in assignments}
-    grades = []
-    for sub in all_submissions:
-        assign = assign_map.get(sub.assignment_id)
-        if assign:
-            grades.append(compute_grade(sub, assign))
-    if grades:
-        db.save_grades(grades)
-        console.print(f"  [green]Computed {len(grades)} grades[/green]")
+    assignments = db.load_assignments()
+
+    # GH grades
+    gh_subs = db.load_gh_submissions()
+    gh_grades: list[GHGrade] = []
+    for sub in gh_subs:
+        gh_grades.append(compute_gh_grade(sub))
+    if gh_grades:
+        db.save_gh_grades(gh_grades)
+        console.print(f"  [green]Computed {len(gh_grades)} GitHub grades[/green]")
+
+    # Canvas grades from Canvas submissions
+    conn = db.get_db()
+    canvas_sub_rows = conn.execute(
+        "SELECT canvas_user_id, canvas_assignment_id, submitted, submitted_at, "
+        "late, lateness_seconds, score, workflow_state FROM canvas_submissions"
+    ).fetchall()
+
+    # Build canvas_assignment_id -> points_possible map
+    ca_points: dict[int, float] = {}
+    for a in assignments:
+        if a.canvas_assignment_id:
+            ca_points[a.canvas_assignment_id] = a.points_possible
+
+    canvas_grades: list[CanvasGrade] = []
+    for r in canvas_sub_rows:
+        from .models import CanvasSubmission
+
+        sub = CanvasSubmission(
+            canvas_user_id=r[0],
+            canvas_assignment_id=r[1],
+            submitted=r[2],
+            submitted_at=r[3],
+            late=r[4],
+            lateness_seconds=r[5],
+            score=r[6],
+            workflow_state=r[7],
+        )
+        pts = ca_points.get(sub.canvas_assignment_id, 0.0)
+        canvas_grades.append(compute_canvas_grade(sub, pts))
+
+    # Canvas grades from GH grades (mapped through students + assignments)
+    if gh_grades:
+        students = db.load_students()
+        gh_to_canvas_student = {
+            s.github_username: s.canvas_id for s in students if s.github_username
+        }
+        assignment_mapping = db.load_assignment_mappings()
+
+        for g in gh_grades:
+            canvas_student_id = gh_to_canvas_student.get(g.github_username)
+            canvas_assignment_id = assignment_mapping.get(g.assignment_slug)
+            if canvas_student_id and canvas_assignment_id:
+                canvas_grades.append(
+                    CanvasGrade(
+                        canvas_user_id=canvas_student_id,
+                        canvas_assignment_id=canvas_assignment_id,
+                        score=g.numeric_score,
+                        posted_grade=str(int(g.numeric_score))
+                        if g.numeric_score is not None
+                        else "",
+                    )
+                )
+
+    if canvas_grades:
+        db.save_canvas_grades(canvas_grades)
+        console.print(f"  [green]Computed {len(canvas_grades)} Canvas grades[/green]")
 
 
 def pull_fetch(console: Console, ttl: float, no_cache: bool, limit: int) -> None:
     """Download student files from GitHub repos."""
     students = db.load_students()
     assignments = db.load_assignments()
-    gh_assignments = [a for a in assignments if a.source == "github"]
+    gh_assignments = [a for a in assignments if a.gh_assignment_slug]
     for a in gh_assignments:
-        console.print(f"\n[bold]{a.slug}[/bold]")
+        console.print(f"\n[bold]{a.gh_assignment_slug}[/bold]")
         fetch_mod.fetch_assignment(
             a,
             students,

@@ -16,21 +16,20 @@ from .cli_canvas import canvas_app
 app = typer.Typer(
     invoke_without_command=True,
     no_args_is_help=False,
-    rich_markup_mode="rich",
 )
 grades_app = typer.Typer(
     invoke_without_command=True,
     no_args_is_help=False,
-    help="Gradebook matrix and grade sync to Canvas.",
+    help="Show the gradebook as a student x assignment matrix, or push grades to Canvas.",
 )
-app.add_typer(grades_app, name="grades", rich_help_panel="View Data")
+app.add_typer(grades_app, name="grades")
 db_app = typer.Typer(
     invoke_without_command=True,
     no_args_is_help=False,
-    help="Interactive DuckDB REPL and cache management.",
+    help="Database tools: interactive REPL and cache management.",
 )
-app.add_typer(db_app, name="db", rich_help_panel="Database")
-app.add_typer(canvas_app, name="canvas", rich_help_panel="Canvas LMS")
+app.add_typer(db_app, name="db")
+app.add_typer(canvas_app, name="canvas")
 
 console = Console()
 
@@ -69,7 +68,6 @@ def main(
     """cass — Classroom Assignment Grading CLI."""
     state.no_cache = no_cache
     state.ttl = ttl
-    # Default to status when no subcommand given
     if ctx.invoked_subcommand is None:
         _status()
 
@@ -97,100 +95,63 @@ def _require_canvas() -> None:
 
 
 # ---------------------------------------------------------------------------
-# cass status — project dashboard (default command)
+# cass status
 # ---------------------------------------------------------------------------
 
 
 def _status() -> None:
-    """Show project overview with command guide."""
-    from rich.panel import Panel
-
-    from . import db
+    from . import cache, db
     from .config import config_file_path, get_config
 
     cfg_path = config_file_path()
     if not cfg_path:
-        console.print()
         console.print(
-            "[yellow]No cass.toml found.[/yellow] Run [bold]cass init[/bold] to get started."
+            "[yellow]No cass.toml found.[/yellow] Run [bold]cass init[/bold] to create one."
         )
-        console.print()
         return
 
     cfg = get_config()
-
-    # Build status lines for the panel
-    lines: list[str] = []
-    lines.append(f"  [dim]Config[/dim]      {cfg_path.name}")
+    console.print("[bold]cass[/bold] project status\n")
+    console.print(f"  Config: {cfg_path}")
 
     if cfg.has_classroom:
-        lines.append(
-            f"  [dim]GitHub[/dim]      {cfg.org} [dim](classroom {cfg.classroom_id})[/dim]"
+        console.print(
+            f"  GitHub Classroom: org=[bold]{cfg.org}[/bold] id={cfg.classroom_id}"
         )
+    else:
+        console.print("  GitHub Classroom: [dim]not configured[/dim]")
 
     if cfg.has_canvas:
-        host = cfg.canvas_base_url.replace("https://", "").replace("http://", "")
-        lines.append(
-            f"  [dim]Canvas[/dim]      {host} [dim](course {cfg.canvas_course_id})[/dim]"
+        console.print(
+            f"  Canvas: [bold]{cfg.canvas_base_url}[/bold] course={cfg.canvas_course_id}"
         )
+    else:
+        console.print("  Canvas: [dim]not configured[/dim]")
 
-    # DB stats
     db_file = Path(db.db_path())
     if db_file.exists():
         size_kb = db_file.stat().st_size / 1024
-        size_str = f"{size_kb:.0f} KB" if size_kb < 1024 else f"{size_kb / 1024:.1f} MB"
-        db_parts = [size_str]
-        try:
-            if db.students_exist():
-                students = db.load_students()
-                db_parts.append(f"{len(students)} students")
-            assignments = db.load_assignments()
-            if assignments:
-                db_parts.append(f"{len(assignments)} assignments")
-        except Exception:
-            pass
-        lines.append(
-            f"  [dim]Database[/dim]    {db_file.name} [dim]({' · '.join(db_parts)})[/dim]"
-        )
+        console.print(f"\n  Database: {db_file.name} ({size_kb:.0f} KB)")
+        cache_kb = cache.cache_size_kb()
+        if cache_kb > 0:
+            console.print(
+                f"    Cache: {cache.cache_count()} entries ({cache_kb:.0f} KB)"
+            )
+        if db.students_exist():
+            students = db.load_students()
+            gh_count = sum(1 for s in students if s.github_username)
+            console.print(
+                f"    Students: {len(students)} ({gh_count} with GitHub links)"
+            )
+        else:
+            console.print("    Students: [dim]none[/dim]")
+        assignments = db.load_assignments()
+        if assignments:
+            console.print(f"    Assignments: {len(assignments)}")
     else:
-        lines.append("  [dim]Database[/dim]    [italic]not yet created[/italic]")
+        console.print("\n  Database: [dim]not yet created[/dim]")
 
-    panel = Panel(
-        "\n".join(lines),
-        title=f"[bold]cass[/bold] [dim]v{__version__}[/dim]",
-        title_align="left",
-        border_style="blue",
-        padding=(1, 1),
-    )
     console.print()
-    console.print(panel)
-
-    # Command guide
-    _print_guide(
-        "Common commands",
-        [
-            ("cass pull", "Fetch data from APIs"),
-            ("cass students", "Student roster"),
-            ("cass grades", "Gradebook matrix"),
-        ],
-    )
-    if cfg.has_canvas:
-        _print_guide(
-            "Canvas",
-            [("cass canvas", "Course overview & management")],
-        )
-    _print_guide(
-        "More",
-        [("cass --help", "All commands and options")],
-    )
-    console.print()
-
-
-def _print_guide(heading: str, commands: list[tuple[str, str]]) -> None:
-    """Print a section of the command guide."""
-    console.print(f"\n  [bold]{heading}[/bold]")
-    for cmd, desc in commands:
-        console.print(f"    [green]{cmd:<24s}[/green] [dim]{desc}[/dim]")
 
 
 # ---------------------------------------------------------------------------
@@ -212,79 +173,73 @@ _INIT_TOML = """\
 """
 
 
-def _verify_canvas_connection(base_url: str, token: str, course_id: int) -> str | None:
-    """Test Canvas connection, returning course name on success."""
-    import httpx as _httpx
+@app.command()
+def init() -> None:
+    """Initialize a new project or check an existing setup."""
+    from . import canvas
+    from .config import (
+        check_prerequisites,
+        config_file_path,
+        reset_config,
+        write_config,
+    )
 
-    try:
-        resp = _httpx.get(
-            f"{base_url.rstrip('/')}/api/v1/courses/{course_id}",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=10.0,
-        )
-        if resp.status_code == 200:
-            return resp.json().get("name")
-    except Exception:
-        pass
-    return None
+    cfg_path = config_file_path()
 
+    if cfg_path is None:
+        cwd = Path.cwd()
+        toml_path = cwd / "cass.toml"
+        console.print("[bold]Setting up cass...[/bold]\n")
+        classroom_id = 0
+        org = ""
+        canvas_base_url = ""
+        canvas_course_id = 0
 
-def _verify_classroom_connection(classroom_id: int) -> str | None:
-    """Test GitHub Classroom connection, returning classroom name on success."""
-    from . import gh
+        if typer.confirm("Configure GitHub Classroom?", default=True):
+            raw = typer.prompt("  Classroom ID", default="0")
+            classroom_id = int(raw) if raw.strip() and raw.strip() != "0" else 0
+            org = typer.prompt("  GitHub org", default="").strip()
 
-    if not gh.check_available():
-        return None
-    try:
-        data = gh.api(f"/classrooms/{classroom_id}")
-        if isinstance(data, dict):
-            return data.get("name")
-    except Exception:
-        pass
-    return None
+        if typer.confirm("Configure Canvas LMS?", default=False):
+            canvas_base_url = typer.prompt(
+                "  Canvas base URL (e.g. https://canvas.ucsd.edu)"
+            )
+            raw = typer.prompt("  Canvas course ID", default="0")
+            canvas_course_id = int(raw) if raw.strip() and raw.strip() != "0" else 0
+            if canvas_base_url and canvas_course_id:
+                token = typer.prompt(
+                    "  Canvas API token (or Enter to skip)", default="", hide_input=True
+                )
+                if token.strip():
+                    write_config(
+                        toml_path, classroom_id, org, canvas_base_url, canvas_course_id
+                    )
+                    canvas.save_token(token)
+                    reset_config()
+                    console.print(f"\n[green]Created {toml_path.name}[/green]")
+                    return
 
+        has_cc = bool(classroom_id and org)
+        has_cv = bool(canvas_base_url and canvas_course_id)
 
-def _run_initial_pull() -> None:
-    """Run the full pull pipeline (students -> assignments -> submissions -> grades)."""
-    import asyncio
+        if not has_cc and not has_cv:
+            toml_path.write_text(_INIT_TOML)
+            console.print(f"\n[green]Created {toml_path.name}[/green]")
+            console.print(
+                "Edit it with your settings, then run [bold]cass init[/bold] again."
+            )
+            return
 
-    from . import pull as pull_mod
-    from .config import get_config
-    from .github_client import GitHubClient
-
-    cfg = get_config()
-
-    async def _pull() -> None:
-        client = None
-        if cfg.has_classroom:
-            client = GitHubClient()
-        try:
-            await pull_mod.pull_students(client, cfg, console, 6.0, False)
-            await pull_mod.pull_assignments(client, cfg, console, 6.0, False)
-            await pull_mod.pull_submissions(client, cfg, console, 6.0, False)
-        finally:
-            if client:
-                await client.close()
-
-    try:
-        asyncio.run(_pull())
-        pull_mod.pull_grades(console)
-    except Exception as exc:
-        console.print(f"\n  [red]Pull failed:[/red] {exc}")
-        console.print("  Run [bold]cass pull[/bold] to retry.")
-
-
-def _init_check() -> None:
-    """Run prerequisite checks on an existing config."""
-    from . import db
-    from .config import check_prerequisites
+        write_config(toml_path, classroom_id, org, canvas_base_url, canvas_course_id)
+        console.print(f"\n[green]Created {toml_path.name}[/green]")
+        return
 
     console.print("[bold]Checking setup...[/bold]\n")
     checks = check_prerequisites()
     all_ok = True
     for c in checks:
         indent = "  " * c.indent
-        icon = "[green]✓[/green]" if c.ok else "[red]✗[/red]"
+        icon = "[green]\u2713[/green]" if c.ok else "[red]\u2717[/red]"
         console.print(f"  {indent}{icon} {c.name}  [dim]{c.detail}[/dim]")
         if not c.ok:
             all_ok = False
@@ -292,185 +247,16 @@ def _init_check() -> None:
     console.print()
     if all_ok:
         console.print("[green]All checks passed![/green]")
-        try:
-            if not db.students_exist():
-                from rich.prompt import Confirm
-
-                console.print()
-                if Confirm.ask("  No student data yet. Pull now?", default=True):
-                    console.print()
-                    _run_initial_pull()
-        except Exception:
-            pass
     else:
         console.print("Fix the issues above and run [bold]cass init[/bold] again.")
 
 
-def _init_wizard() -> None:
-    """Interactive setup wizard for new projects."""
-    from rich.panel import Panel
-    from rich.prompt import Confirm, IntPrompt, Prompt
-
-    from . import canvas as canvas_mod
-    from .config import write_config
-
-    cwd = Path.cwd()
-    toml_path = cwd / "cass.toml"
-
-    # Welcome
-    console.print()
-    console.print(
-        Panel(
-            "  Let's set up your grading project.\n"
-            "  Configure [bold]Canvas LMS[/bold], [bold]GitHub Classroom[/bold], or both.",
-            title="[bold]cass[/bold] setup",
-            title_align="left",
-            border_style="blue",
-            padding=(1, 1),
-        )
-    )
-
-    # --- Canvas LMS ---
-    canvas_base_url = ""
-    canvas_course_id = 0
-    canvas_token = ""
-
-    console.rule("[bold]Canvas LMS[/bold]", style="blue")
-    console.print()
-
-    if Confirm.ask("  Configure Canvas LMS?", default=True):
-        canvas_base_url = (
-            Prompt.ask("  Canvas URL [dim](e.g. https://canvas.ucsd.edu)[/dim]")
-            .strip()
-            .rstrip("/")
-        )
-        canvas_course_id = IntPrompt.ask("  Course ID")
-
-        console.print(
-            f"\n  [dim]Generate a token at {canvas_base_url}/profile/settings[/dim]"
-        )
-        console.print("  [dim]Press Enter to skip (set $CANVAS_TOKEN later)[/dim]")
-        canvas_token = Prompt.ask(
-            "  API token", password=True, default="", show_default=False
-        ).strip()
-
-        if canvas_base_url and canvas_course_id and canvas_token:
-            with console.status("  Verifying Canvas connection...", spinner="dots"):
-                course_name = _verify_canvas_connection(
-                    canvas_base_url, canvas_token, canvas_course_id
-                )
-            if course_name:
-                console.print(
-                    f"  [green]✓[/green] Connected — [bold]{course_name}[/bold]"
-                )
-            else:
-                console.print(
-                    "  [yellow]⚠[/yellow] Could not verify connection. "
-                    "Check your URL, course ID, and token."
-                )
-                if not Confirm.ask("  Save anyway?", default=True):
-                    canvas_base_url = ""
-                    canvas_course_id = 0
-                    canvas_token = ""
-
-    # --- GitHub Classroom ---
-    classroom_id = 0
-    org = ""
-
-    console.print()
-    console.rule("[bold]GitHub Classroom[/bold] [dim](optional)[/dim]", style="blue")
-    console.print()
-
-    if Confirm.ask("  Configure GitHub Classroom?", default=False):
-        from . import gh
-
-        if gh.check_available():
-            authed, detail = gh.check_auth()
-            if authed:
-                console.print(
-                    f"  [green]✓[/green] gh authenticated as [bold]{detail}[/bold]"
-                )
-            else:
-                console.print(f"  [yellow]⚠[/yellow] gh not authenticated — {detail}")
-                console.print("    Run [bold]gh auth login[/bold] first.")
-        else:
-            console.print(
-                "  [yellow]⚠[/yellow] gh CLI not found — "
-                "install from [bold]https://cli.github.com/[/bold]"
-            )
-
-        console.print()
-        org = Prompt.ask("  GitHub org").strip()
-        classroom_id = IntPrompt.ask("  Classroom ID")
-
-        if classroom_id:
-            with console.status("  Verifying classroom...", spinner="dots"):
-                classroom_name = _verify_classroom_connection(classroom_id)
-            if classroom_name:
-                console.print(
-                    f"  [green]✓[/green] Found — [bold]{classroom_name}[/bold]"
-                )
-            else:
-                console.print(
-                    "  [yellow]⚠[/yellow] Could not verify classroom. "
-                    "Check the ID and [bold]gh auth status[/bold]."
-                )
-
-    # --- Write config ---
-    has_cc = bool(classroom_id and org)
-    has_cv = bool(canvas_base_url and canvas_course_id)
-
-    console.print()
-    console.rule("[bold]Summary[/bold]", style="blue")
-    console.print()
-
-    if not has_cc and not has_cv:
-        toml_path.write_text(_INIT_TOML)
-        console.print(
-            f"  [green]✓[/green] Created {toml_path.name} [dim](template)[/dim]"
-        )
-        console.print(
-            "\n  Edit it with your settings, then run [bold]cass init[/bold] again."
-        )
-        console.print()
-        return
-
-    write_config(toml_path, classroom_id, org, canvas_base_url, canvas_course_id)
-    console.print(f"  [green]✓[/green] Created [bold]{toml_path.name}[/bold]")
-
-    if canvas_token:
-        canvas_mod.save_token(canvas_token)
-        console.print("  [green]✓[/green] Saved [bold]canvas-token.txt[/bold]")
-        console.print("    [dim]Add canvas-token.txt to .gitignore[/dim]")
-
-    console.print()
-    if Confirm.ask("  Pull data now?", default=True):
-        console.print()
-        _run_initial_pull()
-    else:
-        console.print("\n  Run [bold]cass pull[/bold] when you're ready.")
-
-    console.print()
-
-
-@app.command(rich_help_panel="Setup")
-def init() -> None:
-    """Initialize a new project or check an existing setup."""
-    from .config import config_file_path
-
-    cfg_path = config_file_path()
-    if cfg_path is not None:
-        _init_check()
-    else:
-        _init_wizard()
-
-
 # ---------------------------------------------------------------------------
-# cass pull — fetch APIs → populate DuckDB
+# cass pull
 # ---------------------------------------------------------------------------
 
 
-@app.command(rich_help_panel="Setup")
+@app.command()
 def pull(
     do_students: bool = typer.Option(False, "--students", help="Pull students only"),
     do_assignments: bool = typer.Option(
@@ -483,11 +269,7 @@ def pull(
     do_fetch: bool = typer.Option(False, "--fetch", help="Also download student files"),
     limit: int = typer.Option(0, "--limit", help="Limit number of students (0 = all)"),
 ) -> None:
-    """Fetch from APIs and update the local database.
-
-    Pipeline order: students → assignments → submissions → grades.
-    Use flags to run individual phases.
-    """
+    """Fetch from APIs and update the local database."""
     import asyncio
 
     from . import pull as pull_mod
@@ -532,14 +314,14 @@ def pull(
 # ---------------------------------------------------------------------------
 
 
-@app.command(rich_help_panel="View Data")
+@app.command()
 def students(
     all_students: bool = typer.Option(
         False, "--all", help="Show all students including excluded"
     ),
     save: str = typer.Option("", "--save", help="Save output as markdown file"),
     where: str = typer.Option(
-        "", "--where", help="SQL WHERE filter (e.g. --where \"source='github'\")"
+        "", "--where", help="SQL WHERE filter (e.g. --where \"github_username != ''\")"
     ),
     csv_out: str = typer.Option("", "--csv", help="Export as CSV file"),
 ) -> None:
@@ -558,9 +340,9 @@ def students(
         )
 
     result = conn.sql(
-        f"SELECT identifier, github_username, github_id, name, email, canvas_id"
+        f"SELECT canvas_id, github_username, name, email"
         f"{', excluded' if all_students else ''} "
-        f"FROM students {where_clause} ORDER BY lower(identifier)"
+        f"FROM students {where_clause} ORDER BY lower(name)"
     )
 
     if csv_out:
@@ -576,11 +358,13 @@ def students(
 # ---------------------------------------------------------------------------
 
 
-@app.command(rich_help_panel="View Data")
+@app.command()
 def assignments(
     save: str = typer.Option("", "--save", help="Save output as markdown file"),
     where: str = typer.Option(
-        "", "--where", help="SQL WHERE filter (e.g. --where \"source='github'\")"
+        "",
+        "--where",
+        help="SQL WHERE filter (e.g. --where \"gh_assignment_slug != ''\")",
     ),
     csv_out: str = typer.Option("", "--csv", help="Export as CSV file"),
 ) -> None:
@@ -590,8 +374,9 @@ def assignments(
     conn = db.get_db()
     where_clause = f"WHERE {where}" if where else ""
     result = conn.sql(
-        f"SELECT id, source, title, deadline, points_possible, accepted "
-        f"FROM assignments {where_clause} ORDER BY id"
+        f"SELECT slug, title, gh_assignment_slug, canvas_assignment_id, "
+        f"points_possible, deadline "
+        f"FROM assignments {where_clause} ORDER BY slug"
     )
 
     if csv_out:
@@ -607,7 +392,7 @@ def assignments(
 # ---------------------------------------------------------------------------
 
 
-@app.command(rich_help_panel="View Data")
+@app.command()
 def submissions(
     slug: str = typer.Argument("", help="Assignment slug to filter (or empty for all)"),
     save: str = typer.Option("", "--save", help="Save output as markdown file"),
@@ -616,21 +401,21 @@ def submissions(
     ),
     csv_out: str = typer.Option("", "--csv", help="Export as CSV file"),
 ) -> None:
-    """View submission status (student, assignment, on-time, late, score)."""
+    """View submission status via the unified v_submissions view."""
     from . import db, report
 
     conn = db.get_db()
     conditions = []
     if slug:
-        conditions.append(f"assignment_id LIKE '%{slug}%'")
+        conditions.append(f"assignment LIKE '%{slug}%'")
     if where:
         conditions.append(f"({where})")
     where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
     result = conn.sql(
-        f"SELECT student_id, assignment_id, source, submitted, late, "
+        f"SELECT student, assignment, source, submitted, late, "
         f"lateness_seconds, repo_name, commits_after_deadline, score, workflow_state "
-        f"FROM submissions {where_clause} ORDER BY assignment_id, student_id"
+        f"FROM v_submissions {where_clause} ORDER BY assignment, student"
     )
 
     if csv_out:
@@ -652,9 +437,7 @@ def submissions(
 def grades_callback(
     ctx: typer.Context,
     save: str = typer.Option("", "--save", help="Save output as markdown file"),
-    where: str = typer.Option(
-        "", "--where", help="SQL WHERE filter (e.g. --where \"source='github'\")"
-    ),
+    where: str = typer.Option("", "--where", help="SQL WHERE filter"),
     csv_out: str = typer.Option("", "--csv", help="Export as CSV file"),
 ) -> None:
     """Show the gradebook as a student x assignment matrix with computed grades."""
@@ -663,44 +446,42 @@ def grades_callback(
 
     from . import db, report
 
-    grades = db.load_grades()
-    if not grades:
+    conn = db.get_db()
+    try:
+        rows = conn.execute(
+            "SELECT student, assignment, display_grade FROM v_grades"
+        ).fetchall()
+    except Exception:
         console.print("[yellow]No grades. Run [bold]cass pull[/bold] first.[/yellow]")
         raise typer.Exit(code=1)
 
-    # Build matrix
+    if not rows:
+        console.print("[yellow]No grades. Run [bold]cass pull[/bold] first.[/yellow]")
+        raise typer.Exit(code=1)
+
     students_set: dict[str, None] = {}
     assignments_set: dict[str, None] = {}
     grade_map: dict[tuple[str, str], str] = {}
-    for g in grades:
-        students_set[g.student_id] = None
-        assignments_set[g.assignment_id] = None
-        grade_map[(g.student_id, g.assignment_id)] = g.grade
+    for student_name, assignment_slug, display_grade in rows:
+        students_set[student_name] = None
+        assignments_set[assignment_slug] = None
+        grade_map[(student_name, assignment_slug)] = display_grade
 
     assignment_ids = sorted(assignments_set)
     student_ids = sorted(students_set)
 
-    # Build display name mapping from DB
-    all_students = db.load_students(include_excluded=True)
-    id_to_name: dict[str, str] = {}
-    for s in all_students:
-        if s.handle_lower:
-            id_to_name[s.handle_lower] = s.display_name
-        id_to_name[s.identifier] = s.display_name
-
     headers = ["Student"] + assignment_ids
-    rows = []
+    matrix_rows = []
     for sid in student_ids:
-        display = id_to_name.get(sid, sid)
-        row = [display] + [grade_map.get((sid, aid), "-") for aid in assignment_ids]
-        rows.append(row)
+        row = [sid] + [grade_map.get((sid, aid), "-") for aid in assignment_ids]
+        matrix_rows.append(row)
 
     if csv_out:
-        report.write_csv_file(csv_out, headers=headers, rows=rows)
+        report.write_csv_file(csv_out, headers=headers, rows=matrix_rows)
     elif save:
-        report.save_markdown(save, "Grades", headers, rows)
+        report.save_markdown(save, "Grades", headers, matrix_rows)
     else:
-        report.render_list(headers, rows, title="Grades")
+        report.render_list(headers, matrix_rows, title="Grades")
 
 
 @grades_app.command()
@@ -710,62 +491,42 @@ def push(
     ),
 ) -> None:
     """Sync grades to Canvas LMS (dry-run by default, use --post to submit)."""
-    from . import canvas as canvas_mod
-    from . import db
-    from .config import get_config
-    from .models.grading import numeric_grade
-
-    _require_classroom()
-    _require_canvas()
-    cfg = get_config()
-
-    students = db.load_students()
-    assignments = db.load_assignments()
-    grades = db.load_grades()
-
-    if not grades:
-        console.print("[yellow]No grades to push.[/yellow]")
-        raise typer.Exit(code=1)
-
-    # Build mappings
-    gh_to_canvas: dict[str, int] = canvas_mod.mapping_from_roster(students)
-    grade_map: dict[tuple[str, str], str] = {
-        (g.student_id, g.assignment_id): g.grade for g in grades
-    }
-
-    # Match GH assignments to Canvas assignments by token overlap
-    gh_assignments = [a for a in assignments if a.source == "github"]
-    canvas_assignments = [a for a in assignments if a.source == "canvas"]
+    from collections import defaultdict
 
     from rich.table import Table
 
-    table = Table(title="Grade Sync Preview", show_edge=False, pad_edge=False)
-    table.add_column("GH Assignment")
+    from . import canvas as canvas_mod
+    from . import db
+    from .config import get_config
+
+    _require_canvas()
+    cfg = get_config()
+
+    canvas_grades = db.load_canvas_grades()
+    if not canvas_grades:
+        console.print("[yellow]No Canvas grades to push.[/yellow]")
+        raise typer.Exit(code=1)
+
+    by_assignment: dict[int, list] = defaultdict(list)
+    for g in canvas_grades:
+        by_assignment[g.canvas_assignment_id].append(g)
+
+    assignments = db.load_assignments()
+    aid_to_title = {
+        a.canvas_assignment_id: a.title for a in assignments if a.canvas_assignment_id
+    }
+
+    table = Table(title="Grade Push Preview", show_edge=False, pad_edge=False)
     table.add_column("Canvas Assignment")
     table.add_column("Canvas ID", justify="right")
     table.add_column("Grades")
 
-    matched_pairs: list[tuple] = []
-    for gh_a in gh_assignments:
-        # Find best Canvas match by token overlap
-        gh_tokens = set(gh_a.id.replace("-", " ").split())
-        best_match = None
-        best_overlap = 0
-        for cv_a in canvas_assignments:
-            cv_tokens = set(cv_a.id.replace("-", " ").split())
-            overlap = len(gh_tokens & cv_tokens)
-            if overlap > best_overlap:
-                best_overlap = overlap
-                best_match = cv_a
-
-        if best_match and best_overlap > 0:
-            grade_count = sum(
-                1 for s in students if (s.handle_lower, gh_a.id) in grade_map
-            )
-            table.add_row(
-                gh_a.id, best_match.id, str(best_match.canvas_id), str(grade_count)
-            )
-            matched_pairs.append((gh_a, best_match))
+    for aid, grades in sorted(by_assignment.items()):
+        title = aid_to_title.get(aid, f"Assignment {aid}")
+        pushable = [
+            g for g in grades if g.posted_grade and g.posted_grade not in ("-", "?")
+        ]
+        table.add_row(title, str(aid), str(len(pushable)))
 
     console.print()
     console.print(table)
@@ -780,35 +541,27 @@ def push(
     total_posted = 0
     total_skipped = 0
     failed: list[str] = []
-    for gh_a, cv_a in matched_pairs:
-        for student in students:
-            grade_str = grade_map.get((student.handle_lower, gh_a.id))
-            if not grade_str:
-                total_skipped += 1
-                continue
-
-            numeric = numeric_grade(grade_str)
-            if numeric is None:
-                total_skipped += 1
-                continue
-
-            canvas_id = gh_to_canvas.get(student.github_username)
-            if not canvas_id:
-                total_skipped += 1
-                continue
-
-            ok = canvas_mod.push_grade(
-                cfg.canvas_course_id, cv_a.canvas_id, canvas_id, str(int(numeric))
+    for g in canvas_grades:
+        if not g.posted_grade or g.posted_grade in ("-", "?"):
+            total_skipped += 1
+            continue
+        ok = canvas_mod.push_grade(
+            cfg.canvas_course_id,
+            g.canvas_assignment_id,
+            g.canvas_user_id,
+            g.posted_grade,
+        )
+        if ok:
+            total_posted += 1
+        else:
+            failed.append(
+                f"user={g.canvas_user_id} / assignment={g.canvas_assignment_id}"
             )
-            if ok:
-                total_posted += 1
-            else:
-                failed.append(f"{student.identifier} / {gh_a.id}")
 
     if failed:
         console.print(f"[red]Failed to post {len(failed)} grade(s):[/red]")
         for entry in failed:
-            console.print(f"  [red]• {entry}[/red]")
+            console.print(f"  [red]- {entry}[/red]")
     console.print(
         f"[green]Posted {total_posted} grades, skipped {total_skipped}.[/green]"
     )
@@ -819,7 +572,7 @@ def push(
 # ---------------------------------------------------------------------------
 
 
-@app.command(rich_help_panel="Setup")
+@app.command()
 def fetch(
     slug: str = typer.Argument(..., help="Assignment slug (or 'all')"),
     force: bool = typer.Option(False, "--force", help="Re-download existing files"),
@@ -832,7 +585,7 @@ def fetch(
     _require_classroom()
     students = db.load_students()
     assignments = db.load_assignments()
-    gh_assignments = [a for a in assignments if a.source == "github"]
+    gh_assignments = [a for a in assignments if a.gh_assignment_slug]
 
     if slug == "all":
         targets = gh_assignments
@@ -843,7 +596,7 @@ def fetch(
             raise typer.Exit(code=1)
 
     for target in targets:
-        console.print(f"\n[bold]{target.slug}[/bold]")
+        console.print(f"\n[bold]{target.gh_assignment_slug}[/bold]")
         fetch_mod.fetch_assignment(
             target,
             students,
@@ -855,11 +608,11 @@ def fetch(
 
 
 # ---------------------------------------------------------------------------
-# cass drop — wipe the database
+# cass drop
 # ---------------------------------------------------------------------------
 
 
-@app.command(rich_help_panel="Database")
+@app.command()
 def drop(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
 ) -> None:
@@ -882,30 +635,34 @@ def drop(
 
 
 # ---------------------------------------------------------------------------
-# cass query — raw DuckDB SQL
+# cass query
 # ---------------------------------------------------------------------------
 
 
 def _run_repl() -> None:
-    """Launch interactive DuckDB REPL (CLI binary or Python fallback)."""
     import shutil
     import subprocess
 
     from . import db, report
 
     db_file = db.db_path()
+    tables = (
+        "students, assignments, gh_students, canvas_students, "
+        "gh_assignments, canvas_assignments, gh_submissions, "
+        "canvas_submissions, gh_grades, canvas_grades"
+    )
 
-    # Prefer the native duckdb CLI if available
     if shutil.which("duckdb"):
         console.print(f"[bold]cass DuckDB REPL[/bold] — {db_file}")
-        console.print("Tables: students, assignments, submissions, grades, api_cache")
+        console.print(f"Tables: {tables}")
+        console.print("Views: v_submissions, v_grades")
         console.print("Type .quit to exit\n")
         subprocess.run(["duckdb", db_file])
         return
 
-    # Python-based fallback
     console.print(f"[bold]cass DuckDB REPL[/bold] — {db_file}")
-    console.print("Tables: students, assignments, submissions, grades, api_cache")
+    console.print(f"Tables: {tables}")
+    console.print("Views: v_submissions, v_grades")
     console.print("Type .quit to exit\n")
     while True:
         try:
@@ -927,7 +684,7 @@ def _run_repl() -> None:
             console.print(f"[red]{e}[/red]")
 
 
-@app.command(rich_help_panel="Database")
+@app.command()
 def query(
     sql: str = typer.Argument(
         "", help="SQL query to execute (empty for interactive REPL)"
@@ -948,13 +705,25 @@ def query(
         report.render_table(result)
 
 
-_VALID_TABLES = ("students", "assignments", "submissions", "grades")
+_VALID_TABLES = (
+    "students",
+    "assignments",
+    "gh_students",
+    "canvas_students",
+    "gh_assignments",
+    "canvas_assignments",
+    "gh_submissions",
+    "canvas_submissions",
+    "gh_grades",
+    "canvas_grades",
+)
 
 
-@app.command(name="export", rich_help_panel="Database")
+@app.command(name="export")
 def export_table(
     table: str = typer.Argument(
-        ..., help="Table to export (students, assignments, submissions, grades)"
+        ...,
+        help="Table to export (students, assignments, gh_grades, canvas_grades, etc.)",
     ),
     csv_out: str = typer.Option("", "--csv", help="Export as CSV file"),
     markdown_out: str = typer.Option(
@@ -981,7 +750,7 @@ def export_table(
         report.write_csv_file(f"{table}.csv", relation=result)
 
 
-@app.command(name="import", rich_help_panel="Database")
+@app.command(name="import")
 def import_csv(
     file: str = typer.Argument(..., help="CSV file to import"),
     table: str = typer.Option(
@@ -1010,13 +779,18 @@ def import_csv(
         console.print("[yellow]CSV file is empty.[/yellow]")
         return
 
-    # Auto-detect table from column headers
     if not table:
         _TABLE_SIGNATURES = {
-            "students": {"identifier"},
-            "grades": {"student_id", "assignment_id", "grade"},
-            "submissions": {"student_id", "assignment_id", "source", "submitted"},
-            "assignments": {"id", "source", "title"},
+            "students": {"canvas_id", "name"},
+            "canvas_grades": {"canvas_user_id", "canvas_assignment_id"},
+            "gh_grades": {"github_username", "assignment_slug", "grade"},
+            "gh_submissions": {"github_username", "assignment_slug", "submitted"},
+            "canvas_submissions": {
+                "canvas_user_id",
+                "canvas_assignment_id",
+                "submitted",
+            },
+            "assignments": {"slug", "title"},
         }
         for tbl, required in _TABLE_SIGNATURES.items():
             if required.issubset(headers):
@@ -1033,9 +807,7 @@ def import_csv(
         raise typer.Exit(code=1)
 
     conn = db.get_db()
-    # Get table columns from schema
     table_cols = [col[0] for col in conn.execute(f"DESCRIBE {table}").fetchall()]
-    # Only use columns present in both CSV and table
     import_cols = [c for c in table_cols if c in headers]
 
     if not import_cols:
@@ -1053,7 +825,7 @@ def import_csv(
     console.print(f"[green]Imported {len(rows)} rows into {table}.[/green]")
 
 
-@app.command(rich_help_panel="Database")
+@app.command()
 def view() -> None:
     """Open the database in Dataflare (GUI viewer)."""
     import subprocess
@@ -1067,7 +839,6 @@ def view() -> None:
         )
         raise typer.Exit(code=1)
 
-    # Check if Dataflare is installed
     result = subprocess.run(
         ["open", "-Ra", "Dataflare"], capture_output=True, text=True
     )
@@ -1090,9 +861,9 @@ def db_callback(ctx: typer.Context) -> None:
 
 @db_app.command()
 def clean() -> None:
-    """Drop api_cache contents to shrink the .db for git commits."""
-    from . import db
+    """Clear API cache to keep the shared DB lean for git commits."""
+    from . import cache
 
-    count = db.cache_count()
-    db.cache_clear()
+    count = cache.cache_count()
+    cache.cache_clear()
     console.print(f"[green]Cleared {count} cache entries.[/green]")

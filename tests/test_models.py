@@ -3,16 +3,17 @@
 import pytest
 
 from cass.models import (
-    Assignment,
+    CanvasSubmission,
+    GHSubmission,
     Student,
-    Submission,
-    compute_grade,
+    compute_canvas_grade,
+    compute_gh_grade,
     numeric_grade,
 )
 from cass.models.grading import _format_lateness
 
 
-# --- compute_grade: GitHub ---
+# --- compute_gh_grade ---
 
 
 @pytest.mark.parametrize(
@@ -37,7 +38,7 @@ from cass.models.grading import _format_lateness
         "on-time-3-commits",
     ],
 )
-def test_compute_grade_github(
+def test_compute_gh_grade(
     submitted,
     late,
     lateness_seconds,
@@ -45,22 +46,20 @@ def test_compute_grade_github(
     expected_grade,
     expected_numeric,
 ):
-    sub = Submission(
-        student_id="alice",
-        assignment_id="hw-01",
-        source="github",
+    sub = GHSubmission(
+        github_username="alice",
+        assignment_slug="hw-01",
         submitted=submitted,
         late=late,
         lateness_seconds=lateness_seconds,
         commits_after_deadline=commits_after_deadline,
     )
-    assign = Assignment(id="hw-01", source="github", title="HW 01", points_possible=1.0)
-    g = compute_grade(sub, assign)
+    g = compute_gh_grade(sub)
     assert g.grade == expected_grade
     assert g.numeric_score == expected_numeric
 
 
-# --- compute_grade: Canvas ---
+# --- compute_canvas_grade ---
 
 
 @pytest.mark.parametrize(
@@ -77,42 +76,31 @@ def test_compute_grade_github(
     ],
     ids=["not-submitted", "no-score", "graded-42-50", "perfect-50-50"],
 )
-def test_compute_grade_canvas(
+def test_compute_canvas_grade(
     submitted, score, points_possible, expected_grade, expected_numeric
 ):
-    sub = Submission(
-        student_id="alice",
-        assignment_id="quiz-1",
-        source="canvas",
+    sub = CanvasSubmission(
+        canvas_user_id=100,
+        canvas_assignment_id=42,
         submitted=submitted,
         score=score,
         workflow_state="graded" if score is not None else "",
     )
-    assign = Assignment(
-        id="quiz-1",
-        source="canvas",
-        title="Quiz 1",
-        points_possible=points_possible,
-    )
-    g = compute_grade(sub, assign)
-    assert g.grade == expected_grade
-    assert g.numeric_score == expected_numeric
+    g = compute_canvas_grade(sub, points_possible)
+    assert g.posted_grade == expected_grade
+    assert g.score == expected_numeric
 
 
-def test_compute_grade_canvas_no_points():
-    sub = Submission(
-        student_id="alice",
-        assignment_id="survey",
-        source="canvas",
+def test_compute_canvas_grade_no_points():
+    sub = CanvasSubmission(
+        canvas_user_id=100,
+        canvas_assignment_id=42,
         submitted=True,
         score=10.0,
     )
-    assign = Assignment(
-        id="survey", source="canvas", title="Survey", points_possible=0.0
-    )
-    g = compute_grade(sub, assign)
-    assert g.grade == "10"
-    assert g.numeric_score == 10.0
+    g = compute_canvas_grade(sub, 0.0)
+    assert g.posted_grade == "10"
+    assert g.score == 10.0
 
 
 # --- _format_lateness ---
@@ -169,26 +157,35 @@ def test_numeric_grade(grade_str, expected):
 
 
 @pytest.mark.parametrize(
-    "identifier, name, github_username, canvas_id, expected",
+    "canvas_id, name, github_username, expected",
     [
-        ("alice", "", "", "", "alice"),
-        ("", "Alice Smith", "", "", "Alice Smith"),
-        ("", "", "alice-gh", "", "alice-gh"),
-        ("", "", "", "12345", "12345"),
-        ("", "", "", "", ""),
+        (100, "Alice Smith", "", "Alice Smith"),
+        (100, "", "alice-gh", "alice-gh"),
+        (100, "", "", "100"),
     ],
-    ids=["identifier", "name-fallback", "github-fallback", "canvas-fallback", "empty"],
+    ids=["name", "github-fallback", "canvas-id-fallback"],
 )
-def test_student_display_name(identifier, name, github_username, canvas_id, expected):
+def test_student_display_name(canvas_id, name, github_username, expected):
     s = Student(
-        identifier=identifier,
+        canvas_id=canvas_id,
         name=name,
         github_username=github_username,
-        canvas_id=canvas_id,
     )
     assert s.display_name == expected
 
 
 def test_student_handle_lower():
-    s = Student(identifier="alice", github_username="AliceSmith")
+    s = Student(canvas_id=100, github_username="AliceSmith")
     assert s.handle_lower == "alicesmith"
+
+
+def test_gh_submission_with_assignment_slug():
+    sub = GHSubmission(
+        github_username="alice",
+        assignment_slug="final-project",
+        submitted=True,
+    )
+    new = sub.with_assignment_slug("proposal")
+    assert new.assignment_slug == "proposal"
+    assert new.github_username == "alice"
+    assert new.submitted is True

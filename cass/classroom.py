@@ -17,14 +17,13 @@ from . import gh
 from .config import get_config
 from .github_client import GitHubClient
 from .models import (
-    Assignment,
     GHAcceptedAssignment,
     GHAssignment,
     GHCommit,
     GHProfile,
     GHStudentInfo,
+    GHSubmission,
     Student,
-    Submission,
 )
 
 
@@ -33,7 +32,7 @@ from .models import (
 # ---------------------------------------------------------------------------
 
 
-async def _resolve_gh_id(client: GitHubClient, assignment: Assignment) -> int:
+async def _resolve_gh_id(client: GitHubClient, slug: str) -> int:
     """Resolve assignment slug to GH Classroom numeric ID."""
     cfg = get_config()
     data = await client.get_cached(
@@ -43,26 +42,17 @@ async def _resolve_gh_id(client: GitHubClient, assignment: Assignment) -> int:
     )
     items = msgspec.convert(data, list[GHAssignment])
     for a in items:
-        if a.slug == assignment.slug:
+        if a.slug == slug:
             return a.id
-    raise RuntimeError(f"Assignment {assignment.slug} not found in GH Classroom API")
+    raise RuntimeError(f"Assignment {slug} not found in GH Classroom API")
 
 
 async def fetch_assignments(
     client: GitHubClient,
     ttl_hours: float = 6,
     force_refresh: bool = False,
-) -> list[Assignment]:
-    """Fetch all assignments from GitHub Classroom.
-
-    Args:
-        client: Async GitHub API client.
-        ttl_hours: Cache TTL in hours.
-        force_refresh: Bypass cache if True.
-
-    Returns:
-        Domain ``Assignment`` objects sorted by slug ID.
-    """
+) -> list[GHAssignment]:
+    """Fetch all assignments from GitHub Classroom (returns API types)."""
     cfg = get_config()
     data = await client.get_cached(
         f"/classrooms/{cfg.classroom_id}/assignments",
@@ -70,26 +60,7 @@ async def fetch_assignments(
         force_refresh=force_refresh,
         paginate=True,
     )
-    items = msgspec.convert(data, list[GHAssignment])
-    assignments = []
-    for a in items:
-        deadline = None
-        if a.deadline:
-            deadline = datetime.fromisoformat(a.deadline.replace("Z", "+00:00"))
-        assignments.append(
-            Assignment(
-                id=a.slug,
-                source="github",
-                title=a.title,
-                slug=a.slug,
-                deadline=deadline,
-                points_possible=1.0,
-                accepted=a.accepted,
-                submissions_count=a.submissions,
-                passing_count=a.passing,
-            )
-        )
-    return sorted(assignments, key=lambda a: a.id)
+    return msgspec.convert(data, list[GHAssignment])
 
 
 async def fetch_all_students(
@@ -97,26 +68,14 @@ async def fetch_all_students(
     ttl_hours: float = 6,
     force_refresh: bool = False,
 ) -> list[GHStudentInfo]:
-    """Aggregate unique students across all assignments.
-
-    Iterates every assignment's accepted list to discover students, then
-    fetches GitHub profiles in parallel to fill in name/email.
-
-    Args:
-        client: Async GitHub API client.
-        ttl_hours: Cache TTL in hours.
-        force_refresh: Bypass cache if True.
-
-    Returns:
-        De-duplicated students sorted by login (lowercase).
-    """
+    """Aggregate unique students across all assignments."""
     assignments = await fetch_assignments(
         client, ttl_hours=ttl_hours, force_refresh=force_refresh
     )
     seen: dict[str, GHStudentInfo] = {}
 
     for assignment in assignments:
-        gh_id = await _resolve_gh_id(client, assignment)
+        gh_id = await _resolve_gh_id(client, assignment.slug)
         data = await client.get_cached(
             f"/assignments/{gh_id}/accepted_assignments",
             ttl_hours=ttl_hours,
@@ -154,29 +113,15 @@ async def fetch_all_students(
 
 async def fetch_submissions(
     client: GitHubClient,
-    assignment: Assignment,
+    assignment_slug: str,
+    assignment_deadline: datetime | None,
     roster: list[Student],
     ttl_hours: float = 6,
     force_refresh: bool = False,
-) -> list[Submission]:
-    """Fetch per-student submission data for a GitHub Classroom assignment.
-
-    For each student, checks commit timestamps against the deadline to
-    determine on-time/late status. Per-student commit checks are
-    parallelized (up to ``MAX_CONCURRENCY``).
-
-    Args:
-        client: Async GitHub API client.
-        assignment: The assignment to fetch submissions for.
-        roster: Students to check (skips students without repos).
-        ttl_hours: Cache TTL in hours.
-        force_refresh: Bypass cache if True.
-
-    Returns:
-        Submissions sorted by student_id.
-    """
+) -> list[GHSubmission]:
+    """Fetch per-student submission data for a GitHub Classroom assignment."""
     cfg = get_config()
-    gh_id = await _resolve_gh_id(client, assignment)
+    gh_id = await _resolve_gh_id(client, assignment_slug)
     data = await client.get_cached(
         f"/assignments/{gh_id}/accepted_assignments",
         ttl_hours=ttl_hours,
@@ -185,7 +130,7 @@ async def fetch_submissions(
     )
     accepted = msgspec.convert(data, list[GHAcceptedAssignment])
 
-    # Build per-student info from accepted_assignments (includes free fields)
+    # Build per-student info from accepted_assignments
     student_repo_info: dict[str, dict] = {}
     for entry in accepted:
         repo_name = entry.repository.full_name if entry.repository else ""
@@ -200,13 +145,15 @@ async def fetch_submissions(
                     "grade": entry.grade or "",
                 }
 
-    async def check_student(student: Student) -> Submission:
-        info = student_repo_info.get(student.handle_lower)
+    async def check_student(student: Student) -> GHSubmission | None:
+        if not student.github_username:
+            return None
+        handle = student.handle_lower
+        info = student_repo_info.get(handle)
         if not info:
-            return Submission(
-                student_id=student.handle_lower or student.identifier,
-                assignment_id=assignment.id,
-                source="github",
+            return GHSubmission(
+                github_username=handle,
+                assignment_slug=assignment_slug,
                 submitted=False,
             )
 
@@ -218,12 +165,11 @@ async def fetch_submissions(
         late = False
         lateness_seconds = 0
 
-        if assignment.deadline:
-            # If commit_count is 0, no commits exist — skip API calls
+        if assignment_deadline:
             if commit_count == 0:
                 on_time = False
             else:
-                dl = assignment.deadline.isoformat()
+                dl = assignment_deadline.isoformat()
                 before = await client.get_cached(
                     f"/repos/{cfg.org}/{repo_short}/commits?until={dl}&per_page=1",
                     ttl_hours=ttl_hours,
@@ -245,16 +191,14 @@ async def fetch_submissions(
                     date_str = after[0].commit.committer.date
                     if date_str:
                         dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
-                        delta = dt - assignment.deadline
+                        delta = dt - assignment_deadline
                         lateness_seconds = max(0, int(delta.total_seconds()))
         else:
-            # No deadline: commit_count > 0 means submitted — no API call needed
             on_time = commit_count > 0
 
-        return Submission(
-            student_id=student.handle_lower or student.identifier,
-            assignment_id=assignment.id,
-            source="github",
+        return GHSubmission(
+            github_username=handle,
+            assignment_slug=assignment_slug,
             submitted=submitted,
             late=late,
             lateness_seconds=lateness_seconds,
@@ -265,34 +209,22 @@ async def fetch_submissions(
             gh_autograder_score=info["grade"],
         )
 
-    submissions = await asyncio.gather(*(check_student(s) for s in roster))
-    return sorted(submissions, key=lambda s: s.student_id)
+    results = await asyncio.gather(*(check_student(s) for s in roster))
+    submissions = [s for s in results if s is not None]
+    return sorted(submissions, key=lambda s: s.github_username)
 
 
 async def fetch_file_submissions(
     client: GitHubClient,
-    assignment: Assignment,
+    assignment_slug: str,
     roster: list[Student],
     file_path: str,
     ttl_hours: float = 6,
     force_refresh: bool = False,
-) -> list[Submission]:
-    """Check if a specific file exists in each student's repo (parallel).
-
-    Args:
-        client: Async GitHub API client.
-        assignment: The assignment whose repos to check.
-        roster: Students to check.
-        file_path: Path within the repo to look for (e.g. ``pdfs/proposal.pdf``).
-        ttl_hours: Cache TTL in hours.
-        force_refresh: Bypass cache if True.
-
-    Returns:
-        Submissions sorted by student_id, with ``submitted=True`` if
-        the file exists.
-    """
+) -> list[GHSubmission]:
+    """Check if a specific file exists in each student's repo (parallel)."""
     cfg = get_config()
-    gh_id = await _resolve_gh_id(client, assignment)
+    gh_id = await _resolve_gh_id(client, assignment_slug)
     data = await client.get_cached(
         f"/assignments/{gh_id}/accepted_assignments",
         ttl_hours=ttl_hours,
@@ -309,13 +241,15 @@ async def fetch_file_submissions(
             if handle and repo_name:
                 repo_by_handle[handle] = repo_name.split("/")[-1]
 
-    async def check_student(student: Student) -> Submission:
-        repo_short = repo_by_handle.get(student.handle_lower)
+    async def check_student(student: Student) -> GHSubmission | None:
+        if not student.github_username:
+            return None
+        handle = student.handle_lower
+        repo_short = repo_by_handle.get(handle)
         if not repo_short:
-            return Submission(
-                student_id=student.handle_lower or student.identifier,
-                assignment_id=assignment.id,
-                source="github",
+            return GHSubmission(
+                github_username=handle,
+                assignment_slug=assignment_slug,
                 submitted=False,
             )
 
@@ -324,16 +258,16 @@ async def fetch_file_submissions(
             ttl_hours=ttl_hours,
             force_refresh=force_refresh,
         )
-        return Submission(
-            student_id=student.handle_lower or student.identifier,
-            assignment_id=assignment.id,
-            source="github",
+        return GHSubmission(
+            github_username=handle,
+            assignment_slug=assignment_slug,
             submitted=file_exists,
             repo_name=f"{cfg.org}/{repo_short}",
         )
 
-    submissions = await asyncio.gather(*(check_student(s) for s in roster))
-    return sorted(submissions, key=lambda s: s.student_id)
+    results = await asyncio.gather(*(check_student(s) for s in roster))
+    submissions = [s for s in results if s is not None]
+    return sorted(submissions, key=lambda s: s.github_username)
 
 
 # ---------------------------------------------------------------------------
@@ -341,7 +275,7 @@ async def fetch_file_submissions(
 # ---------------------------------------------------------------------------
 
 
-def _resolve_gh_id_sync(assignment: Assignment) -> int:
+def _resolve_gh_id_sync(slug: str) -> int:
     """Resolve assignment slug to GH Classroom numeric ID (sync, for fetch.py)."""
     cfg = get_config()
     data = gh.api_cached(
@@ -352,29 +286,18 @@ def _resolve_gh_id_sync(assignment: Assignment) -> int:
     )
     items = msgspec.convert(data, list[GHAssignment])
     for a in items:
-        if a.slug == assignment.slug:
+        if a.slug == slug:
             return a.id
-    raise RuntimeError(f"Assignment {assignment.slug} not found in GH Classroom API")
+    raise RuntimeError(f"Assignment {slug} not found in GH Classroom API")
 
 
 def build_repo_map(
-    assignment: Assignment,
+    assignment_slug: str,
     ttl_hours: float = 6,
     force_refresh: bool = False,
 ) -> dict[str, str]:
-    """Return ``{handle_lower: repo_short_name}`` for an assignment.
-
-    Sync version used by ``fetch.py`` for file downloads.
-
-    Args:
-        assignment: Assignment to look up repos for.
-        ttl_hours: Cache TTL in hours.
-        force_refresh: Bypass cache if True.
-
-    Returns:
-        Mapping from lowercase GitHub handle to short repo name.
-    """
-    gh_id = _resolve_gh_id_sync(assignment)
+    """Return ``{handle_lower: repo_short_name}`` for an assignment."""
+    gh_id = _resolve_gh_id_sync(assignment_slug)
     data = gh.api_cached(
         f"/assignments/{gh_id}/accepted_assignments",
         ttl_hours=ttl_hours,

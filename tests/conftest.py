@@ -21,5 +21,8 @@ def db_conn(monkeypatch):
 def project_dir(tmp_path):
     """Temp directory with a minimal cass.toml."""
     toml = tmp_path / "cass.toml"
-    toml.write_text('[classroom]\nid = 42\norg = "test-org"\n')
+    toml.write_text(
+        '[classroom]\nid = 42\norg = "test-org"\n\n'
+        '[canvas]\nbase_url = "https://canvas.example.com"\ncourse_id = 1\n'
+    )
     return tmp_path

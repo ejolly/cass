@@ -147,7 +147,7 @@ cass canvas sync --apply             # apply config-as-data sync
 ### Database tools
 
 ```bash
-cass query "SELECT * FROM students WHERE canvas_id != ''"
+cass query "SELECT * FROM students WHERE github_username IS NOT NULL"
 cass query                    # interactive DuckDB REPL
 cass view                     # open cass.duckdb in Dataflare (GUI viewer)
 ```
@@ -175,11 +175,11 @@ cass query   → direct SQL access for custom analysis
 
 When both `[classroom]` and `[canvas]` are configured, `cass pull` will:
 
-1. Discover students from GitHub Classroom accepted assignments
-2. Fetch the Canvas course roster
+1. Fetch the Canvas course roster (authoritative source of truth for students)
+2. Discover GitHub Classroom students from accepted assignments
 3. Auto-match GitHub ↔ Canvas students by name (with interactive resolution for ambiguous cases)
-4. Store both GitHub and Canvas assignments/submissions in a unified schema
-5. `cass grades push` maps GitHub assignment grades to their Canvas counterparts by name-token overlap
+4. Store source data in separate tables (`gh_*`, `canvas_*`) and merge into unified master tables
+5. `cass grades push` syncs pre-computed Canvas grades directly — no mapping needed at push time
 
 ### Grading logic
 
@@ -213,46 +213,67 @@ When both `[classroom]` and `[canvas]` are configured, `cass pull` will:
 | `canvas_api.py` | Canvas HTTP client — typed `CanvasClient`, retry transport, token management |
 | `github_client.py` | Async httpx GitHub API client with caching and concurrency control |
 | `gh.py` | Subprocess wrapper for `gh api` (used by fetch.py) |
-| `db.py` | DuckDB database — schema, CRUD, cache, raw queries |
+| `db.py` | DuckDB database — schema, CRUD for all tables, raw queries |
+| `cache.py` | API response cache in separate `.cass_cache.duckdb` file |
 | `fetch.py` | Download student files from GitHub repos |
 | `report.py` | Output formatting — Rich tables, CSV, and markdown |
 | `models/` | msgspec.Struct types split into domain, github_api, canvas_api, grading |
 
 ## Database schema
 
-The `cass.duckdb` file contains these tables (schema version 5):
+The `cass.duckdb` file contains these tables (schema version 6). API cache lives in a separate `.cass_cache.duckdb` file to keep the shared DB lean.
 
-| Table | Description | Key columns |
+**Source tables** (raw data from each platform):
+
+| Table | Description | Primary key |
 |-------|-------------|-------------|
-| `students` | Course roster | `identifier`, `github_username`, `canvas_id`, `excluded` |
-| `assignments` | Unified assignment metadata | `id` (PK), `source`, `title`, `deadline`, `points_possible` |
-| `submissions` | Per-student submission data | `(student_id, assignment_id)` PK, `submitted`, `late`, `score` |
-| `grades` | Computed/manual grades | `(student_id, assignment_id)` PK, `grade`, `numeric_score` |
-| `api_cache` | Ephemeral API response cache | `endpoint` (PK), `data`, `fetched_at` |
-| `meta` | Schema version tracking | `key`, `value` |
+| `gh_students` | GitHub Classroom students | `github_username` |
+| `canvas_students` | Canvas enrolled students | `canvas_id` |
+| `gh_assignments` | GitHub Classroom assignments | `slug` |
+| `canvas_assignments` | Canvas assignments | `canvas_id` |
+| `gh_submissions` | GitHub submission records | `(github_username, assignment_slug)` |
+| `canvas_submissions` | Canvas submission records | `(canvas_user_id, canvas_assignment_id)` |
+
+**Master tables** (unified joins with all metadata):
+
+| Table | Description | Primary key |
+|-------|-------------|-------------|
+| `students` | Unified roster (Canvas-authoritative) | `canvas_id`, `github_username` UNIQUE |
+| `assignments` | Unified assignment mapping | `slug`, `gh_assignment_slug` UNIQUE, `canvas_assignment_id` UNIQUE |
+
+**Grade tables**:
+
+| Table | Description | Primary key |
+|-------|-------------|-------------|
+| `gh_grades` | GitHub computed grades | `(github_username, assignment_slug)` |
+| `canvas_grades` | Canvas grades (ready for push) | `(canvas_user_id, canvas_assignment_id)` |
+
+**Views**: `v_submissions` and `v_grades` join source data through master tables for unified querying.
 
 Example queries:
 
 ```sql
--- Students matched to Canvas
-SELECT identifier, github_username, canvas_id FROM students WHERE canvas_id != '';
+-- Students with GitHub links
+SELECT name, github_username, canvas_id FROM students WHERE github_username IS NOT NULL;
 
--- Late submissions
-SELECT student_id, assignment_id, lateness_seconds FROM submissions WHERE late = true;
+-- Late GitHub submissions
+SELECT github_username, assignment_slug, lateness_seconds FROM gh_submissions WHERE late = true;
 
--- Average score per Canvas assignment
-SELECT assignment_id, AVG(numeric_score) FROM grades WHERE source = 'auto' GROUP BY 1;
+-- Unified grades via view
+SELECT student, assignment, display_grade FROM v_grades ORDER BY student, assignment;
+
+-- Canvas grades ready for push
+SELECT canvas_user_id, canvas_assignment_id, posted_grade FROM canvas_grades;
 ```
 
 ## Collaborative workflow
 
-`cass.duckdb` is the shared source of truth — commit it to git. Clear the `api_cache` table before committing to keep the file small.
+`cass.duckdb` is the shared source of truth — commit it to git. API cache lives in a separate `.cass_cache.duckdb` file (gitignored), so the shared DB stays lean.
 
 ```bash
 # TA grades hw-02, pushes
 git pull
 cass pull --grades
-cass db clean                 # clear api_cache (~2MB of API responses)
 git add cass.duckdb && git commit -m "grade hw-02" && git push
 
 # Instructor pulls, reviews, pushes to Canvas
@@ -267,7 +288,6 @@ For manual edits (adjustments, overrides):
 cass export grades --csv grades.csv
 # Edit in Excel/Numbers
 cass import grades.csv
-cass db clean
 git add cass.duckdb && git commit -m "manual grade adjustments" && git push
 ```
 
