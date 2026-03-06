@@ -128,22 +128,22 @@ Python package (`cass/`) with Typer CLI, DuckDB storage, msgspec models, and Ric
 | File | Purpose |
 |------|---------|
 | `cass/__init__.py` | Package version |
-| `cass/models/` | msgspec.Struct types split into domain.py, github_api.py, canvas_api.py, grading.py |
 | `cass/config.py` | Config discovery (finds `cass.toml`), `has_classroom`/`has_canvas` properties |
-| `cass/cli.py` | Typer app (status, init, students, assignments, submissions, grades, fetch, backup, restore, query, db, export, import) |
-| `cass/cli_canvas.py` | `cass canvas` subcommands: browse and modify Canvas course content |
-| `cass/github_client.py` | Async httpx GitHub API client with caching and concurrency control |
-| `cass/pull.py` | Pull orchestration: students, assignments, submissions, grades, fetch phases |
 | `cass/db.py` | DuckDB database: schema, CRUD for all tables, raw query |
 | `cass/cache.py` | API response cache in separate `.cass_cache.duckdb` file |
-| `cass/gh.py` | Subprocess wrapper for `gh api` with inline cache |
-| `cass/classroom.py` | GH Classroom API: typed response structs, assignments, submissions, student discovery |
-| `cass/canvas.py` | Canvas business logic: roster matching, name normalization, grade sync |
-| `cass/canvas_api.py` | Canvas HTTP client: typed `CanvasClient`, retry transport, token management |
-| `cass/egrades.py` | eGrades CSV export: grading scheme conversion, UCSD format |
-| `cass/fetch.py` | Download student files from repos |
+| `cass/pull.py` | Pull orchestration: students, assignments, submissions, grades, fetch phases |
+| `cass/models/` | msgspec.Struct types split into domain.py, github_api.py, canvas_api.py, grading.py |
+| `cass/cli/__init__.py` | Typer app (status, init, students, assignments, submissions, grades, fetch, backup, restore, query, db, export, import) |
+| `cass/cli/canvas.py` | `cass canvas` subcommands: browse and modify Canvas course content |
+| `cass/cli/report.py` | Rich tables, CSV, markdown output formatting |
+| `cass/github/client.py` | Async httpx GitHub API client with caching and concurrency control |
+| `cass/github/gh.py` | Subprocess wrapper for `gh api` with inline cache |
+| `cass/github/classroom.py` | GH Classroom API: typed response structs, assignments, submissions, student discovery |
+| `cass/github/fetch.py` | Download student files from repos |
+| `cass/canvas/client.py` | Canvas HTTP client: typed `CanvasClient`, retry transport, token management |
+| `cass/canvas/matching.py` | Canvas business logic: roster matching, name normalization, grade sync |
+| `cass/canvas/egrades.py` | eGrades CSV export: grading scheme conversion, UCSD format |
 | `cass/viewer/` | Browser-based DB viewer: stdlib HTTP server + AG Grid frontend |
-| `cass/report.py` | Rich tables, CSV, markdown output formatting |
 
 ---
 

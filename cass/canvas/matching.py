@@ -12,8 +12,8 @@ __docformat__ = "google"
 import re
 from datetime import datetime
 
-from .canvas_api import CanvasClient, get_token, save_token
-from .models import (
+from .client import CanvasClient, get_token, save_token
+from ..models import (
     CanvasStudent,
     CanvasSubmission,
     GHStudentInfo,

@@ -10,8 +10,8 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
-from . import __version__
-from .cli_canvas import canvas_app
+from .. import __version__
+from .canvas import canvas_app
 
 app = typer.Typer(
     invoke_without_command=True,
@@ -73,7 +73,7 @@ def main(
 
 
 def _require_classroom() -> None:
-    from .config import get_config
+    from ..config import get_config
 
     cfg = get_config()
     if not cfg.has_classroom:
@@ -85,7 +85,7 @@ def _require_classroom() -> None:
 
 
 def _require_canvas() -> None:
-    from .config import get_config
+    from ..config import get_config
 
     cfg = get_config()
     if not cfg.has_canvas:
@@ -100,8 +100,8 @@ def _require_canvas() -> None:
 
 
 def _status() -> None:
-    from . import cache, db
-    from .config import config_file_path, get_config
+    from .. import cache, db
+    from ..config import config_file_path, get_config
 
     cfg_path = config_file_path()
     if not cfg_path:
@@ -181,8 +181,8 @@ _INIT_TOML = """\
 @app.command()
 def init() -> None:
     """Initialize a new project or check an existing setup."""
-    from . import canvas
-    from .config import (
+    from ..canvas.matching import save_token as canvas_save_token
+    from ..config import (
         check_prerequisites,
         config_file_path,
         reset_config,
@@ -219,7 +219,7 @@ def init() -> None:
                     write_config(
                         toml_path, classroom_id, org, canvas_base_url, canvas_course_id
                     )
-                    canvas.save_token(token)
+                    canvas_save_token(token)
                     reset_config()
                     console.print(f"\n[green]Created {toml_path.name}[/green]")
                     return
@@ -277,9 +277,9 @@ def pull(
     """Fetch from APIs and update the local database."""
     import asyncio
 
-    from . import pull as pull_mod
-    from .config import get_config
-    from .github_client import GitHubClient
+    from .. import pull as pull_mod
+    from ..config import get_config
+    from ..github.client import GitHubClient
 
     cfg = get_config()
     pull_all = not any([do_students, do_assignments, do_submissions, do_grades])
@@ -331,7 +331,8 @@ def students(
     csv_out: str = typer.Option("", "--csv", help="Export as CSV file"),
 ) -> None:
     """Show the student roster."""
-    from . import db, report
+    from .. import db
+    from . import report
 
     if not db.students_exist():
         console.print("[yellow]No roster. Run [bold]cass pull[/bold] first.[/yellow]")
@@ -374,7 +375,8 @@ def assignments(
     csv_out: str = typer.Option("", "--csv", help="Export as CSV file"),
 ) -> None:
     """Show assignment metadata."""
-    from . import db, report
+    from .. import db
+    from . import report
 
     conn = db.get_db()
     where_clause = f"WHERE {where}" if where else ""
@@ -407,7 +409,8 @@ def submissions(
     csv_out: str = typer.Option("", "--csv", help="Export as CSV file"),
 ) -> None:
     """View submission status from source tables."""
-    from . import db, report
+    from .. import db
+    from . import report
 
     conn = db.get_db()
     conditions = []
@@ -461,7 +464,8 @@ def grades_callback(
     if ctx.invoked_subcommand is not None:
         return
 
-    from . import db, report
+    from .. import db
+    from . import report
 
     conn = db.get_db()
     try:
@@ -516,7 +520,7 @@ def push(
 
     from rich.table import Table
 
-    from . import db
+    from .. import db
 
     _require_canvas()
 
@@ -571,7 +575,7 @@ def push(
             g.posted_grade
         )
 
-    from .canvas_api import CanvasClient
+    from ..canvas.client import CanvasClient
 
     total_posted = 0
     failed: list[str] = []
@@ -628,8 +632,8 @@ def fetch(
     limit: int = typer.Option(0, "--limit", help="Limit number of students (0 = all)"),
 ) -> None:
     """Download student submission files."""
-    from . import db
-    from . import fetch as fetch_mod
+    from .. import db
+    from ..github import fetch as fetch_mod
 
     _require_classroom()
     students = db.load_students()
@@ -666,7 +670,7 @@ def drop(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
 ) -> None:
     """Delete the local database (cass.duckdb). Not supported for MotherDuck."""
-    from . import db
+    from .. import db
 
     if db.is_remote():
         console.print(
@@ -717,8 +721,8 @@ def backup(
     import shutil
     from datetime import datetime
 
-    from . import db
-    from .config import get_config
+    from .. import db
+    from ..config import get_config
 
     project_root = get_config().root
     backups_dir = project_root / "backups"
@@ -781,7 +785,7 @@ def restore(
 
     import duckdb as _duckdb
 
-    from . import db
+    from .. import db
 
     src = Path(file)
     if not src.exists():
@@ -862,7 +866,8 @@ def _run_repl() -> None:
     import shutil
     import subprocess
 
-    from . import db, report
+    from .. import db
+    from . import report
 
     db_file = db.db_path()
     tables = (
@@ -911,7 +916,8 @@ def query(
     csv_out: str = typer.Option("", "--csv", help="Export results as CSV file"),
 ) -> None:
     """Run a DuckDB SQL query against the project database."""
-    from . import db, report
+    from .. import db
+    from . import report
 
     if not sql:
         _run_repl()
@@ -950,7 +956,8 @@ def export_table(
     ),
 ) -> None:
     """Export a database table to CSV or markdown."""
-    from . import db, report
+    from .. import db
+    from . import report
 
     if table not in _VALID_TABLES:
         console.print(
@@ -979,7 +986,7 @@ def egrades(
     grading scheme to convert to letter grades, and writes the 5-column CSV
     (Last Name, First Name, Student ID, SectionId, Final_Assigned_Egrade).
     """
-    from .egrades import generate_egrades
+    from ..canvas.egrades import generate_egrades
 
     _require_canvas()
 
@@ -1005,7 +1012,7 @@ def import_csv(
     """Import a CSV file into the database."""
     import csv as csv_mod
 
-    from . import db
+    from .. import db
 
     path = Path(file)
     if not path.exists():
@@ -1078,8 +1085,8 @@ def view(
     ),
 ) -> None:
     """Open the database in a browser-based viewer."""
-    from . import db
-    from .viewer import start_server
+    from .. import db
+    from ..viewer import start_server
 
     if not db.is_remote():
         db_file = Path(db.db_path())
@@ -1102,7 +1109,7 @@ def db_callback(ctx: typer.Context) -> None:
 @db_app.command()
 def clean() -> None:
     """Clear API cache to keep the shared DB lean for git commits."""
-    from . import cache
+    from .. import cache
 
     count = cache.cache_count()
     cache.cache_clear()

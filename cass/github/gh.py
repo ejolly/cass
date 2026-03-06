@@ -6,7 +6,7 @@ import json
 import shutil
 import subprocess
 
-from . import cache
+from .. import cache
 
 
 def _require_gh() -> None:

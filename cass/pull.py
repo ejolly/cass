@@ -11,11 +11,12 @@ __docformat__ = "google"
 import typer
 from rich.console import Console
 
-from . import canvas as canvas_mod
-from . import classroom, db
-from . import fetch as fetch_mod
+from . import db
+from .canvas import matching as matching_mod
 from .config import Config
-from .github_client import GitHubClient
+from .github import classroom
+from .github import fetch as fetch_mod
+from .github.client import GitHubClient
 from .models import Assignment, CanvasGrade, GHGrade, Student
 
 # Course-specific constants for final project handling
@@ -38,7 +39,7 @@ async def pull_students(
     """
     # Step 1: Canvas students (always — Canvas is required)
     console.print("[bold]Pulling students from Canvas...[/bold]")
-    canvas_students, sis_section_map = canvas_mod.fetch_students_with_sections(
+    canvas_students, sis_section_map = matching_mod.fetch_students_with_sections(
         cfg.canvas_course_id
     )
     db.save_canvas_students(canvas_students, sis_section_map=sis_section_map)
@@ -66,7 +67,7 @@ async def pull_students(
         # Auto-match by name (only for unmapped GH students)
         unmapped_gh = [g for g in gh_students if g.login.lower() not in already_mapped]
         if unmapped_gh:
-            result = canvas_mod.match_students(unmapped_gh, canvas_students)
+            result = matching_mod.match_students(unmapped_gh, canvas_students)
             # Apply auto-matches
             for gh_login, canvas_id in result.matched.items():
                 db.update_student_github(canvas_id, gh_login)
@@ -82,7 +83,7 @@ async def pull_students(
                 for gh_s in result.unmatched_gh:
                     gh_name = gh_s.name or gh_s.login
                     console.print(f"\n    [bold]{gh_name}[/bold] ({gh_s.login})")
-                    candidates = canvas_mod.find_candidates(gh_s, unmatched_canvas)
+                    candidates = matching_mod.find_candidates(gh_s, unmatched_canvas)
                     if not candidates:
                         console.print("      No Canvas candidates found — skipping")
                         continue
@@ -119,7 +120,7 @@ async def pull_assignments(
     """Fetch assignments from Canvas and/or GitHub Classroom, merge to master table."""
     # Step 1: Canvas assignments (always present)
     console.print("[bold]Pulling assignments from Canvas...[/bold]")
-    canvas_assignments, group_names = canvas_mod.fetch_canvas_assignments(
+    canvas_assignments, group_names = matching_mod.fetch_canvas_assignments(
         cfg.canvas_course_id
     )
     db.save_canvas_assignments(canvas_assignments, group_names=group_names)
@@ -140,7 +141,7 @@ async def pull_assignments(
     existing_master = {a.slug: a for a in db.load_assignments()}
 
     # Build canvas assignment lookup by slug
-    from .canvas import _slugify
+    from .canvas.matching import _slugify
 
     canvas_by_slug: dict[str, object] = {}
     for ca in canvas_assignments:
@@ -287,7 +288,7 @@ async def pull_submissions(
         known_ids = {s.canvas_id for s in students}
         all_canvas_subs = []
         for a in canvas_assignments:
-            subs = canvas_mod.fetch_canvas_submissions(
+            subs = matching_mod.fetch_canvas_submissions(
                 cfg.canvas_course_id, a.canvas_assignment_id, known_ids
             )
             all_canvas_subs.extend(subs)

@@ -20,9 +20,9 @@ import httpx
 import msgspec
 from rich.console import Console
 
-from . import __version__
-from .config import get_config
-from .models import (
+from .. import __version__
+from ..config import get_config
+from ..models import (
     CanvasAnnouncement,
     CanvasAssignment,
     CanvasAssignmentGroup,

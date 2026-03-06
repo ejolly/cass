@@ -1,4 +1,4 @@
-"""Tests for cass.canvas_api — CanvasClient typed API client."""
+"""Tests for cass.canvas.client — CanvasClient typed API client."""
 
 import httpx
 import msgspec
@@ -248,7 +248,7 @@ class _MockTransport(httpx.BaseTransport):
 @pytest.fixture
 def mock_client(monkeypatch):
     """Return a CanvasClient with mocked HTTP transport."""
-    from cass.canvas_api import CanvasClient
+    from cass.canvas.client import CanvasClient
 
     transport = _MockTransport()
     client = CanvasClient.__new__(CanvasClient)

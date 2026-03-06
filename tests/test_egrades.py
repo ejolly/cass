@@ -2,7 +2,7 @@
 
 import pytest
 
-from cass.egrades import EGRADES_HEADER, parse_sortable_name, score_to_letter
+from cass.canvas.egrades import EGRADES_HEADER, parse_sortable_name, score_to_letter
 from cass.models import CanvasGradingSchemeEntry
 
 

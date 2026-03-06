@@ -199,7 +199,7 @@ class Check:
 
 def check_prerequisites() -> list[Check]:
     """Run all setup checks and return results."""
-    from . import gh
+    from .github import gh
 
     checks: list[Check] = []
 

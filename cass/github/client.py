@@ -12,7 +12,7 @@ import subprocess
 
 import httpx
 
-from . import cache
+from .. import cache
 
 _LINK_NEXT_RE = re.compile(r'<([^>]+)>;\s*rel="next"')
 MAX_CONCURRENCY = 10

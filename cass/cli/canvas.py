@@ -40,7 +40,7 @@ canvas_app.add_typer(quizzes_app, name="quizzes", rich_help_panel="Browse")
 
 
 def _require_canvas() -> None:
-    from .config import get_config
+    from ..config import get_config
 
     cfg = get_config()
     if not cfg.has_canvas:
@@ -50,7 +50,7 @@ def _require_canvas() -> None:
 
 
 def _client():  # noqa: ANN202
-    from .canvas_api import CanvasClient
+    from ..canvas.client import CanvasClient
 
     return CanvasClient()
 
@@ -69,7 +69,7 @@ def canvas_callback(ctx: typer.Context) -> None:
 
     from rich.panel import Panel
 
-    from .canvas_api import CanvasClient
+    from ..canvas.client import CanvasClient
 
     with CanvasClient() as c:
         course = c.get_course()
@@ -820,7 +820,7 @@ def sync(
     """
     from rich.table import Table
 
-    from .config import get_config
+    from ..config import get_config
 
     _require_canvas()
     cfg = get_config()
