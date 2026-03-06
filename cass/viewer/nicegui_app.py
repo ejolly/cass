@@ -7,7 +7,7 @@ __docformat__ = "google"
 import json
 import math
 from datetime import date, datetime, time
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import duckdb
 from nicegui import ui
@@ -340,22 +340,13 @@ def build_column_defs(
             "headerName": name,
             "field": name,
             "sortable": True,
-            "filter": True,
+            "filter": False,
             "resizable": True,
-            "floatingFilter": True,
         }
 
-        # Type-specific filters and editors
-        if "INT" in dtype or "DOUBLE" in dtype or "FLOAT" in dtype:
-            col_def["filter"] = "agNumberColumnFilter"
-        elif "BOOL" in dtype:
-            col_def["filter"] = "agTextColumnFilter"
-            if editable and name not in pk_cols:
-                col_def["cellEditor"] = "agCheckboxCellEditor"
-        elif "TIMESTAMP" in dtype or "DATE" in dtype:
-            col_def["filter"] = "agDateColumnFilter"
-        else:
-            col_def["filter"] = "agTextColumnFilter"
+        # Type-specific editors
+        if "BOOL" in dtype and editable and name not in pk_cols:
+            col_def["cellEditor"] = "agCheckboxCellEditor"
 
         # PK columns: bold, dimmed, not editable
         if name in pk_cols:
@@ -492,6 +483,22 @@ _CUSTOM_CSS = """
     font-size: 0.75rem;
     opacity: 0.5;
 }
+.pending-badge {
+    font-size: 0.65rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 9999px;
+    font-weight: 600;
+    background: rgba(245, 158, 11, 0.2);
+    color: #fbbf24;
+}
+.toolbar-btn-danger {
+    background: rgba(239, 68, 68, 0.15);
+    border-color: rgba(239, 68, 68, 0.4);
+    color: #fca5a5;
+}
+.toolbar-btn-danger:hover {
+    background: rgba(239, 68, 68, 0.3);
+}
 .toolbar-right {
     margin-left: auto;
     display: flex;
@@ -514,14 +521,6 @@ _CUSTOM_CSS = """
 .search-input::placeholder {
     opacity: 0.4;
 }
-/* Status message */
-.status-msg {
-    font-size: 0.75rem;
-    font-weight: 600;
-    transition: opacity 0.3s;
-}
-.status-success { color: #4ade80; }
-.status-error { color: #f87171; }
 /* Toolbar buttons */
 .toolbar-btn {
     font-size: 0.7rem;
@@ -657,7 +656,6 @@ def start_nicegui_server(port: int = 0) -> None:
         badge_el: dict[str, Any] = {"ref": None}
         meta_label: dict[str, Any] = {"ref": None}
         search_ref: dict[str, Any] = {"ref": None}
-        status_ref: dict[str, Any] = {"ref": None}
         clear_btn_ref: dict[str, Any] = {"ref": None}
         push_btn_ref: dict[str, Any] = {"ref": None}
         export_btn_ref: dict[str, Any] = {"ref": None}
@@ -666,17 +664,19 @@ def start_nicegui_server(port: int = 0) -> None:
         sidebar_state: dict[str, bool] = {"collapsed": False}
 
         def update_pending_display() -> None:
-            """Update pending count label and toggle clear/push button visibility."""
+            """Update pending badge and toggle revert/push button visibility."""
             count = pending_count(pending)
+            visible = count > 0
             el = pending_label["ref"]
             if el is not None:
-                el.text = f"{count} pending" if count > 0 else ""
+                el.text = f"{count} pending" if visible else ""
+                el.set_visibility(visible)
             cb = clear_btn_ref["ref"]
             if cb is not None:
-                cb.set_visibility(count > 0)
+                cb.set_visibility(visible)
             pb = push_btn_ref["ref"]
             if pb is not None:
-                pb.set_visibility(count > 0)
+                pb.set_visibility(visible)
 
         def load_table(table_name: str) -> None:
             """Load a table into the grid area."""
@@ -760,7 +760,6 @@ def start_nicegui_server(port: int = 0) -> None:
                             pk_cols,
                             pending,
                             update_pending_display,
-                            status_ref,
                         )
 
             # Clear search
@@ -837,6 +836,29 @@ def start_nicegui_server(port: int = 0) -> None:
                     ml = ui.label("").classes("toolbar-meta")
                     meta_label["ref"] = ml
 
+                    pl = ui.label("").classes("pending-badge")
+                    pl.set_visibility(False)
+                    pending_label["ref"] = pl
+
+                    # Revert button (hidden initially)
+                    rb = (
+                        ui.element("button")
+                        .classes("toolbar-btn toolbar-btn-danger")
+                        .props('innerHTML="Revert"')
+                        .on(
+                            "click",
+                            lambda _: revert_pending(
+                                conn,
+                                pending,
+                                update_pending_display,
+                                grid_container,
+                                current_table,
+                            ),
+                        )
+                    )
+                    rb.set_visibility(False)
+                    clear_btn_ref["ref"] = rb
+
                     with ui.element("div").classes("toolbar-right"):
                         si = (
                             ui.input(
@@ -863,30 +885,6 @@ def start_nicegui_server(port: int = 0) -> None:
                         )
                         export_btn_ref["ref"] = eb
 
-                        # Status message label
-                        sl = ui.label("").classes("status-msg")
-                        status_ref["ref"] = sl
-
-                        pl = ui.label("").classes("toolbar-meta")
-                        pending_label["ref"] = pl
-
-                        # Clear pending button (hidden initially)
-                        cb = (
-                            ui.element("button")
-                            .classes("toolbar-btn")
-                            .props('innerHTML="Clear"')
-                            .on(
-                                "click",
-                                lambda _: clear_pending(
-                                    pending,
-                                    update_pending_display,
-                                    status_ref,
-                                ),
-                            )
-                        )
-                        cb.set_visibility(False)
-                        clear_btn_ref["ref"] = cb
-
                         # Push to Canvas button (hidden initially)
                         pb = (
                             ui.element("button")
@@ -898,7 +896,6 @@ def start_nicegui_server(port: int = 0) -> None:
                                     conn,
                                     pending,
                                     update_pending_display,
-                                    status_ref,
                                     grid_container,
                                     current_table,
                                 ),
@@ -964,31 +961,22 @@ def apply_search(grid_container: dict[str, Any], search_text: object) -> None:
     )
 
 
-def set_status(
-    status_ref: dict[str, Any],
-    text: str,
-    level: str = "success",
-    delay_ms: int = 3000,
-) -> None:
-    """Set a status message that auto-clears after a delay.
+_NotifyLevel = Literal["positive", "negative", "warning", "info"]
+
+
+def notify(text: str, level: _NotifyLevel = "positive") -> None:
+    """Show a toast notification in the bottom-left corner.
 
     Args:
-        status_ref: Dict with "ref" pointing to the status label element.
         text: Message text to display.
-        level: Either "success" or "error".
-        delay_ms: Milliseconds before the message auto-clears.
+        level: NiceGUI notify type — "positive", "negative", "warning", "info".
     """
-    el = status_ref.get("ref")
-    if el is None:
-        return
-    el.text = text
-    el.classes(remove="status-success status-error", add=f"status-{level}")
-
-    def clear() -> None:
-        if el.text == text:
-            el.text = ""
-
-    ui.timer(delay_ms / 1000, clear, once=True)
+    ui.notify(
+        text,
+        type=level,
+        position="bottom-left",
+        close_button=True,
+    )
 
 
 def build_preview_html(
@@ -1105,22 +1093,48 @@ def export_csv(grid_container: dict[str, Any]) -> None:
         grid.run_grid_method("exportDataAsCsv")  # pyright: ignore[reportUnknownMemberType]
 
 
-def clear_pending(
+def reload_current_grid(
+    conn: duckdb.DuckDBPyConnection,
+    grid_container: dict[str, Any],
+    table_name: str,
+) -> None:
+    """Reload the AG Grid with fresh data from the DB."""
+    grid = find_grid(grid_container)
+    if grid is not None:
+        new_rows = get_table_rows(conn, table_name)
+        grid.options["rowData"] = new_rows  # pyright: ignore[reportUnknownMemberType]
+        grid.update()
+
+
+def revert_pending(
+    conn: duckdb.DuckDBPyConnection,
     pending: _PendingChanges,
     update_pending_display: Any,
-    status_ref: dict[str, Any],
+    grid_container: dict[str, Any],
+    current_table: dict[str, str],
 ) -> None:
-    """Clear all pending changes."""
+    """Revert all pending changes in the DB and reload the grid."""
+    for table, rows in pending.items():
+        pk_cols = get_primary_keys(conn, table)
+        for pk_key, cols in rows.items():
+            # Reconstruct PK dict
+            pk = {pk_cols[0]: pk_key} if len(pk_cols) == 1 else json.loads(pk_key)
+            where_parts = [f"{col} = ?" for col in pk_cols]
+            where_clause = " AND ".join(where_parts)
+            pk_values = [pk[col] for col in pk_cols]
+            for col_name, change in cols.items():
+                sql = f"UPDATE {table} SET {col_name} = ? WHERE {where_clause}"
+                conn.execute(sql, [change["baseline"], *pk_values])
     pending.clear()
     update_pending_display()
-    set_status(status_ref, "Cleared", "success", 3000)
+    # Reload current table to reflect reverted data
+    reload_current_grid(conn, grid_container, current_table["name"])
 
 
 def open_push_modal(
     conn: duckdb.DuckDBPyConnection,
     pending: _PendingChanges,
     update_pending_display: Any,
-    status_ref: dict[str, Any],
     grid_container: dict[str, Any],
     current_table: dict[str, str],
 ) -> None:
@@ -1130,7 +1144,6 @@ def open_push_modal(
         conn: DuckDB connection.
         pending: Pending changes dict.
         update_pending_display: Callback to refresh pending count display.
-        status_ref: Status label ref for post-push messages.
         grid_container: Grid container ref for reloading data after push.
         current_table: Current table name ref.
     """
@@ -1248,7 +1261,7 @@ def open_push_modal(
                 if result["ok"]:
                     dialog.close()
                     update_pending_display()
-                    set_status(status_ref, "Pushed to Canvas", "success", 6000)
+                    notify("Pushed to Canvas")
                     # Reload current table to reflect changes
                     grid = find_grid(grid_container)
                     if grid is not None:
@@ -1266,7 +1279,7 @@ def open_push_modal(
                     update_pending_display()
             except Exception as exc:
                 dialog.close()
-                set_status(status_ref, f"Push failed: {exc}", "error", 6000)
+                notify(f"Push failed: {exc}", "negative")
 
         # Start with loading, then defer the blocking preview call
         render_loading()
@@ -1280,13 +1293,18 @@ def attach_edit_handler(
     pk_cols: list[str],
     pending: _PendingChanges,
     update_pending_display: Any,
-    status_ref: dict[str, Any],
 ) -> None:
     """Attach cellValueChanged handler to an AG Grid."""
 
     def on_cell_changed(e: Any) -> None:
         data = e.args
-        col_field = data["colDef"]["field"]
+        col_def = data.get("colDef")
+        if col_def:
+            col_field = col_def["field"]
+        else:
+            col_field = data.get("colId", data.get("column"))
+        if col_field is None:
+            return
         new_value = data["value"]
         row = data["data"]
 
@@ -1303,7 +1321,7 @@ def attach_edit_handler(
                 new_value,
             )
             update_pending_display()
-            set_status(status_ref, f"Saved {col_field}", "success", 3000)
+            notify(f"Saved {col_field}")
             # Flash the edited column
             grid.run_grid_method(  # pyright: ignore[reportUnknownMemberType]
                 "flashCells",
@@ -1314,11 +1332,9 @@ def attach_edit_handler(
                 },
             )
         else:
-            set_status(
-                status_ref,
+            notify(
                 f"Error: {result.get('error', 'unknown')}",
-                "error",
-                5000,
+                "negative",
             )
 
     grid.on("cellValueChanged", on_cell_changed)
