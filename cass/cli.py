@@ -516,12 +516,9 @@ def push(
 
     from rich.table import Table
 
-    from . import canvas as canvas_mod
     from . import db
-    from .config import get_config
 
     _require_canvas()
-    cfg = get_config()
 
     canvas_grades = db.load_canvas_grades()
     if not canvas_grades:
@@ -559,32 +556,37 @@ def push(
         )
         return
 
-    total_posted = 0
+    # Group pushable grades by assignment for bulk push
+    grade_data_by_aid: dict[int, dict[int, str]] = {}
     total_skipped = 0
-    failed: list[str] = []
     for g in canvas_grades:
         if not g.posted_grade or g.posted_grade in ("-", "?"):
             total_skipped += 1
             continue
-        ok = canvas_mod.push_grade(
-            cfg.canvas_course_id,
-            g.canvas_assignment_id,
-            g.canvas_user_id,
-            g.posted_grade,
+        grade_data_by_aid.setdefault(g.canvas_assignment_id, {})[g.canvas_user_id] = (
+            g.posted_grade
         )
-        if ok:
-            total_posted += 1
-        else:
-            failed.append(
-                f"user={g.canvas_user_id} / assignment={g.canvas_assignment_id}"
-            )
+
+    from .canvas_api import CanvasClient
+
+    total_posted = 0
+    failed: list[str] = []
+    with CanvasClient() as c:
+        for aid, grade_data in grade_data_by_aid.items():
+            title = aid_to_title.get(aid, f"Assignment {aid}")
+            try:
+                progress = c.bulk_push_grades(aid, grade_data)
+                c.wait_for_progress(progress.id)
+                total_posted += len(grade_data)
+                console.print(f"  [green]✓[/green] {title}: {len(grade_data)} grades")
+            except Exception as e:
+                failed.append(f"{title}: {e}")
+                console.print(f"  [red]✗[/red] {title}: {e}")
 
     if failed:
-        console.print(f"[red]Failed to post {len(failed)} grade(s):[/red]")
-        for entry in failed:
-            console.print(f"  [red]- {entry}[/red]")
+        console.print(f"\n[red]Failed {len(failed)} assignment(s).[/red]")
     console.print(
-        f"[green]Posted {total_posted} grades, skipped {total_skipped}.[/green]"
+        f"\n[green]Posted {total_posted} grades, skipped {total_skipped}.[/green]"
     )
 
 

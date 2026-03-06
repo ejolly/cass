@@ -11,11 +11,15 @@ import webbrowser
 from datetime import date, datetime, time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from importlib.resources import files
+from typing import TYPE_CHECKING
 
 import duckdb
 from rich.console import Console
 
 from ..db import db_path, reset as db_reset
+
+if TYPE_CHECKING:
+    from ..canvas_api import CanvasClient
 
 console = Console()
 
@@ -24,7 +28,6 @@ _EXCLUDED_TABLES = {"meta"}
 # Tables that are generated/pulled data and should not be editable in the viewer.
 _READ_ONLY_TABLES = {
     "canvas_submissions",
-    "canvas_grades",
     "gh_submissions",
     "gh_grades",
 }
@@ -32,6 +35,7 @@ _READ_ONLY_TABLES = {
 # Columns on canvas tables that can be pushed back to the Canvas API.
 _CANVAS_PUSHABLE: dict[str, set[str]] = {
     "canvas_assignments": {"name", "points_possible", "due_at", "published"},
+    "canvas_grades": {"posted_grade"},
 }
 
 # Enriched queries that JOIN in human-readable names for ID-heavy tables.
@@ -294,26 +298,45 @@ def _pending_count(pending: dict) -> int:
     return sum(len(cols) for rows in pending.values() for cols in rows.values())
 
 
+def _resolve_row_name(
+    conn: duckdb.DuckDBPyConnection,
+    table: str,
+    pk_key: str,
+) -> str:
+    """Resolve a pending-change pk_key to a human-readable row name."""
+    if table == "canvas_assignments":
+        row = conn.execute(
+            "SELECT name FROM canvas_assignments WHERE canvas_id = ?",
+            [int(pk_key)],
+        ).fetchone()
+        return row[0] if row else pk_key
+    if table == "canvas_grades":
+        pk = json.loads(pk_key)
+        uid, aid = pk["canvas_user_id"], pk["canvas_assignment_id"]
+        row = conn.execute(
+            "SELECT st.name, ca.name "
+            "FROM canvas_students st, canvas_assignments ca "
+            "WHERE st.canvas_id = ? AND ca.canvas_id = ?",
+            [uid, aid],
+        ).fetchone()
+        if row:
+            return f"{row[0]} — {row[1]}"
+        return pk_key
+    return pk_key
+
+
 def _get_pending_summary(
     conn: duckdb.DuckDBPyConnection,
     pending: dict,
 ) -> dict[str, object]:
-    """Return pending changes with assignment names for display."""
+    """Return pending changes with human-readable names for display."""
     changes = []
     for table, rows in pending.items():
         pk_col = _get_primary_keys(conn, table)
         pk_name = pk_col[0] if pk_col else "id"
 
         for pk_key, columns in rows.items():
-            row_name = pk_key
-            if table == "canvas_assignments":
-                name_row = conn.execute(
-                    "SELECT name FROM canvas_assignments WHERE canvas_id = ?",
-                    [int(pk_key)],
-                ).fetchone()
-                if name_row:
-                    row_name = name_row[0]
-
+            row_name = _resolve_row_name(conn, table, pk_key)
             for col, vals in columns.items():
                 changes.append(
                     {
@@ -335,36 +358,95 @@ def _get_pending_summary(
 # ---------------------------------------------------------------------------
 
 
-def _canvas_preview(
+def _preview_assignments(
     conn: duckdb.DuckDBPyConnection,
-    pending: dict,
-) -> dict[str, object]:
-    """Compare pending changes against live Canvas state (dry-run)."""
-    from ..canvas_api import CanvasClient
-
-    table_changes = pending.get("canvas_assignments", {})
-    if not table_changes:
-        return {"ok": True, "changes": []}
-
+    table_changes: dict,
+    client: CanvasClient,
+) -> list[dict[str, object]]:
+    """Preview pending assignment changes against live Canvas state."""
     results: list[dict[str, object]] = []
-    with CanvasClient() as c:
-        for pk_key, columns in table_changes.items():
-            canvas_id = int(pk_key)
-            name_row = conn.execute(
-                "SELECT name FROM canvas_assignments WHERE canvas_id = ?",
-                [canvas_id],
-            ).fetchone()
-            assignment_name = name_row[0] if name_row else f"ID {canvas_id}"
+    for pk_key, columns in table_changes.items():
+        canvas_id = int(pk_key)
+        name_row = conn.execute(
+            "SELECT name FROM canvas_assignments WHERE canvas_id = ?",
+            [canvas_id],
+        ).fetchone()
+        assignment_name = name_row[0] if name_row else f"ID {canvas_id}"
 
-            try:
-                live = c.get_assignment(canvas_id)
+        try:
+            live = client.get_assignment(canvas_id)
+            for col, vals in columns.items():
+                live_val = getattr(live, col, None)
+                conflict = not _values_equal(live_val, vals["baseline"])
+                results.append(
+                    {
+                        "table": "canvas_assignments",
+                        "canvas_id": canvas_id,
+                        "name": assignment_name,
+                        "column": col,
+                        "baseline": vals["baseline"],
+                        "current": vals["current"],
+                        "live": live_val,
+                        "conflict": conflict,
+                    }
+                )
+        except Exception as e:
+            results.append(
+                {
+                    "table": "canvas_assignments",
+                    "canvas_id": canvas_id,
+                    "name": assignment_name,
+                    "error": str(e),
+                }
+            )
+    return results
+
+
+def _preview_grades(
+    conn: duckdb.DuckDBPyConnection,
+    table_changes: dict,
+    client: CanvasClient,
+) -> list[dict[str, object]]:
+    """Preview pending grade changes against live Canvas submissions."""
+    results: list[dict[str, object]] = []
+
+    # Group changes by assignment_id for efficient fetching
+    by_assignment: dict[int, list[tuple[int, dict]]] = {}
+    for pk_key, columns in table_changes.items():
+        pk = json.loads(pk_key)
+        aid = pk["canvas_assignment_id"]
+        uid = pk["canvas_user_id"]
+        by_assignment.setdefault(aid, []).append((uid, columns))
+
+    for aid, student_changes in by_assignment.items():
+        assignment_name = _resolve_row_name(conn, "canvas_assignments", str(aid))
+
+        try:
+            live_subs = client.list_submissions(aid)
+            live_by_user = {s.user_id: s for s in live_subs}
+
+            for uid, columns in student_changes:
+                student_row = conn.execute(
+                    "SELECT name FROM canvas_students WHERE canvas_id = ?",
+                    [uid],
+                ).fetchone()
+                student_name = student_row[0] if student_row else f"User {uid}"
+
+                live_sub = live_by_user.get(uid)
                 for col, vals in columns.items():
-                    live_val = getattr(live, col, None)
+                    live_val = None
+                    if live_sub:
+                        if col == "posted_grade":
+                            live_val = live_sub.grade
+                        elif col == "score":
+                            live_val = live_sub.score
                     conflict = not _values_equal(live_val, vals["baseline"])
                     results.append(
                         {
-                            "canvas_id": canvas_id,
-                            "name": assignment_name,
+                            "table": "canvas_grades",
+                            "canvas_assignment_id": aid,
+                            "canvas_user_id": uid,
+                            "name": f"{student_name} — {assignment_name}",
                             "column": col,
                             "baseline": vals["baseline"],
                             "current": vals["current"],
@@ -372,14 +454,37 @@ def _canvas_preview(
                             "conflict": conflict,
                         }
                     )
-            except Exception as e:
-                results.append(
-                    {
-                        "canvas_id": canvas_id,
-                        "name": assignment_name,
-                        "error": str(e),
-                    }
-                )
+        except Exception as e:
+            results.append(
+                {
+                    "table": "canvas_grades",
+                    "canvas_assignment_id": aid,
+                    "name": assignment_name,
+                    "error": str(e),
+                }
+            )
+
+    return results
+
+
+def _canvas_preview(
+    conn: duckdb.DuckDBPyConnection,
+    pending: dict,
+) -> dict[str, object]:
+    """Compare pending changes against live Canvas state (dry-run)."""
+    from ..canvas_api import CanvasClient
+
+    assignment_changes = pending.get("canvas_assignments", {})
+    grade_changes = pending.get("canvas_grades", {})
+    if not assignment_changes and not grade_changes:
+        return {"ok": True, "changes": []}
+
+    results: list[dict[str, object]] = []
+    with CanvasClient() as c:
+        if assignment_changes:
+            results.extend(_preview_assignments(conn, assignment_changes, c))
+        if grade_changes:
+            results.extend(_preview_grades(conn, grade_changes, c))
 
     return {
         "ok": True,
@@ -389,6 +494,71 @@ def _canvas_preview(
     }
 
 
+def _apply_assignments(
+    table_changes: dict,
+    client: CanvasClient,
+) -> list[dict[str, object]]:
+    """Push pending assignment changes to Canvas."""
+    results: list[dict[str, object]] = []
+    for pk_key, columns in list(table_changes.items()):
+        canvas_id = int(pk_key)
+        kwargs = {col: vals["current"] for col, vals in columns.items()}
+        try:
+            client.update_assignment(canvas_id, **kwargs)
+            results.append({"canvas_id": canvas_id, "ok": True})
+            del table_changes[pk_key]
+        except Exception as e:
+            results.append({"canvas_id": canvas_id, "ok": False, "error": str(e)})
+    return results
+
+
+def _apply_grades(
+    table_changes: dict,
+    client: CanvasClient,
+) -> list[dict[str, object]]:
+    """Push pending grade changes to Canvas via bulk update_grades."""
+    results: list[dict[str, object]] = []
+
+    # Group by assignment_id for bulk push
+    by_assignment: dict[int, dict[int, str]] = {}
+    pk_keys_by_assignment: dict[int, list[str]] = {}
+    for pk_key, columns in table_changes.items():
+        pk = json.loads(pk_key)
+        aid = pk["canvas_assignment_id"]
+        uid = pk["canvas_user_id"]
+        # Use posted_grade for the push
+        grade_val = columns.get("posted_grade", {}).get("current")
+        if grade_val is not None:
+            by_assignment.setdefault(aid, {})[uid] = str(grade_val)
+            pk_keys_by_assignment.setdefault(aid, []).append(pk_key)
+
+    for aid, grade_data in by_assignment.items():
+        try:
+            progress = client.bulk_push_grades(aid, grade_data)
+            client.wait_for_progress(progress.id)
+            results.append(
+                {
+                    "canvas_assignment_id": aid,
+                    "ok": True,
+                    "count": len(grade_data),
+                }
+            )
+            # Clear successful changes
+            for pk_key in pk_keys_by_assignment[aid]:
+                table_changes.pop(pk_key, None)
+        except Exception as e:
+            results.append(
+                {
+                    "canvas_assignment_id": aid,
+                    "ok": False,
+                    "error": str(e),
+                    "count": len(grade_data),
+                }
+            )
+
+    return results
+
+
 def _canvas_apply(
     conn: duckdb.DuckDBPyConnection,
     pending: dict,
@@ -396,32 +566,25 @@ def _canvas_apply(
     """Push pending changes to Canvas and clear them on success."""
     from ..canvas_api import CanvasClient
 
-    table_changes = pending.get("canvas_assignments", {})
-    if not table_changes:
+    assignment_changes = pending.get("canvas_assignments", {})
+    grade_changes = pending.get("canvas_grades", {})
+    if not assignment_changes and not grade_changes:
         return {"ok": True, "results": []}
 
     results: list[dict[str, object]] = []
     with CanvasClient() as c:
-        for pk_key, columns in list(table_changes.items()):
-            canvas_id = int(pk_key)
-            kwargs = {col: vals["current"] for col, vals in columns.items()}
-            try:
-                c.update_assignment(canvas_id, **kwargs)
-                results.append({"canvas_id": canvas_id, "ok": True})
-                del table_changes[pk_key]
-            except Exception as e:
-                results.append(
-                    {
-                        "canvas_id": canvas_id,
-                        "ok": False,
-                        "error": str(e),
-                    }
-                )
+        if assignment_changes:
+            results.extend(_apply_assignments(assignment_changes, c))
+        if grade_changes:
+            results.extend(_apply_grades(grade_changes, c))
 
-    if not table_changes:
+    # Clean up empty table entries
+    if not assignment_changes:
         pending.pop("canvas_assignments", None)
+    if not grade_changes:
+        pending.pop("canvas_grades", None)
 
-    return {"ok": all(r["ok"] for r in results), "results": results}
+    return {"ok": all(r.get("ok") for r in results), "results": results}
 
 
 # ---------------------------------------------------------------------------

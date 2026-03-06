@@ -311,13 +311,21 @@ Both must pass clean.
 Project: **cass** — [linear.app/ejolly/project/cass-bd5285c72a0c](https://linear.app/ejolly/project/cass-bd5285c72a0c)
 Team: **Ejolly** (EJO). Issues are prefixed `EJO-NNN`.
 
+### Active issues
+
+| Issue | Title | Priority | Status |
+|-------|-------|----------|--------|
+| EJO-327 | Grade posting policy: detect post_manually and post via GraphQL | High | Backlog |
+| EJO-328 | eGrades CSV export with grading scheme letter grade conversion | High | Backlog |
+| EJO-321 | User-friendly CLI commands for common data operations | High | Backlog |
+
 ### Completed issues
 
 | Issue | Title | Priority | Status |
 |-------|-------|----------|--------|
+| EJO-326 | Bulk grade push via Canvas update_grades endpoint | Urgent | Done |
 | EJO-319 | Refactor data models: human-readable, self-documenting API + domain types | Urgent | Done |
 | EJO-320 | Data storage & collaboration: single .db as git-shared source of truth | Urgent | Done |
-| EJO-321 | User-friendly CLI commands for common data operations | High | Done |
 | EJO-322 | Canvas API compliance: User-Agent, rate limiting, 429 retry | High | Done |
 | EJO-323 | Documentation: README, CLI help, Google-style docstrings, pdoc | Medium | Done |
 | EJO-324 | Bundled browser-based DB viewer (replaced Dataflare) | Low | Done |

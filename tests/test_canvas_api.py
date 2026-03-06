@@ -13,6 +13,7 @@ from cass.models.canvas_api import (
     CanvasFolder,
     CanvasModule,
     CanvasModuleItem,
+    CanvasProgress,
     CanvasQuiz,
     CanvasTab,
     CanvasUser,
@@ -191,6 +192,27 @@ class TestModels:
         t = msgspec.convert(data, CanvasTab, strict=False)
         assert t.id == "modules"  # string ID
         assert t.hidden is False
+
+    def test_canvas_progress(self):
+        data = {
+            "id": 42,
+            "workflow_state": "completed",
+            "completion": 100.0,
+            "message": None,
+            "tag": "submissions_update",
+            "url": "https://canvas.example.com/api/v1/progress/42",
+        }
+        p = msgspec.convert(data, CanvasProgress, strict=False)
+        assert p.id == 42
+        assert p.workflow_state == "completed"
+        assert p.completion == 100.0
+
+    def test_canvas_progress_defaults(self):
+        data = {"id": 99, "workflow_state": "queued"}
+        p = msgspec.convert(data, CanvasProgress, strict=False)
+        assert p.id == 99
+        assert p.completion is None
+        assert p.message is None
 
 
 # --- CanvasClient unit tests (mocked HTTP) ---

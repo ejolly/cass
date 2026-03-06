@@ -9,7 +9,14 @@ from urllib.request import Request, urlopen
 import duckdb
 import pytest
 
-from cass.viewer import ViewerHandler, _get_schema, _get_table_names, _get_tables
+from cass.viewer import (
+    ViewerHandler,
+    _get_schema,
+    _get_table_names,
+    _get_tables,
+    _pending_count,
+    _track_change,
+)
 
 
 @pytest.fixture
@@ -218,3 +225,73 @@ def test_update_rejects_unknown_column(server):
 def test_unknown_api_path(server):
     with pytest.raises(HTTPError, match="404"):
         urlopen(f"{server}/api/nonexistent")
+
+
+# --- Grade editing and change tracking ---
+
+
+def test_canvas_grades_editable(viewer_conn):
+    """canvas_grades table should be editable (not in _READ_ONLY_TABLES)."""
+    viewer_conn.execute(
+        "CREATE TABLE IF NOT EXISTS canvas_grades ("
+        "  canvas_user_id INTEGER NOT NULL,"
+        "  canvas_assignment_id INTEGER NOT NULL,"
+        "  score DOUBLE,"
+        "  posted_grade TEXT NOT NULL DEFAULT '',"
+        "  updated_at DOUBLE NOT NULL,"
+        "  PRIMARY KEY (canvas_user_id, canvas_assignment_id)"
+        ")"
+    )
+    schema = _get_schema(viewer_conn, "canvas_grades")
+    assert schema["editable"] is True
+    assert schema["primary_keys"] == ["canvas_user_id", "canvas_assignment_id"]
+    pushable: list[str] = schema["canvas_pushable"]  # type: ignore[assignment]
+    assert "posted_grade" in pushable
+
+
+def test_canvas_submissions_readonly(viewer_conn):
+    """canvas_submissions should remain read-only."""
+    viewer_conn.execute(
+        "CREATE TABLE IF NOT EXISTS canvas_submissions ("
+        "  canvas_user_id INTEGER NOT NULL,"
+        "  canvas_assignment_id INTEGER NOT NULL,"
+        "  submitted BOOLEAN DEFAULT false,"
+        "  PRIMARY KEY (canvas_user_id, canvas_assignment_id)"
+        ")"
+    )
+    schema = _get_schema(viewer_conn, "canvas_submissions")
+    assert schema["editable"] is False
+
+
+def test_track_change_grade():
+    """Track changes for canvas_grades (pushable column: posted_grade)."""
+    pending: dict = {}
+    pk = {"canvas_user_id": 100, "canvas_assignment_id": 42}
+    _track_change(pending, "canvas_grades", pk, "posted_grade", "8", "9")
+
+    assert _pending_count(pending) == 1
+    assert "canvas_grades" in pending
+    pk_key = json.dumps(pk, sort_keys=True)
+    assert pk_key in pending["canvas_grades"]
+    assert pending["canvas_grades"][pk_key]["posted_grade"]["current"] == "9"
+
+
+def test_track_change_grade_revert():
+    """Reverting a grade change to baseline removes it from pending."""
+    pending: dict = {}
+    pk = {"canvas_user_id": 100, "canvas_assignment_id": 42}
+    _track_change(pending, "canvas_grades", pk, "posted_grade", "8", "9")
+    assert _pending_count(pending) == 1
+
+    # Revert back to baseline
+    _track_change(pending, "canvas_grades", pk, "posted_grade", "8", "8")
+    assert _pending_count(pending) == 0
+    assert "canvas_grades" not in pending
+
+
+def test_track_change_ignores_non_pushable():
+    """Changes to non-pushable columns (like score) are not tracked."""
+    pending: dict = {}
+    pk = {"canvas_user_id": 100, "canvas_assignment_id": 42}
+    _track_change(pending, "canvas_grades", pk, "score", 8.0, 9.0)
+    assert _pending_count(pending) == 0
