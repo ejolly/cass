@@ -10,7 +10,7 @@ from cass.models import (
     compute_gh_grade,
     numeric_grade,
 )
-from cass.models.grading import _format_lateness
+from cass.models.grading import format_lateness
 
 
 # --- compute_gh_grade ---
@@ -120,7 +120,7 @@ def test_compute_canvas_grade_no_points():
     ids=["zero", "negative", "1h", "1h1m1s", "1d", "1d1h1m", "2d2h"],
 )
 def test_format_lateness(seconds, expected):
-    assert _format_lateness(seconds) == expected
+    assert format_lateness(seconds) == expected
 
 
 # --- numeric_grade ---

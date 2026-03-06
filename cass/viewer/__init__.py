@@ -23,6 +23,13 @@ if TYPE_CHECKING:
 
 console = Console()
 
+# Type aliases for the pending-changes structure:
+#   table -> pk_key -> column -> {"baseline": ..., "current": ...}
+_ChangeFields = dict[str, object]
+_RowChanges = dict[str, _ChangeFields]
+_TableChanges = dict[str, _RowChanges]
+_PendingChanges = dict[str, _TableChanges]
+
 _EXCLUDED_TABLES = {"meta"}
 
 # Tables that are generated/pulled data and should not be editable in the viewer.
@@ -92,9 +99,9 @@ def _sanitize(obj: object) -> object:
     if isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
         return None
     if isinstance(obj, list):
-        return [_sanitize(v) for v in obj]
+        return [_sanitize(v) for v in obj]  # pyright: ignore[reportUnknownArgumentType,reportUnknownVariableType]
     if isinstance(obj, dict):
-        return {k: _sanitize(v) for k, v in obj.items()}
+        return {k: _sanitize(v) for k, v in obj.items()}  # pyright: ignore[reportUnknownArgumentType,reportUnknownVariableType]
     return obj
 
 
@@ -258,7 +265,7 @@ def _values_equal(a: object, b: object) -> bool:
 
 
 def _track_change(
-    pending: dict,
+    pending: _PendingChanges,
     table: str,
     pk: dict[str, object],
     column: str,
@@ -293,7 +300,7 @@ def _track_change(
         row_changes[column] = {"baseline": old_value, "current": new_value}
 
 
-def _pending_count(pending: dict) -> int:
+def _pending_count(pending: _PendingChanges) -> int:
     """Total number of pending field changes."""
     return sum(len(cols) for rows in pending.values() for cols in rows.values())
 
@@ -327,10 +334,10 @@ def _resolve_row_name(
 
 def _get_pending_summary(
     conn: duckdb.DuckDBPyConnection,
-    pending: dict,
+    pending: _PendingChanges,
 ) -> dict[str, object]:
     """Return pending changes with human-readable names for display."""
-    changes = []
+    changes: list[dict[str, object]] = []
     for table, rows in pending.items():
         pk_col = _get_primary_keys(conn, table)
         pk_name = pk_col[0] if pk_col else "id"
@@ -360,7 +367,7 @@ def _get_pending_summary(
 
 def _preview_assignments(
     conn: duckdb.DuckDBPyConnection,
-    table_changes: dict,
+    table_changes: _TableChanges,
     client: CanvasClient,
 ) -> list[dict[str, object]]:
     """Preview pending assignment changes against live Canvas state."""
@@ -404,14 +411,14 @@ def _preview_assignments(
 
 def _preview_grades(
     conn: duckdb.DuckDBPyConnection,
-    table_changes: dict,
+    table_changes: _TableChanges,
     client: CanvasClient,
 ) -> list[dict[str, object]]:
     """Preview pending grade changes against live Canvas submissions."""
     results: list[dict[str, object]] = []
 
     # Group changes by assignment_id for efficient fetching
-    by_assignment: dict[int, list[tuple[int, dict]]] = {}
+    by_assignment: dict[int, list[tuple[int, _RowChanges]]] = {}
     for pk_key, columns in table_changes.items():
         pk = json.loads(pk_key)
         aid = pk["canvas_assignment_id"]
@@ -469,7 +476,7 @@ def _preview_grades(
 
 def _canvas_preview(
     conn: duckdb.DuckDBPyConnection,
-    pending: dict,
+    pending: _PendingChanges,
 ) -> dict[str, object]:
     """Compare pending changes against live Canvas state (dry-run)."""
     from ..canvas.client import CanvasClient
@@ -495,7 +502,7 @@ def _canvas_preview(
 
 
 def _apply_assignments(
-    table_changes: dict,
+    table_changes: _TableChanges,
     client: CanvasClient,
 ) -> list[dict[str, object]]:
     """Push pending assignment changes to Canvas."""
@@ -513,7 +520,7 @@ def _apply_assignments(
 
 
 def _apply_grades(
-    table_changes: dict,
+    table_changes: _TableChanges,
     client: CanvasClient,
     conn: duckdb.DuckDBPyConnection,
 ) -> list[dict[str, object]]:
@@ -599,7 +606,7 @@ def _apply_grades(
 
 def _canvas_apply(
     conn: duckdb.DuckDBPyConnection,
-    pending: dict,
+    pending: _PendingChanges,
 ) -> dict[str, object]:
     """Push pending changes to Canvas and clear them on success."""
     from ..canvas.client import CanvasClient
@@ -637,7 +644,7 @@ class ViewerHandler(BaseHTTPRequestHandler):
 
     conn: duckdb.DuckDBPyConnection
     valid_tables: set[str]
-    pending_changes: dict
+    pending_changes: _PendingChanges
     use_classic: bool
 
     def log_message(self, format: str, *args: object) -> None:  # noqa: A002

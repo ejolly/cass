@@ -6,9 +6,13 @@ __docformat__ = "google"
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import typer
 from rich.console import Console
+
+if TYPE_CHECKING:
+    from ..models import CanvasGrade
 
 from .. import __version__
 from .canvas import canvas_app
@@ -413,7 +417,7 @@ def submissions(
     from . import report
 
     conn = db.get_db()
-    conditions = []
+    conditions: list[str] = []
     if slug:
         conditions.append(f"assignment LIKE '%{slug}%'")
     if where:
@@ -496,7 +500,7 @@ def grades_callback(
     student_ids = sorted(students_set)
 
     headers = ["Student"] + assignment_ids
-    matrix_rows = []
+    matrix_rows: list[list[str]] = []
     for sid in student_ids:
         row = [sid] + [grade_map.get((sid, aid), "-") for aid in assignment_ids]
         matrix_rows.append(row)
@@ -529,7 +533,7 @@ def push(
         console.print("[yellow]No Canvas grades to push.[/yellow]")
         raise typer.Exit(code=1)
 
-    by_assignment: dict[int, list] = defaultdict(list)
+    by_assignment: dict[int, list[CanvasGrade]] = defaultdict(list)
     for g in canvas_grades:
         by_assignment[g.canvas_assignment_id].append(g)
 

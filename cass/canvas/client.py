@@ -186,9 +186,9 @@ class CanvasClient:
 
     # --- Pagination ---
 
-    def _get_paginated(self, path: str) -> list[dict]:
+    def _get_paginated(self, path: str) -> list[dict[str, object]]:
         """GET with Canvas-style Link header pagination."""
-        results: list[dict] = []
+        results: list[dict[str, object]] = []
         sep = "&" if "?" in path else "?"
         url = f"{path}{sep}per_page=100"
 
@@ -337,7 +337,7 @@ class CanvasClient:
         Returns:
             The created module.
         """
-        params: dict = {"module[name]": name}
+        params: dict[str, object] = {"module[name]": name}
         if position is not None:
             params["module[position]"] = position
         resp = self._client.post(self._course("/modules"), data=params)
@@ -438,7 +438,7 @@ class CanvasClient:
         Returns:
             The created assignment.
         """
-        params: dict = {
+        params: dict[str, object] = {
             "assignment[name]": name,
             "assignment[points_possible]": points_possible,
             "assignment[published]": published,
@@ -600,7 +600,9 @@ class CanvasClient:
 
     # --- GraphQL ---
 
-    def _graphql(self, query: str, variables: dict | None = None) -> dict:
+    def _graphql(
+        self, query: str, variables: dict[str, object] | None = None
+    ) -> dict[str, object]:
         """Execute a Canvas GraphQL mutation/query.
 
         Args:
@@ -664,16 +666,17 @@ mutation ($assignmentId: ID!) {
         Raises:
             RuntimeError: If the mutation returns validation errors.
         """
-        data = self._graphql(
+        raw = self._graphql(
             self._POST_GRADES_MUTATION,
             {"assignmentId": str(assignment_id), "gradedOnly": graded_only},
         )
-        result = data.get("postAssignmentGrades", {})
-        errors = result.get("errors") or []
+        data: dict[str, object] = raw
+        result: dict[str, object] = data.get("postAssignmentGrades", {})  # type: ignore[assignment]  # pyright: nested dict
+        errors: list[dict[str, str]] = result.get("errors") or []  # type: ignore[assignment]  # pyright: nested dict
         if errors:
             msgs = "; ".join(f"{e['attribute']}: {e['message']}" for e in errors)
             raise RuntimeError(f"postAssignmentGrades failed: {msgs}")
-        progress = result.get("progress")
+        progress: dict[str, str] | None = result.get("progress")  # type: ignore[assignment]  # pyright: nested dict
         if progress and progress.get("_id"):
             return CanvasProgress(
                 id=int(progress["_id"]),
@@ -695,16 +698,17 @@ mutation ($assignmentId: ID!) {
         Raises:
             RuntimeError: If the mutation returns validation errors.
         """
-        data = self._graphql(
+        raw = self._graphql(
             self._HIDE_GRADES_MUTATION,
             {"assignmentId": str(assignment_id)},
         )
-        result = data.get("hideAssignmentGrades", {})
-        errors = result.get("errors") or []
+        data: dict[str, object] = raw
+        result: dict[str, object] = data.get("hideAssignmentGrades", {})  # type: ignore[assignment]  # pyright: nested dict
+        errors: list[dict[str, str]] = result.get("errors") or []  # type: ignore[assignment]  # pyright: nested dict
         if errors:
             msgs = "; ".join(f"{e['attribute']}: {e['message']}" for e in errors)
             raise RuntimeError(f"hideAssignmentGrades failed: {msgs}")
-        progress = result.get("progress")
+        progress: dict[str, str] | None = result.get("progress")  # type: ignore[assignment]  # pyright: nested dict
         if progress and progress.get("_id"):
             return CanvasProgress(
                 id=int(progress["_id"]),
@@ -752,7 +756,7 @@ mutation ($assignmentId: ID!) {
         Returns:
             The created quiz.
         """
-        params: dict = {
+        params: dict[str, object] = {
             "quiz[title]": title,
             "quiz[quiz_type]": quiz_type,
             "quiz[published]": published,
@@ -835,7 +839,7 @@ mutation ($assignmentId: ID!) {
         size = _os.path.getsize(local_path)
 
         # Step 1: notify Canvas
-        params: dict = {
+        params: dict[str, object] = {
             "name": filename,
             "size": size,
             "parent_folder_path": folder or "/",

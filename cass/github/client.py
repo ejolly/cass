@@ -55,7 +55,7 @@ class GitHubClient:
     async def __aexit__(self, *args: object) -> None:
         await self.close()
 
-    async def _fetch(self, endpoint: str, paginate: bool = False) -> dict | list:
+    async def _fetch(self, endpoint: str, paginate: bool = False) -> object:
         """HTTP GET with concurrency control and optional pagination."""
         async with self._sem:
             if not paginate:
@@ -63,7 +63,7 @@ class GitHubClient:
                 resp.raise_for_status()
                 return resp.json()
 
-            results: list = []
+            results: list[object] = []
             sep = "&" if "?" in endpoint else "?"
             url: str | None = f"{endpoint}{sep}per_page=100"
             while url:
@@ -71,7 +71,7 @@ class GitHubClient:
                 resp.raise_for_status()
                 data = resp.json()
                 if isinstance(data, list):
-                    results.extend(data)
+                    results.extend(data)  # pyright: ignore[reportUnknownArgumentType]
                 else:
                     return data
                 url = None
@@ -90,7 +90,7 @@ class GitHubClient:
         ttl_hours: float = 6,
         force_refresh: bool = False,
         paginate: bool = False,
-    ) -> dict | list:
+    ) -> object:
         """Cache-through fetch — checks DuckDB cache first."""
         if not force_refresh:
             raw = cache.cache_load(endpoint, ttl_hours)

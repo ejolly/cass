@@ -46,7 +46,7 @@ from .github_api import (
     GHStudentInfo,
 )
 from .grading import (
-    _format_lateness,
+    format_lateness,
     compute_canvas_grade,
     compute_gh_grade,
     numeric_grade,
@@ -94,7 +94,7 @@ __all__ = [
     "CanvasUser",
     "MatchResult",
     # Grading
-    "_format_lateness",
+    "format_lateness",
     "compute_canvas_grade",
     "compute_gh_grade",
     "numeric_grade",

@@ -10,6 +10,7 @@ __docformat__ = "google"
 
 import asyncio
 from datetime import datetime
+from typing import TypedDict
 
 import msgspec
 
@@ -25,6 +26,14 @@ from ..models import (
     GHSubmission,
     Student,
 )
+
+
+class _RepoInfo(TypedDict):
+    repo_name: str
+    repo_short: str
+    commit_count: int
+    passing: bool
+    grade: str
 
 
 # ---------------------------------------------------------------------------
@@ -123,7 +132,7 @@ async def fetch_submissions(
     accepted = msgspec.convert(data, list[GHAcceptedAssignment])
 
     # Build per-student info from accepted_assignments
-    student_repo_info: dict[str, dict] = {}
+    student_repo_info: dict[str, _RepoInfo] = {}
     for entry in accepted:
         repo_name = entry.repository.full_name if entry.repository else ""
         for student in entry.students:
@@ -162,12 +171,12 @@ async def fetch_submissions(
                 on_time = False
             else:
                 dl = assignment_deadline.isoformat()
-                before = await client.get_cached(
+                before_raw = await client.get_cached(
                     f"/repos/{cfg.org}/{repo_short}/commits?until={dl}&per_page=1",
                     ttl_hours=ttl_hours,
                     force_refresh=force_refresh,
                 )
-                on_time = len(before) > 0
+                on_time = isinstance(before_raw, list) and len(before_raw) > 0  # pyright: ignore[reportUnknownArgumentType]
 
                 after_data = await client.get_cached(
                     f"/repos/{cfg.org}/{repo_short}/commits?since={dl}",

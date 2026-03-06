@@ -167,7 +167,7 @@ def write_config(
     canvas_course_id: int = 0,
 ) -> None:
     """Write a cass.toml file."""
-    lines = []
+    lines: list[str] = []
     if classroom_id and org:
         lines += [
             "[classroom]",

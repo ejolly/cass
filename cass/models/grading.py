@@ -17,7 +17,7 @@ def compute_gh_grade(sub: GHSubmission) -> GHGrade:
             numeric_score=0.0,
         )
     if sub.late:
-        lateness = _format_lateness(sub.lateness_seconds)
+        lateness = format_lateness(sub.lateness_seconds)
         return GHGrade(
             github_username=sub.github_username,
             assignment_slug=sub.assignment_slug,
@@ -69,7 +69,7 @@ def compute_canvas_grade(
     )
 
 
-def _format_lateness(seconds: int) -> str:
+def format_lateness(seconds: int) -> str:
     """Format lateness seconds as '+Nd HH:MM'."""
     if seconds <= 0:
         return ""

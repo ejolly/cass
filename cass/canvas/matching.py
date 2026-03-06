@@ -14,6 +14,7 @@ from datetime import datetime
 
 from .client import CanvasClient, get_token, save_token
 from ..models import (
+    CanvasAssignment,
     CanvasStudent,
     CanvasSubmission,
     GHStudentInfo,
@@ -83,7 +84,9 @@ def fetch_students_with_sections(
     return students, sis_section_map
 
 
-def fetch_canvas_assignments(course_id: int) -> tuple[list, dict[int, str]]:
+def fetch_canvas_assignments(
+    course_id: int,
+) -> tuple[list[CanvasAssignment], dict[int, str]]:
     """Fetch all assignments and assignment group names from Canvas.
 
     Returns:
@@ -115,7 +118,7 @@ def fetch_canvas_submissions(
     with CanvasClient(course_id=course_id) as c:
         raw = c.list_submissions(canvas_assignment_id)
 
-    submissions = []
+    submissions: list[CanvasSubmission] = []
     for r in raw:
         if r.user_id not in known_canvas_ids:
             continue
@@ -225,7 +228,7 @@ def find_candidates(
     if not gh_tokens:
         return canvas_pool[:5]
 
-    scored = []
+    scored: list[tuple[int, CanvasStudent]] = []
     for c in canvas_pool:
         c_tokens = set(_normalize(c.name).split())
         overlap = len(gh_tokens & c_tokens)
@@ -239,7 +242,7 @@ def find_candidates(
 # --- Helpers ---
 
 
-def _slugify(name: str) -> str:
+def slugify(name: str) -> str:
     """Convert a Canvas assignment name to a URL-safe identifier."""
     name = name.lower().strip()
     for sep in (" ", "_", "/", "(", ")"):
