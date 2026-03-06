@@ -27,6 +27,7 @@ dependencies = [
     "msgspec>=0.20.0",
     "httpx>=0.28.1",
     "pytz>=2024.1",
+    "nicegui>=3.8.0",
 ]
 
 [project.urls]
