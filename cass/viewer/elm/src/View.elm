@@ -1,4 +1,4 @@
-module View exposing (initGrid, view)
+module View exposing (getDisplayedColumns, initGrid, view)
 
 {-| All view code for the viewer, written with elm-ui.
 
@@ -34,6 +34,9 @@ import Element.Font as Font
 import Element.Input as Input
 import Grid exposing (ColumnConfig)
 import Html
+import Html.Attributes
+import Html.Events
+import Json.Decode as D
 import Theme exposing (Palette)
 import Types exposing (..)
 
@@ -69,12 +72,35 @@ view model =
         , Font.size 13
         , Font.color p.text
         , Background.color p.bg
+        , htmlAttribute (Html.Events.preventDefaultOn "keydown" keyDecoder)
         ]
         (row [ width fill, height fill ]
             [ viewSidebar p model
             , viewMain p model
             ]
         )
+
+
+{-| Keyboard shortcut decoder.
+
+Ctrl+K / Cmd+K focuses the search box (with preventDefault to block
+the browser's default Ctrl+K behavior). Same as the classic viewer's
+`document.addEventListener("keydown", ...)`.
+
+-}
+keyDecoder : D.Decoder ( Msg, Bool )
+keyDecoder =
+    D.map3
+        (\key ctrl meta ->
+            if (ctrl || meta) && key == "k" then
+                ( FocusSearch, True )
+
+            else
+                ( NoOp, False )
+        )
+        (D.field "key" D.string)
+        (D.field "ctrlKey" D.bool)
+        (D.field "metaKey" D.bool)
 
 
 
@@ -280,19 +306,27 @@ viewToolbar p model =
         , el [ Font.size 12, Font.color p.textDim ]
             (text (rowCountText model))
 
-        -- alignRight on this element pushes it to the far right.
+        -- alignRight on this row pushes it to the far right.
         -- Equivalent to Tailwind's `ml-auto` on a flex child.
-        , el [ alignRight ] (viewSearchBox p model)
+        , row [ alignRight, spacing 8 ]
+            [ viewSearchBox p model
+            , viewExportButton p model
+            , viewPushButton p model
+            , viewStatusMessage p model
+            ]
         ]
 
 
 viewBadge : Palette -> Model -> Element Msg
 viewBadge p model =
-    case model.schema of
-        Just schema ->
+    case ( model.schema, model.selectedTable ) of
+        ( Just schema, Just tableName ) ->
             let
+                effectiveEditable =
+                    schema.editable && not (isCombinedTable tableName)
+
                 ( label, bgColor, textColor ) =
-                    if schema.editable then
+                    if effectiveEditable then
                         ( "EDITABLE", p.editableBg, p.editableText )
 
                     else
@@ -309,7 +343,7 @@ viewBadge p model =
                 ]
                 (text label)
 
-        Nothing ->
+        _ ->
             none
 
 
@@ -327,6 +361,7 @@ viewSearchBox p model =
         , Border.rounded 6
         , Background.color p.inputBg
         , Font.color p.text
+        , htmlAttribute (Html.Attributes.id "search-box")
         , focused
             [ Border.color p.accent
             , Border.shadow
@@ -346,6 +381,90 @@ viewSearchBox p model =
                 )
         , label = Input.labelHidden "Search rows"
         }
+
+
+viewExportButton : Palette -> Model -> Element Msg
+viewExportButton p model =
+    case model.selectedTable of
+        Just _ ->
+            Input.button
+                [ Font.size 12
+                , paddingXY 10 5
+                , Border.width 1
+                , Border.color p.inputBorder
+                , Border.rounded 6
+                , Background.color p.inputBg
+                , Font.color p.text
+                , mouseOver
+                    [ Border.color p.accent
+                    , Background.color p.accentLight
+                    ]
+                ]
+                { onPress = Just ExportCsv
+                , label = text "Export CSV"
+                }
+
+        Nothing ->
+            none
+
+
+viewPushButton : Palette -> Model -> Element Msg
+viewPushButton p model =
+    if model.pendingCount > 0 then
+        -- Non-interactive indicator showing pending Canvas changes.
+        -- Phase 2 will add the preview modal and push flow.
+        el
+            [ Font.size 12
+            , Font.semiBold
+            , paddingXY 10 5
+            , Border.width 1
+            , Border.color p.accent
+            , Border.rounded 6
+            , Background.color p.accentLight
+            , Font.color p.accent
+            ]
+            (row [ spacing 5 ]
+                [ text "Push to Canvas"
+                , el
+                    [ Font.size 10
+                    , Font.semiBold
+                    , Font.color p.white
+                    , Font.center
+                    , Background.color p.accent
+                    , Border.rounded 9
+                    , paddingXY 4 0
+                    , width (minimum 18 shrink)
+                    , height (px 18)
+                    ]
+                    (text (String.fromInt model.pendingCount))
+                ]
+            )
+
+    else
+        none
+
+
+viewStatusMessage : Palette -> Model -> Element Msg
+viewStatusMessage p model =
+    case model.statusMessage of
+        Just status ->
+            let
+                fontColor =
+                    case status.statusClass of
+                        "success" ->
+                            p.success
+
+                        "error" ->
+                            p.error
+
+                        _ ->
+                            p.text
+            in
+            el [ Font.size 12, Font.color fontColor ]
+                (text status.text)
+
+        Nothing ->
+            none
 
 
 
@@ -374,26 +493,45 @@ viewGridArea p model =
                         (text err)
 
                 Nothing ->
-                    el [ centerX, centerY, Font.color p.textDim ]
-                        (text "Select a table from the sidebar")
+                    column [ centerX, centerY, spacing 8 ]
+                        [ el [ centerX, Font.color p.textDim, Font.size 14 ]
+                            (text "Select a table from the sidebar")
+                        , el [ centerX, Font.size 12, Font.color p.textFaint ]
+                            (text "Use ⌘K to search within a table")
+                        ]
 
 
 rowCountText : Model -> String
 rowCountText model =
     let
-        count =
+        total =
             List.length model.rows
 
         colCount =
-            model.schema
-                |> Maybe.map (.columns >> List.length)
-                |> Maybe.withDefault 0
+            List.length model.columnNames
+
+        filterText =
+            if String.isEmpty model.searchText then
+                ""
+
+            else
+                " (" ++ String.fromInt model.filteredRowCount ++ " matching)"
     in
-    if count > 0 then
-        String.fromInt count ++ " rows · " ++ String.fromInt colCount ++ " columns"
+    if total > 0 then
+        String.fromInt total ++ " rows · " ++ String.fromInt colCount ++ " columns" ++ filterText
 
     else
         ""
+
+
+
+-- HELPERS
+
+
+isCombinedTable : String -> Bool
+isCombinedTable name =
+    not (String.startsWith "canvas_" name)
+        && not (String.startsWith "gh_" name)
 
 
 
@@ -413,6 +551,57 @@ hiddenColumns =
         ]
 
 
+{-| Preferred column order for specific tables.
+
+Matches the `COLUMN_OVERRIDES.order` from the classic viewer — puts
+the most useful columns first and appends any remaining columns after.
+
+-}
+columnOrdering : Dict String (List String)
+columnOrdering =
+    Dict.fromList
+        [ ( "canvas_assignments"
+          , [ "assignment_group", "name", "points_possible", "due_at", "published" ]
+          )
+        , ( "canvas_submissions"
+          , [ "student_name", "assignment_name", "assignment_group", "submitted", "submitted_at", "late", "score", "workflow_state" ]
+          )
+        , ( "canvas_grades"
+          , [ "student_name", "assignment_name", "assignment_group", "score", "posted_grade", "updated_at" ]
+          )
+        ]
+
+
+{-| Get the visible columns in display order for a table.
+
+Applies hidden-column filtering and custom ordering. Used both for
+grid display and CSV export.
+
+-}
+getDisplayedColumns : String -> List String -> List String
+getDisplayedColumns tableName allCols =
+    let
+        hidden =
+            Dict.get tableName hiddenColumns |> Maybe.withDefault []
+
+        visible =
+            List.filter (\c -> not (List.member c hidden)) allCols
+    in
+    case Dict.get tableName columnOrdering of
+        Nothing ->
+            visible
+
+        Just ordered ->
+            let
+                orderedVisible =
+                    List.filter (\c -> List.member c visible) ordered
+
+                remaining =
+                    List.filter (\c -> not (List.member c ordered)) visible
+            in
+            orderedVisible ++ remaining
+
+
 {-| Build grid config and initialize the grid model.
 
 Separated from the view so Main.update can call it when data arrives.
@@ -420,11 +609,11 @@ The grid library needs its dimensions at init time (like AG Grid's
 `domLayout` or `containerStyle` props in the JS world).
 
 -}
-initGrid : List String -> List String -> String -> List Row -> Grid.Model Row
-initGrid colNames colTypes tableName rows =
+initGrid : List String -> List String -> String -> List String -> List Row -> Grid.Model Row
+initGrid colNames colTypes tableName primaryKeys rows =
     let
         columns =
-            buildGridColumns colNames colTypes tableName
+            buildGridColumns colNames colTypes tableName primaryKeys
 
         gridConfig : Grid.Config Row
         gridConfig =
@@ -435,44 +624,62 @@ initGrid colNames colTypes tableName rows =
             , hasFilters = True
             , headerHeight = 60
             , lineHeight = 32
-            , rowClass = \_ -> ""
+            , rowClass =
+                \item ->
+                    if tableName == "canvas_assignments" then
+                        case Dict.get "published" item.data.values of
+                            Just "No" ->
+                                "unpublished-row"
+
+                            _ ->
+                                ""
+
+                    else
+                        ""
             }
     in
     Grid.init gridConfig rows
 
 
-buildGridColumns : List String -> List String -> String -> List (ColumnConfig Row)
-buildGridColumns colNames colTypes tableName =
+buildGridColumns : List String -> List String -> String -> List String -> List (ColumnConfig Row)
+buildGridColumns colNames colTypes tableName primaryKeys =
     let
-        hidden =
-            Dict.get tableName hiddenColumns |> Maybe.withDefault []
+        displayedCols =
+            getDisplayedColumns tableName colNames
+
+        colTypeMap =
+            List.map2 Tuple.pair colNames colTypes
+                |> Dict.fromList
     in
-    colNames
-        |> List.indexedMap
-            (\i colName ->
-                if List.member colName hidden then
-                    Nothing
+    List.map
+        (\colName ->
+            let
+                colType =
+                    Dict.get colName colTypeMap |> Maybe.withDefault "VARCHAR"
 
-                else
-                    let
-                        colType =
-                            List.drop i colTypes |> List.head |> Maybe.withDefault "VARCHAR"
+                isPK =
+                    List.member colName primaryKeys
 
-                        w =
-                            estimateWidth colName colType
-                    in
-                    Just
-                        (Grid.stringColumnConfig
-                            { id = colName
-                            , getter = \row -> Dict.get colName row.values |> Maybe.withDefault ""
-                            , localize = identity
-                            , title = colName
-                            , tooltip = colType
-                            , width = w
-                            }
-                        )
-            )
-        |> List.filterMap identity
+                title =
+                    if isPK then
+                        colName ++ " (PK)"
+
+                    else
+                        colName
+
+                w =
+                    estimateWidth colName colType
+            in
+            Grid.stringColumnConfig
+                { id = colName
+                , getter = \row -> Dict.get colName row.values |> Maybe.withDefault ""
+                , localize = identity
+                , title = title
+                , tooltip = colType
+                , width = w
+                }
+        )
+        displayedCols
 
 
 estimateWidth : String -> String -> Int

@@ -1,7 +1,10 @@
 module Api exposing
-    ( fetchSchemaAndData
+    ( buildCsvContent
+    , fetchPending
+    , fetchSchemaAndData
     , fetchTables
     , httpErrorToString
+    , matchesSearch
     , parseRows
     )
 
@@ -61,6 +64,16 @@ fetchSchemaAndData name =
     in
     Task.map2 Tuple.pair schemaTask dataTask
         |> Task.attempt (GotSchemaAndData name)
+
+
+{-| Fetch the pending Canvas changes count.
+-}
+fetchPending : Cmd Msg
+fetchPending =
+    Http.get
+        { url = "/api/pending"
+        , expect = Http.expectJson GotPending (D.field "count" D.int)
+        }
 
 
 resolveJson : D.Decoder a -> Http.Response String -> Result Http.Error a
@@ -174,6 +187,58 @@ jsonValueToString val =
 
                         Err _ ->
                             ""
+
+
+
+-- SEARCH
+
+
+{-| True if any column value in the row contains the query (case-insensitive).
+
+This is the OR-across-columns "quick filter" equivalent of AG Grid's
+`quickFilterText`. The grid library's built-in `SetFilters` uses AND
+logic, which is wrong for a global search box.
+
+-}
+matchesSearch : String -> Row -> Bool
+matchesSearch query row =
+    let
+        lowerQuery =
+            String.toLower query
+    in
+    Dict.values row.values
+        |> List.any (\val -> String.contains lowerQuery (String.toLower val))
+
+
+
+-- CSV EXPORT
+
+
+{-| Build a CSV string from column names and rows.
+
+Handles quoting for values that contain commas, quotes, or newlines.
+
+-}
+buildCsvContent : List String -> List Row -> String
+buildCsvContent columns rows =
+    let
+        escapeCsvField val =
+            if String.contains "," val || String.contains "\"" val || String.contains "\n" val then
+                "\"" ++ String.replace "\"" "\"\"" val ++ "\""
+
+            else
+                val
+
+        header =
+            String.join "," columns
+
+        rowLine row =
+            columns
+                |> List.map (\col -> Dict.get col row.values |> Maybe.withDefault "" |> escapeCsvField)
+                |> String.join ","
+    in
+    (header :: List.map rowLine rows)
+        |> String.join "\n"
 
 
 httpErrorToString : Http.Error -> String
