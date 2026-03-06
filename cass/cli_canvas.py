@@ -10,7 +10,8 @@ from rich.console import Console
 canvas_app = typer.Typer(
     invoke_without_command=True,
     no_args_is_help=False,
-    help="Canvas LMS management: browse and modify course content.",
+    rich_markup_mode="rich",
+    help="Canvas LMS — browse and modify course content.",
 )
 
 console = Console()
@@ -19,23 +20,23 @@ console = Console()
 modules_app = typer.Typer(
     invoke_without_command=True,
     no_args_is_help=False,
-    help="List, create, publish, and manage course modules.",
+    help="Course modules — list, create, publish, delete.",
 )
-canvas_app.add_typer(modules_app, name="modules")
+canvas_app.add_typer(modules_app, name="modules", rich_help_panel="Browse")
 
 assignments_app = typer.Typer(
     invoke_without_command=True,
     no_args_is_help=False,
-    help="List, create, publish, and manage course assignments.",
+    help="Assignments — list, create, publish, delete.",
 )
-canvas_app.add_typer(assignments_app, name="assignments")
+canvas_app.add_typer(assignments_app, name="assignments", rich_help_panel="Browse")
 
 quizzes_app = typer.Typer(
     invoke_without_command=True,
     no_args_is_help=False,
-    help="List, create, publish, and manage course quizzes.",
+    help="Quizzes — list, create, publish, delete.",
 )
-canvas_app.add_typer(quizzes_app, name="quizzes")
+canvas_app.add_typer(quizzes_app, name="quizzes", rich_help_panel="Browse")
 
 
 def _require_canvas() -> None:
@@ -66,6 +67,8 @@ def canvas_callback(ctx: typer.Context) -> None:
         return
     _require_canvas()
 
+    from rich.panel import Panel
+
     from .canvas_api import CanvasClient
 
     with CanvasClient() as c:
@@ -73,17 +76,52 @@ def canvas_callback(ctx: typer.Context) -> None:
         modules = c.list_modules()
         assignments = c.list_assignments()
         quizzes = c.list_quizzes()
-        announcements = c.list_announcements()
+        anns = c.list_announcements()
 
-    console.print(f"\n[bold]{course.name}[/bold]  ({course.course_code})")
-    console.print(f"  State: {course.workflow_state}")
+    lines = []
+    lines.append(f"  [dim]State[/dim]          {course.workflow_state}")
     if course.total_students is not None:
-        console.print(f"  Students: {course.total_students}")
-    console.print(f"  Modules: {len(modules)}")
-    console.print(f"  Assignments: {len(assignments)}")
-    console.print(f"  Quizzes: {len(quizzes)}")
-    console.print(f"  Announcements: {len(announcements)}")
+        lines.append(f"  [dim]Students[/dim]       {course.total_students}")
+    lines.append(f"  [dim]Modules[/dim]        {len(modules)}")
+    lines.append(f"  [dim]Assignments[/dim]    {len(assignments)}")
+    lines.append(f"  [dim]Quizzes[/dim]        {len(quizzes)}")
+    lines.append(f"  [dim]Announcements[/dim]  {len(anns)}")
+
+    title = f"[bold]{course.name}[/bold]"
+    if course.course_code:
+        title += f"  [dim]{course.course_code}[/dim]"
+
+    panel = Panel(
+        "\n".join(lines),
+        title=title,
+        title_align="left",
+        border_style="blue",
+        padding=(1, 1),
+    )
     console.print()
+    console.print(panel)
+
+    _canvas_guide(
+        "Browse content",
+        [
+            ("cass canvas people", "Student roster"),
+            ("cass canvas modules", "Course modules"),
+            ("cass canvas assignments", "Assignments"),
+            ("cass canvas files", "File tree"),
+        ],
+    )
+    _canvas_guide(
+        "More",
+        [("cass canvas --help", "All canvas commands")],
+    )
+    console.print()
+
+
+def _canvas_guide(heading: str, commands: list[tuple[str, str]]) -> None:
+    """Print a section of the canvas command guide."""
+    console.print(f"\n  [bold]{heading}[/bold]")
+    for cmd, desc in commands:
+        console.print(f"    [green]{cmd:<32s}[/green] [dim]{desc}[/dim]")
 
 
 # ---------------------------------------------------------------------------
@@ -91,7 +129,7 @@ def canvas_callback(ctx: typer.Context) -> None:
 # ---------------------------------------------------------------------------
 
 
-@canvas_app.command()
+@canvas_app.command(rich_help_panel="Browse")
 def people(
     csv_out: str = typer.Option("", "--csv", help="Export as CSV file"),
     save: str = typer.Option("", "--save", help="Save output as markdown file"),
@@ -531,7 +569,7 @@ def quizzes_delete(
 # ---------------------------------------------------------------------------
 
 
-@canvas_app.command()
+@canvas_app.command(rich_help_panel="Browse")
 def files(
     csv_out: str = typer.Option("", "--csv", help="Export as CSV file"),
     save: str = typer.Option("", "--save", help="Save output as markdown file"),
@@ -590,7 +628,7 @@ def files(
     console.print()
 
 
-@canvas_app.command(name="upload")
+@canvas_app.command(name="upload", rich_help_panel="Manage")
 def files_upload(
     path: str = typer.Argument(..., help="Local file path to upload"),
     folder: str = typer.Option("", "--folder", help="Destination folder in Canvas"),
@@ -608,7 +646,7 @@ def files_upload(
     console.print(f"[green]Uploaded:[/green] {f.display_name} (id={f.id})")
 
 
-@canvas_app.command(name="delete-file")
+@canvas_app.command(name="delete-file", rich_help_panel="Manage")
 def files_delete(
     file_id: int = typer.Argument(..., help="Canvas file ID"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
@@ -627,7 +665,7 @@ def files_delete(
 # ---------------------------------------------------------------------------
 
 
-@canvas_app.command()
+@canvas_app.command(rich_help_panel="Browse")
 def announcements(
     csv_out: str = typer.Option("", "--csv", help="Export as CSV file"),
     save: str = typer.Option("", "--save", help="Save output as markdown file"),
@@ -650,7 +688,7 @@ def announcements(
         report.render_list(headers, rows, title="Announcements")
 
 
-@canvas_app.command(name="announce")
+@canvas_app.command(name="announce", rich_help_panel="Manage")
 def announcements_create(
     title: str = typer.Argument(..., help="Announcement title"),
     message: str = typer.Option(..., "--message", "-m", help="HTML message body"),
@@ -662,7 +700,7 @@ def announcements_create(
     console.print(f"[green]Created announcement:[/green] {a.title} (id={a.id})")
 
 
-@canvas_app.command(name="update-announcement")
+@canvas_app.command(name="update-announcement", rich_help_panel="Manage")
 def announcements_update(
     topic_id: int = typer.Argument(..., help="Announcement (discussion topic) ID"),
     title: str = typer.Option("", "--title", help="New title"),
@@ -683,7 +721,7 @@ def announcements_update(
     console.print(f"[green]Updated:[/green] {a.title}")
 
 
-@canvas_app.command(name="delete-announcement")
+@canvas_app.command(name="delete-announcement", rich_help_panel="Manage")
 def announcements_delete(
     topic_id: int = typer.Argument(..., help="Announcement (discussion topic) ID"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
@@ -702,7 +740,7 @@ def announcements_delete(
 # ---------------------------------------------------------------------------
 
 
-@canvas_app.command()
+@canvas_app.command(rich_help_panel="Browse")
 def tabs(
     csv_out: str = typer.Option("", "--csv", help="Export as CSV file"),
     save: str = typer.Option("", "--save", help="Save output as markdown file"),
@@ -734,7 +772,7 @@ def tabs(
         report.render_list(headers, rows, title="Tabs")
 
 
-@canvas_app.command(name="show-tab")
+@canvas_app.command(name="show-tab", rich_help_panel="Manage")
 def tabs_show(
     tab_id: str = typer.Argument(..., help="Tab ID to show"),
 ) -> None:
@@ -745,7 +783,7 @@ def tabs_show(
     console.print(f"[green]Visible:[/green] {t.label}")
 
 
-@canvas_app.command(name="hide-tab")
+@canvas_app.command(name="hide-tab", rich_help_panel="Manage")
 def tabs_hide(
     tab_id: str = typer.Argument(..., help="Tab ID to hide"),
 ) -> None:
@@ -761,7 +799,7 @@ def tabs_hide(
 # ---------------------------------------------------------------------------
 
 
-@canvas_app.command()
+@canvas_app.command(rich_help_panel="Manage")
 def sync(
     dry_run: bool = typer.Option(
         True,

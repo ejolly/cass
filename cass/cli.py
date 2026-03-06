@@ -16,20 +16,21 @@ from .cli_canvas import canvas_app
 app = typer.Typer(
     invoke_without_command=True,
     no_args_is_help=False,
+    rich_markup_mode="rich",
 )
 grades_app = typer.Typer(
     invoke_without_command=True,
     no_args_is_help=False,
-    help="Show the gradebook as a student x assignment matrix, or push grades to Canvas.",
+    help="Gradebook matrix and grade sync to Canvas.",
 )
-app.add_typer(grades_app, name="grades")
+app.add_typer(grades_app, name="grades", rich_help_panel="View Data")
 db_app = typer.Typer(
     invoke_without_command=True,
     no_args_is_help=False,
-    help="Database tools: interactive REPL and cache management.",
+    help="Interactive DuckDB REPL and cache management.",
 )
-app.add_typer(db_app, name="db")
-app.add_typer(canvas_app, name="canvas")
+app.add_typer(db_app, name="db", rich_help_panel="Database")
+app.add_typer(canvas_app, name="canvas", rich_help_panel="Canvas LMS")
 
 console = Console()
 
@@ -101,56 +102,95 @@ def _require_canvas() -> None:
 
 
 def _status() -> None:
-    """Show project overview."""
+    """Show project overview with command guide."""
+    from rich.panel import Panel
+
     from . import db
     from .config import config_file_path, get_config
 
     cfg_path = config_file_path()
     if not cfg_path:
+        console.print()
         console.print(
-            "[yellow]No cass.toml found.[/yellow] Run [bold]cass init[/bold] to create one."
+            "[yellow]No cass.toml found.[/yellow] Run [bold]cass init[/bold] to get started."
         )
+        console.print()
         return
 
     cfg = get_config()
-    console.print("[bold]cass[/bold] project status\n")
-    console.print(f"  Config: {cfg_path}")
+
+    # Build status lines for the panel
+    lines: list[str] = []
+    lines.append(f"  [dim]Config[/dim]      {cfg_path.name}")
 
     if cfg.has_classroom:
-        console.print(
-            f"  GitHub Classroom: org=[bold]{cfg.org}[/bold] id={cfg.classroom_id}"
+        lines.append(
+            f"  [dim]GitHub[/dim]      {cfg.org} [dim](classroom {cfg.classroom_id})[/dim]"
         )
-    else:
-        console.print("  GitHub Classroom: [dim]not configured[/dim]")
 
     if cfg.has_canvas:
-        console.print(
-            f"  Canvas: [bold]{cfg.canvas_base_url}[/bold] course={cfg.canvas_course_id}"
+        host = cfg.canvas_base_url.replace("https://", "").replace("http://", "")
+        lines.append(
+            f"  [dim]Canvas[/dim]      {host} [dim](course {cfg.canvas_course_id})[/dim]"
         )
-    else:
-        console.print("  Canvas: [dim]not configured[/dim]")
 
     # DB stats
     db_file = Path(db.db_path())
     if db_file.exists():
         size_kb = db_file.stat().st_size / 1024
-        console.print(f"\n  Database: {db_file.name} ({size_kb:.0f} KB)")
-        console.print(f"    Cache entries: {db.cache_count()}")
-        if db.students_exist():
-            students = db.load_students()
-            canvas_count = sum(1 for s in students if s.canvas_id)
-            console.print(
-                f"    Students: {len(students)} ({canvas_count} with Canvas IDs)"
-            )
-        else:
-            console.print("    Students: [dim]none[/dim]")
-        assignments = db.load_assignments()
-        if assignments:
-            console.print(f"    Assignments: {len(assignments)}")
+        size_str = f"{size_kb:.0f} KB" if size_kb < 1024 else f"{size_kb / 1024:.1f} MB"
+        db_parts = [size_str]
+        try:
+            if db.students_exist():
+                students = db.load_students()
+                db_parts.append(f"{len(students)} students")
+            assignments = db.load_assignments()
+            if assignments:
+                db_parts.append(f"{len(assignments)} assignments")
+        except Exception:
+            pass
+        lines.append(
+            f"  [dim]Database[/dim]    {db_file.name} [dim]({' · '.join(db_parts)})[/dim]"
+        )
     else:
-        console.print("\n  Database: [dim]not yet created[/dim]")
+        lines.append("  [dim]Database[/dim]    [italic]not yet created[/italic]")
 
+    panel = Panel(
+        "\n".join(lines),
+        title=f"[bold]cass[/bold] [dim]v{__version__}[/dim]",
+        title_align="left",
+        border_style="blue",
+        padding=(1, 1),
+    )
     console.print()
+    console.print(panel)
+
+    # Command guide
+    _print_guide(
+        "Common commands",
+        [
+            ("cass pull", "Fetch data from APIs"),
+            ("cass students", "Student roster"),
+            ("cass grades", "Gradebook matrix"),
+        ],
+    )
+    if cfg.has_canvas:
+        _print_guide(
+            "Canvas",
+            [("cass canvas", "Course overview & management")],
+        )
+    _print_guide(
+        "More",
+        [("cass --help", "All commands and options")],
+    )
+    console.print()
+
+
+def _print_guide(heading: str, commands: list[tuple[str, str]]) -> None:
+    """Print a section of the command guide."""
+    console.print(f"\n  [bold]{heading}[/bold]")
+    for cmd, desc in commands:
+        console.print(f"    [green]{cmd:<24s}[/green] [dim]{desc}[/dim]")
 
 
 # ---------------------------------------------------------------------------
@@ -172,7 +212,7 @@ _INIT_TOML = """\
 """
 
 
-@app.command()
+@app.command(rich_help_panel="Setup")
 def init() -> None:
     """Initialize a new project or check an existing setup."""
     from . import canvas
@@ -258,7 +298,7 @@ def init() -> None:
 # ---------------------------------------------------------------------------
 
 
-@app.command()
+@app.command(rich_help_panel="Setup")
 def pull(
     do_students: bool = typer.Option(False, "--students", help="Pull students only"),
     do_assignments: bool = typer.Option(
@@ -320,7 +360,7 @@ def pull(
 # ---------------------------------------------------------------------------
 
 
-@app.command()
+@app.command(rich_help_panel="View Data")
 def students(
     all_students: bool = typer.Option(
         False, "--all", help="Show all students including excluded"
@@ -364,7 +404,7 @@ def students(
 # ---------------------------------------------------------------------------
 
 
-@app.command()
+@app.command(rich_help_panel="View Data")
 def assignments(
     save: str = typer.Option("", "--save", help="Save output as markdown file"),
     where: str = typer.Option(
@@ -395,7 +435,7 @@ def assignments(
 # ---------------------------------------------------------------------------
 
 
-@app.command()
+@app.command(rich_help_panel="View Data")
 def submissions(
     slug: str = typer.Argument("", help="Assignment slug to filter (or empty for all)"),
     save: str = typer.Option("", "--save", help="Save output as markdown file"),
@@ -607,7 +647,7 @@ def push(
 # ---------------------------------------------------------------------------
 
 
-@app.command()
+@app.command(rich_help_panel="Setup")
 def fetch(
     slug: str = typer.Argument(..., help="Assignment slug (or 'all')"),
     force: bool = typer.Option(False, "--force", help="Re-download existing files"),
@@ -647,7 +687,7 @@ def fetch(
 # ---------------------------------------------------------------------------
 
 
-@app.command()
+@app.command(rich_help_panel="Database")
 def drop(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
 ) -> None:
@@ -715,7 +755,7 @@ def _run_repl() -> None:
             console.print(f"[red]{e}[/red]")
 
 
-@app.command()
+@app.command(rich_help_panel="Database")
 def query(
     sql: str = typer.Argument(
         "", help="SQL query to execute (empty for interactive REPL)"
@@ -739,7 +779,7 @@ def query(
 _VALID_TABLES = ("students", "assignments", "submissions", "grades")
 
 
-@app.command(name="export")
+@app.command(name="export", rich_help_panel="Database")
 def export_table(
     table: str = typer.Argument(
         ..., help="Table to export (students, assignments, submissions, grades)"
@@ -769,7 +809,7 @@ def export_table(
         report.write_csv_file(f"{table}.csv", relation=result)
 
 
-@app.command(name="import")
+@app.command(name="import", rich_help_panel="Database")
 def import_csv(
     file: str = typer.Argument(..., help="CSV file to import"),
     table: str = typer.Option(
@@ -841,7 +881,7 @@ def import_csv(
     console.print(f"[green]Imported {len(rows)} rows into {table}.[/green]")
 
 
-@app.command()
+@app.command(rich_help_panel="Database")
 def view() -> None:
     """Open the database in Dataflare (GUI viewer)."""
     import subprocess
