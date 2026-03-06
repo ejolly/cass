@@ -6,13 +6,9 @@ __docformat__ = "google"
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import typer
 from rich.console import Console
-
-if TYPE_CHECKING:
-    from ..models import CanvasGrade
 
 from .. import __version__
 from .canvas import canvas_app
@@ -532,11 +528,10 @@ def push(
     ),
 ) -> None:
     """Sync grades to Canvas LMS (dry-run by default, use --post to submit)."""
-    from collections import defaultdict
-
     from rich.table import Table
 
     from .. import db
+    from ..canvas.sync import build_grade_push_data, build_push_preview, push_grades
 
     require_canvas()
 
@@ -545,44 +540,23 @@ def push(
         console.print("[yellow]No Canvas grades to push.[/yellow]")
         raise typer.Exit(code=1)
 
-    # Build {aid: {uid: grade_string}}, skipping empty/placeholder grades
-    grade_data_by_aid: dict[int, dict[int, str]] = {}
-    by_assignment: dict[int, list[CanvasGrade]] = defaultdict(list)
-    total_skipped = 0
-    for g in canvas_grades:
-        by_assignment[g.canvas_assignment_id].append(g)
-        if not g.posted_grade or g.posted_grade in ("-", "?"):
-            total_skipped += 1
-            continue
-        grade_data_by_aid.setdefault(g.canvas_assignment_id, {})[g.canvas_user_id] = (
-            g.posted_grade
-        )
+    grade_data_by_aid, total_skipped = build_grade_push_data(canvas_grades)
 
-    assignments = db.load_assignments()
-    aid_to_title = {
-        a.canvas_assignment_id: a.title for a in assignments if a.canvas_assignment_id
-    }
+    conn = db.get_db()
+    preview = build_push_preview(conn, grade_data_by_aid, canvas_grades)
 
     # Preview table
-    conn = db.get_db()
-    manual_rows = conn.execute(
-        "SELECT canvas_id, post_manually FROM canvas_assignments"
-    ).fetchall()
-    post_manually_map = {r[0]: r[1] for r in manual_rows}
-
     table = Table(title="Grade Push Preview", show_edge=False, pad_edge=False)
     table.add_column("Canvas Assignment")
     table.add_column("Canvas ID", justify="right")
     table.add_column("Grades")
     table.add_column("Post Policy")
 
-    for aid, grades in sorted(by_assignment.items()):
-        title = aid_to_title.get(aid, f"Assignment {aid}")
-        pushable = [
-            g for g in grades if g.posted_grade and g.posted_grade not in ("-", "?")
-        ]
-        policy = "[yellow]manual[/yellow]" if post_manually_map.get(aid) else "auto"
-        table.add_row(title, str(aid), str(len(pushable)), policy)
+    for row in preview:
+        policy = "[yellow]manual[/yellow]" if row["post_manually"] else "auto"
+        table.add_row(
+            str(row["name"]), str(row["canvas_id"]), str(row["count"]), policy
+        )
 
     console.print()
     console.print(table)
@@ -595,16 +569,18 @@ def push(
         return
 
     from ..canvas.client import CanvasClient
-    from ..canvas.sync import push_grades
 
     with CanvasClient() as c:
         results = push_grades(c, conn, grade_data_by_aid)
+
+    # Build name lookup from preview data
+    aid_to_name = {int(str(r["canvas_id"])): str(r["name"]) for r in preview}
 
     total_posted = 0
     failed: list[str] = []
     for r in results:
         aid: int = r["canvas_assignment_id"]  # type: ignore[assignment]
-        title = aid_to_title.get(aid, f"Assignment {aid}")
+        title = aid_to_name.get(aid, f"Assignment {aid}")
         if r.get("ok"):
             if r.get("action") == "posted_to_students":
                 console.print(
