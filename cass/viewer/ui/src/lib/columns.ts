@@ -53,11 +53,3 @@ export function getDisplayedColumns(
   return [...ordered, ...remaining];
 }
 
-/** Estimate pixel width for a column based on name and type. */
-export function estimateColumnWidth(colName: string, colType: string): number {
-  const base = colName.length * 9 + 40;
-  if (colType.includes("TIMESTAMP")) {
-    return Math.max(180, base);
-  }
-  return Math.max(90, base);
-}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getDisplayedColumns, estimateColumnWidth } from "$lib/columns.js";
+import { getDisplayedColumns } from "$lib/columns.js";
 
 describe("getDisplayedColumns", () => {
   it("hides canvas_id for canvas_assignments", () => {
@@ -65,24 +65,5 @@ describe("getDisplayedColumns", () => {
     expect(cols[0]).toBe("student_name");
     expect(cols[1]).toBe("assignment_name");
     expect(cols).not.toContain("canvas_user_id");
-  });
-});
-
-describe("estimateColumnWidth", () => {
-  it("returns at least 90px", () => {
-    expect(estimateColumnWidth("id", "INTEGER")).toBeGreaterThanOrEqual(90);
-  });
-
-  it("gives wider columns to timestamps", () => {
-    const tsWidth = estimateColumnWidth("created_at", "TIMESTAMP");
-    const varWidth = estimateColumnWidth("created_at", "VARCHAR");
-    expect(tsWidth).toBeGreaterThanOrEqual(180);
-    expect(tsWidth).toBeGreaterThanOrEqual(varWidth);
-  });
-
-  it("scales with column name length", () => {
-    const short = estimateColumnWidth("id", "VARCHAR");
-    const long = estimateColumnWidth("assignment_group_name", "VARCHAR");
-    expect(long).toBeGreaterThan(short);
   });
 });

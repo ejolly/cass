@@ -3,15 +3,17 @@
   import { classifyTable, type Row } from "$lib/types.js";
   import { getDisplayedColumns } from "$lib/columns.js";
   import * as api from "$lib/api.js";
+  import { createGrid, ModuleRegistry, AllCommunityModule, type GridApi, type GridOptions, type CellValueChangedEvent } from "ag-grid-community";
+  import "ag-grid-community/styles/ag-grid.css";
+  import "ag-grid-community/styles/ag-theme-alpine.css";
 
-  let sortCol = $state<string | null>(null);
-  let sortDir = $state<"asc" | "desc">("asc");
+  ModuleRegistry.registerModules([AllCommunityModule]);
 
-  const displayedCols = $derived(
-    app.selectedTable
-      ? getDisplayedColumns(app.selectedTable, app.columnNames)
-      : app.columnNames,
-  );
+  let gridDiv = $state<HTMLDivElement>(undefined!);
+  let gridApi: GridApi | null = null;
+
+  const isDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  const gridTheme = isDark ? "ag-theme-alpine-dark" : "ag-theme-alpine";
 
   const effectiveEditable = $derived(
     app.schema?.editable && app.selectedTable
@@ -19,82 +21,98 @@
       : false,
   );
 
-  const sortedRows = $derived.by(() => {
-    if (!sortCol) return app.rows;
-    const col = sortCol;
-    const dir = sortDir;
-    return [...app.rows].sort((a, b) => {
-      const av = a[col] ?? "";
-      const bv = b[col] ?? "";
-      const cmp = av.localeCompare(bv, undefined, { numeric: true });
-      return dir === "asc" ? cmp : -cmp;
-    });
-  });
-
-  function toggleSort(col: string) {
-    if (sortCol === col) {
-      sortDir = sortDir === "asc" ? "desc" : "asc";
-    } else {
-      sortCol = col;
-      sortDir = "asc";
-    }
-  }
-
   function isPK(col: string): boolean {
     return app.schema?.primary_keys.includes(col) ?? false;
   }
 
-  function isEditableCell(col: string): boolean {
-    if (!effectiveEditable || !app.schema) return false;
-    if (isPK(col)) return false;
-    return app.schema.columns.some((c) => c.name === col);
+  function isRealColumn(col: string): boolean {
+    return app.schema?.columns.some((c) => c.name === col) ?? false;
   }
 
-  function cellKey(row: Row, col: string): string {
-    if (!app.schema) return "";
+  function buildColumnDefs(table: string) {
+    const displayedCols = getDisplayedColumns(table, app.columnNames);
+    const typeMap: Record<string, string> = {};
+    for (let i = 0; i < app.columnNames.length; i++) {
+      const name = app.columnNames[i];
+      const type = app.columnTypes[i];
+      if (name !== undefined && type !== undefined) {
+        typeMap[name] = type;
+      }
+    }
+
+    return displayedCols.map((col) => {
+      const pk = isPK(col);
+      const colType = typeMap[col] ?? "";
+      const def: Record<string, unknown> = {
+        field: col,
+        headerName: pk ? `${col} (PK)` : col,
+        sortable: true,
+        filter: true,
+        resizable: true,
+        editable: effectiveEditable && !pk && isRealColumn(col),
+        minWidth: 80,
+      };
+
+      if (pk) {
+        def.cellStyle = { fontWeight: "500", opacity: "0.6" };
+      }
+
+      if (colType.includes("INT")) {
+        def.cellEditor = "agNumberCellEditor";
+        def.cellEditorParams = { allowDecimals: false };
+        def.filter = "agNumberColumnFilter";
+      } else if (colType.includes("DOUBLE") || colType.includes("FLOAT")) {
+        def.cellEditor = "agNumberCellEditor";
+        def.filter = "agNumberColumnFilter";
+      } else if (colType === "BOOLEAN") {
+        def.cellRenderer = (params: { value: unknown }) => {
+          if (params.value === null || params.value === undefined || params.value === "") return "";
+          return params.value === "Yes" || params.value === true ? "Yes" : "No";
+        };
+        def.cellEditor = "agCheckboxCellEditor";
+      }
+
+      return def;
+    });
+  }
+
+  function getRowStyle(params: { data?: Row }) {
+    if (
+      app.selectedTable === "canvas_assignments" &&
+      params.data?.["published"] === "No"
+    ) {
+      return { opacity: "0.45" };
+    }
+    return undefined;
+  }
+
+  async function handleCellEdit(event: CellValueChangedEvent) {
+    if (!app.schema?.editable || !app.selectedTable) return;
+
     const pk: Record<string, string> = {};
     for (const pkCol of app.schema.primary_keys) {
-      pk[pkCol] = row[pkCol] ?? "";
+      pk[pkCol] = event.data[pkCol] ?? "";
     }
-    return JSON.stringify(pk) + "::" + col;
-  }
-
-  function editingKey(): string | null {
-    if (!app.editing) return null;
-    return JSON.stringify(app.editing.pk) + "::" + app.editing.column;
-  }
-
-  function startEdit(row: Row, col: string) {
-    if (!isEditableCell(col) || !app.schema) return;
-    const pk: Record<string, string> = {};
-    for (const pkCol of app.schema.primary_keys) {
-      pk[pkCol] = row[pkCol] ?? "";
-    }
-    app.editing = {
-      column: col,
-      value: row[col] ?? "",
-      originalValue: row[col] ?? "",
-      pk,
-    };
-  }
-
-  async function commitEdit() {
-    const ed = app.editing;
-    if (!ed || !app.selectedTable) return;
-    if (ed.value === ed.originalValue) {
-      app.editing = null;
-      return;
-    }
-    const table = app.selectedTable;
-    app.editing = null;
 
     try {
-      const result = await api.updateCell(table, ed.pk, ed.column, ed.value);
+      const result = await api.updateCell(
+        app.selectedTable,
+        pk,
+        event.colDef.field!,
+        event.newValue,
+      );
+
       if (result.ok) {
         if (result.pending_count !== undefined) app.pendingCount = result.pending_count;
         setStatus("Saved", "success");
-        // Refresh table data
-        const { schema, data } = await api.fetchSchemaAndData(table);
+        event.api.flashCells({
+          rowNodes: [event.node],
+          columns: [event.colDef.field!],
+          flashDuration: 300,
+          fadeDuration: 200,
+        });
+        // Refresh table data to get server-side state
+        const { schema, data } = await api.fetchSchemaAndData(app.selectedTable);
         app.schema = schema;
         app.columnNames = data.columns;
         app.columnTypes = data.types;
@@ -105,26 +123,80 @@
           : rows;
       } else {
         setStatus(result.error ?? "Update failed", "error");
+        // Revert
+        event.data[event.colDef.field!] = event.oldValue;
+        event.api.refreshCells({
+          rowNodes: [event.node],
+          columns: [event.colDef.field!],
+        });
       }
     } catch {
       setStatus("Network error", "error");
+      event.data[event.colDef.field!] = event.oldValue;
+      event.api.refreshCells({
+        rowNodes: [event.node],
+        columns: [event.colDef.field!],
+      });
     }
   }
 
-  function handleEditKeydown(e: KeyboardEvent) {
-    if (e.key === "Enter") commitEdit();
-    if (e.key === "Escape") app.editing = null;
+  function createOrUpdateGrid() {
+    if (!app.selectedTable || !gridDiv) return;
+
+    const columnDefs = buildColumnDefs(app.selectedTable);
+    const rowData = app.rows.map((row) => ({ ...row }));
+
+    if (gridApi) {
+      gridApi.destroy();
+      gridApi = null;
+    }
+
+    const gridOptions: GridOptions = {
+      columnDefs,
+      rowData,
+      defaultColDef: {
+        sortable: true,
+        resizable: true,
+      },
+      animateRows: false,
+      singleClickEdit: false,
+      stopEditingWhenCellsLoseFocus: true,
+      getRowStyle,
+      onCellValueChanged: handleCellEdit,
+      onFirstDataRendered: (params) => {
+        params.api.autoSizeAllColumns();
+      },
+    };
+
+    gridApi = createGrid(gridDiv, gridOptions);
   }
 
-  function isUnpublished(row: Row): boolean {
-    return app.selectedTable === "canvas_assignments" && row["published"] === "No";
-  }
+  // Rebuild grid when table selection changes (schema + rows arrive together)
+  let lastTable = $state<string | null>(null);
+  let lastRowCount = $state(-1);
 
-  /** Svelte action: focus and select input on mount. */
-  function autofocus(node: HTMLInputElement) {
-    node.focus();
-    node.select();
-  }
+  $effect(() => {
+    const table = app.selectedTable;
+    const rowCount = app.rows.length;
+    const colCount = app.columnNames.length;
+    // Track dependencies
+    void colCount;
+
+    if (table && gridDiv && (table !== lastTable || rowCount !== lastRowCount)) {
+      lastTable = table;
+      lastRowCount = rowCount;
+      // Use tick to ensure DOM is ready
+      queueMicrotask(createOrUpdateGrid);
+    }
+  });
+
+  // Sync search filter to AG Grid's quick filter
+  $effect(() => {
+    const search = app.searchText;
+    if (gridApi) {
+      gridApi.setGridOption("quickFilterText", search);
+    }
+  });
 </script>
 
 {#if app.error}
@@ -133,65 +205,11 @@
   <div class="flex flex-1 flex-col items-center justify-center gap-2 opacity-50">
     <p class="text-sm">Select a table from the sidebar</p>
     <p class="text-xs">
-      Use <kbd class="kbd kbd-xs">{navigator.platform?.includes("Mac") ? "⌘" : "Ctrl"}</kbd>+<kbd class="kbd kbd-xs">K</kbd> to search
+      Use <kbd class="kbd kbd-xs">{navigator.platform?.includes("Mac") ? "\u2318" : "Ctrl"}</kbd>+<kbd class="kbd kbd-xs">K</kbd> to search
     </p>
   </div>
 {:else}
-  <div class="flex-1 overflow-auto">
-    <table class="table table-xs table-pin-rows">
-      <thead>
-        <tr>
-          {#each displayedCols as col}
-            <th
-              class="cursor-pointer select-none whitespace-nowrap"
-              onclick={() => toggleSort(col)}
-            >
-              {isPK(col) ? `${col} (PK)` : col}
-              {#if sortCol === col}
-                <span class="ml-0.5">{sortDir === "asc" ? "\u25B2" : "\u25BC"}</span>
-              {/if}
-            </th>
-          {/each}
-        </tr>
-      </thead>
-      <tbody>
-        {#each sortedRows as row}
-          <tr class:opacity-45={isUnpublished(row)}>
-            {#each displayedCols as col}
-              {@const editing = editingKey() === cellKey(row, col)}
-              <td
-                class="whitespace-nowrap"
-                class:cursor-pointer={isEditableCell(col)}
-                class:font-medium={isPK(col)}
-                class:opacity-60={isPK(col)}
-                onclick={() => { if (!editing) startEdit(row, col); }}
-              >
-                {#if editing}
-                  <input
-                    type="text"
-                    class="input input-xs input-bordered w-full min-w-16"
-                    value={app.editing?.value ?? ""}
-                    oninput={(e: Event) => {
-                      if (app.editing) app.editing.value = (e.target as HTMLInputElement).value;
-                    }}
-                    onkeydown={handleEditKeydown}
-                    onblur={() => commitEdit()}
-                    use:autofocus
-                  />
-                {:else}
-                  {row[col] ?? ""}
-                {/if}
-              </td>
-            {/each}
-          </tr>
-        {:else}
-          <tr>
-            <td colspan={displayedCols.length} class="py-8 text-center opacity-50">
-              No results.
-            </td>
-          </tr>
-        {/each}
-      </tbody>
-    </table>
+  <div class="flex-1 overflow-hidden">
+    <div bind:this={gridDiv} class="{gridTheme}" style="height: 100%; width: 100%;"></div>
   </div>
 {/if}
