@@ -1091,12 +1091,6 @@ def import_csv(
 @app.command()
 def view(
     port: int = typer.Option(0, "--port", help="Port number (0 = auto-select)"),
-    classic: bool = typer.Option(
-        False, "--classic", help="Use the classic AG Grid frontend"
-    ),
-    nicegui: bool = typer.Option(
-        False, "--nicegui", help="Use the NiceGUI-based viewer (prototype)"
-    ),
 ) -> None:
     """Open the database in a browser-based viewer."""
     from .. import db
@@ -1109,14 +1103,9 @@ def view(
             )
             raise typer.Exit(code=1)
 
-    if nicegui:
-        from ..viewer.nicegui_app import start_nicegui_server
+    from ..viewer.nicegui_app import start_nicegui_server
 
-        start_nicegui_server(port=port)
-    else:
-        from ..viewer import start_server
-
-        start_server(port=port, classic=classic)
+    start_nicegui_server(port=port)
 
 
 @db_app.callback()
