@@ -1,4 +1,4 @@
-module Main exposing (main)
+port module Main exposing (main)
 
 {-| cass database viewer — Elm frontend with elm-ui.
 
@@ -21,10 +21,23 @@ can replay the entire app history.
 
 import Api
 import Browser
+import Browser.Dom
 import Dict
 import Grid
+import Process
+import Task
 import Types exposing (..)
 import View
+
+
+{-| Port for triggering a CSV file download in JavaScript.
+
+In Svelte/JS you'd create a Blob and an anchor element. In Elm, side
+effects that touch browser APIs outside the virtual DOM go through
+ports — typed channels between Elm and JS.
+
+-}
+port downloadCsv : { filename : String, content : String } -> Cmd msg
 
 
 main : Program () Model Msg
@@ -47,8 +60,13 @@ init _ =
       , searchText = ""
       , sidebarCollapsed = False
       , error = Nothing
+      , pendingCount = 0
+      , statusMessage = Nothing
+      , columnNames = []
+      , columnTypes = []
+      , filteredRowCount = 0
       }
-    , Api.fetchTables
+    , Cmd.batch [ Api.fetchTables, Api.fetchPending ]
     )
 
 
@@ -68,7 +86,7 @@ update msg model =
                 Ok tables ->
                     let
                         firstTable =
-                            List.head tables |> Maybe.map .name
+                            pickFirstTable tables
                     in
                     ( { model | tables = tables }
                     , case firstTable of
@@ -104,7 +122,7 @@ update msg model =
                             Api.parseRows tableData
 
                         gridModel =
-                            View.initGrid tableData.columns tableData.types name rows
+                            View.initGrid tableData.columns tableData.types name schema.primaryKeys rows
                     in
                     ( { model
                         | selectedTable = Just name
@@ -112,6 +130,9 @@ update msg model =
                         , rows = rows
                         , gridModel = Just gridModel
                         , error = Nothing
+                        , columnNames = tableData.columns
+                        , columnTypes = tableData.types
+                        , filteredRowCount = List.length rows
                       }
                     , Cmd.none
                     )
@@ -134,29 +155,113 @@ update msg model =
                     ( model, Cmd.none )
 
         SearchChanged newText ->
-            case model.gridModel of
-                Just gm ->
-                    let
-                        filters =
-                            if String.isEmpty newText then
-                                Dict.empty
+            let
+                filtered =
+                    if String.isEmpty newText then
+                        model.rows
 
-                            else
-                                model.schema
-                                    |> Maybe.map .columns
-                                    |> Maybe.withDefault []
-                                    |> List.map (\c -> ( c.name, newText ))
-                                    |> Dict.fromList
+                    else
+                        List.filter (Api.matchesSearch newText) model.rows
 
-                        ( newGridModel, gridCmd ) =
-                            Grid.update (Grid.SetFilters filters) gm
-                    in
-                    ( { model | searchText = newText, gridModel = Just newGridModel }
-                    , Cmd.map GridMsg gridCmd
-                    )
+                primaryKeys =
+                    model.schema
+                        |> Maybe.map .primaryKeys
+                        |> Maybe.withDefault []
 
-                Nothing ->
-                    ( { model | searchText = newText }, Cmd.none )
+                newGridModel =
+                    case model.selectedTable of
+                        Just tableName ->
+                            Just (View.initGrid model.columnNames model.columnTypes tableName primaryKeys filtered)
+
+                        Nothing ->
+                            model.gridModel
+            in
+            ( { model
+                | searchText = newText
+                , gridModel = newGridModel
+                , filteredRowCount = List.length filtered
+              }
+            , Cmd.none
+            )
 
         ToggleSidebar ->
             ( { model | sidebarCollapsed = not model.sidebarCollapsed }, Cmd.none )
+
+        GotPending result ->
+            case result of
+                Ok count ->
+                    ( { model | pendingCount = count }, Cmd.none )
+
+                Err _ ->
+                    -- Canvas may not be configured — ignore
+                    ( model, Cmd.none )
+
+        ClearStatus expectedText ->
+            case model.statusMessage of
+                Just status ->
+                    if status.text == expectedText then
+                        ( { model | statusMessage = Nothing }, Cmd.none )
+
+                    else
+                        ( model, Cmd.none )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        ExportCsv ->
+            case model.selectedTable of
+                Just tableName ->
+                    let
+                        displayedCols =
+                            View.getDisplayedColumns tableName model.columnNames
+
+                        filtered =
+                            if String.isEmpty model.searchText then
+                                model.rows
+
+                            else
+                                List.filter (Api.matchesSearch model.searchText) model.rows
+
+                        csv =
+                            Api.buildCsvContent displayedCols filtered
+                    in
+                    ( model, downloadCsv { filename = tableName ++ ".csv", content = csv } )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        FocusSearch ->
+            ( model
+            , Browser.Dom.focus "search-box"
+                |> Task.attempt (\_ -> NoOp)
+            )
+
+        NoOp ->
+            ( model, Cmd.none )
+
+
+{-| Pick the first table to auto-select, preferring combined tables.
+
+Matches the sidebar display order: Combined Data → Canvas → GitHub.
+
+-}
+pickFirstTable : List TableInfo -> Maybe String
+pickFirstTable tables =
+    let
+        combined =
+            List.filter
+                (\t ->
+                    not (String.startsWith "canvas_" t.name)
+                        && not (String.startsWith "gh_" t.name)
+                )
+                tables
+
+        canvas =
+            List.filter (\t -> String.startsWith "canvas_" t.name) tables
+
+        github =
+            List.filter (\t -> String.startsWith "gh_" t.name) tables
+    in
+    List.concatMap identity [ combined, canvas, github ]
+        |> List.head
+        |> Maybe.map .name

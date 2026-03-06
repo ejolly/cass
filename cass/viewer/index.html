@@ -81,13 +81,31 @@
     [data-testid^="dragHandle-"] ~ div div {
       background-color: #aaa !important;
     }
+
+    /* Unpublished assignments — dimmed row */
+    .unpublished-row {
+      opacity: 0.45;
+    }
   </style>
 </head>
 <body>
   <div id="elm-app"></div>
   <script src="/elm.js"></script>
   <script>
-    Elm.Main.init({ node: document.getElementById("elm-app") });
+    var app = Elm.Main.init({ node: document.getElementById("elm-app") });
+
+    // Port: CSV file download
+    app.ports.downloadCsv.subscribe((data) => {
+      const blob = new Blob([data.content], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = data.filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    });
   </script>
 </body>
 </html>

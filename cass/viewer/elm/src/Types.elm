@@ -3,6 +3,7 @@ module Types exposing
     , Model
     , Msg(..)
     , Row
+    , StatusMessage
     , TableData
     , TableInfo
     , TableSchema
@@ -66,6 +67,14 @@ type alias Row =
     { values : Dict String String }
 
 
+{-| A transient status message shown in the toolbar (e.g. "Saved", "Push failed").
+-}
+type alias StatusMessage =
+    { text : String
+    , statusClass : String
+    }
+
+
 type alias Model =
     { tables : List TableInfo
     , selectedTable : Maybe String
@@ -75,6 +84,11 @@ type alias Model =
     , searchText : String
     , sidebarCollapsed : Bool
     , error : Maybe String
+    , pendingCount : Int
+    , statusMessage : Maybe StatusMessage
+    , columnNames : List String
+    , columnTypes : List String
+    , filteredRowCount : Int
     }
 
 
@@ -92,3 +106,8 @@ type Msg
     | GridMsg (Grid.Msg Row)
     | SearchChanged String
     | ToggleSidebar
+    | GotPending (Result Http.Error Int)
+    | ClearStatus String
+    | ExportCsv
+    | FocusSearch
+    | NoOp
