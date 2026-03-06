@@ -11,7 +11,7 @@ import duckdb
 from .config import get_config
 from .models import Assignment, Grade, Student, Submission
 
-DB_FILENAME = "cass.db"
+DB_FILENAME = "cass.duckdb"
 _SCHEMA_VERSION = 5
 
 _conn: duckdb.DuckDBPyConnection | None = None

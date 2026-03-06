@@ -2,7 +2,7 @@
 
 ## Overview
 
-`cass` is a CLI tool for grading classroom assignments. It supports **GitHub Classroom**, **Canvas LMS**, or **both** — configure whichever systems your course uses. Data is stored in a per-project DuckDB database (`cass.db`). No external database setup needed — everything is self-contained.
+`cass` is a CLI tool for grading classroom assignments. It supports **GitHub Classroom**, **Canvas LMS**, or **both** — configure whichever systems your course uses. Data is stored in a per-project DuckDB database (`cass.duckdb`). No external database setup needed — everything is self-contained.
 
 Installable via `uv tool install cass` or `uvx cass`.
 
@@ -77,7 +77,7 @@ cass fetch hw-01                          # download student files
 cass fetch all --force                    # re-download existing
 cass query "SELECT * FROM students"       # raw DuckDB SQL query
 cass query                                # interactive DuckDB REPL
-cass view                                 # open cass.db in Dataflare (GUI viewer)
+cass view                                 # open cass.duckdb in Dataflare (GUI viewer)
 cass db                                   # interactive DuckDB REPL (alias)
 cass db clean                             # clear api_cache for git commits
 cass export grades --csv grades.csv       # export table to CSV
@@ -139,7 +139,7 @@ Python package (`cass/`) with Typer CLI, DuckDB storage, msgspec models, and Ric
 
 ## Database
 
-Per-project DuckDB file (`cass.db`) in the project root. Auto-created on first use.
+Per-project DuckDB file (`cass.duckdb`) in the project root. Auto-created on first use.
 
 Schema version 5. Tables:
 - `meta` — schema version tracking
@@ -152,11 +152,11 @@ Schema version 5. Tables:
 All tables are queryable via `cass query "SQL"`, the interactive REPL (`cass query`), or directly with the `duckdb` CLI:
 
 ```bash
-duckdb cass.db -c "SQL"              # quick one-off query
-duckdb -readonly cass.db -c "SQL"    # safe read-only access
-duckdb cass.db -csv -c "SQL"         # export as CSV
-duckdb cass.db -json -c "SQL"        # export as JSON
-duckdb cass.db                       # interactive REPL
+duckdb cass.duckdb -c "SQL"              # quick one-off query
+duckdb -readonly cass.duckdb -c "SQL"    # safe read-only access
+duckdb cass.duckdb -csv -c "SQL"         # export as CSV
+duckdb cass.duckdb -json -c "SQL"        # export as JSON
+duckdb cass.duckdb                       # interactive REPL
 ```
 
 Prefer `duckdb` CLI over Python for quick inspection, ad-hoc queries, and data checks.
@@ -178,14 +178,14 @@ Prefer `duckdb` CLI over Python for quick inspection, ad-hoc queries, and data c
 
 ## Collaborative Workflow
 
-`cass.db` is the shared source of truth — commit it to git. The `api_cache` table is ephemeral (~2MB of API responses); clear it before committing to keep the file small.
+`cass.duckdb` is the shared source of truth — commit it to git. The `api_cache` table is ephemeral (~2MB of API responses); clear it before committing to keep the file small.
 
 ```bash
 # TA grades hw-02, pushes
 git pull
 cass pull --grades
 cass db clean
-git add cass.db && git commit -m "grade hw-02" && git push
+git add cass.duckdb && git commit -m "grade hw-02" && git push
 
 # Instructor pulls, reviews, pushes to Canvas
 git pull
@@ -197,7 +197,7 @@ cass export grades --csv grades.csv
 # edit in Excel/Numbers
 cass import grades.csv
 cass db clean
-git add cass.db && git commit -m "manual grade adjustments" && git push
+git add cass.duckdb && git commit -m "manual grade adjustments" && git push
 ```
 
 At this scale (15 students, <20 assignments), concurrent edits are unlikely. If a binary conflict occurs, last pusher re-pulls and re-applies.

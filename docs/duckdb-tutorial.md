@@ -1,6 +1,6 @@
 # DuckDB CLI Tutorial for cass
 
-Your cass project stores everything in `cass.db` (DuckDB v1.4.4). When `cass` doesn't have the query you need, drop to the DuckDB CLI directly.
+Your cass project stores everything in `cass.duckdb` (DuckDB v1.4.4). When `cass` doesn't have the query you need, drop to the DuckDB CLI directly.
 
 ---
 
@@ -8,16 +8,16 @@ Your cass project stores everything in `cass.db` (DuckDB v1.4.4). When `cass` do
 
 ```bash
 # Interactive REPL on the cass database
-duckdb cass.db
+duckdb cass.duckdb
 
 # Read-only (safe for poking around)
-duckdb -readonly cass.db
+duckdb -readonly cass.duckdb
 
 # Run a one-liner without entering the REPL
-duckdb cass.db "SELECT COUNT(*) FROM students"
+duckdb cass.duckdb "SELECT COUNT(*) FROM students"
 
 # Multiple one-liners
-duckdb cass.db -c "SELECT * FROM students LIMIT 5" -c "SELECT * FROM assignments LIMIT 5"
+duckdb cass.duckdb -c "SELECT * FROM students LIMIT 5" -c "SELECT * FROM assignments LIMIT 5"
 ```
 
 The `cass query` command also gives you a REPL, but the raw `duckdb` CLI has more features (output modes, `.import`, `.once`, UI, etc).
@@ -86,9 +86,9 @@ SELECT * FROM assignments WHERE slug = 'hw-01';
 You can also set the mode from the command line:
 
 ```bash
-duckdb -markdown cass.db "SELECT * FROM students LIMIT 5"
-duckdb -csv cass.db "SELECT * FROM assignments"
-duckdb -json cass.db "SELECT * FROM grades LIMIT 3"
+duckdb -markdown cass.duckdb "SELECT * FROM students LIMIT 5"
+duckdb -csv cass.duckdb "SELECT * FROM assignments"
+duckdb -json cass.duckdb "SELECT * FROM grades LIMIT 3"
 ```
 
 ---
@@ -111,15 +111,15 @@ SELECT * FROM students;
 Or from the command line (no REPL needed):
 
 ```bash
-duckdb -csv -noheader cass.db "SELECT * FROM students" > students_noheader.csv
-duckdb -csv cass.db "SELECT * FROM students" > students.csv
+duckdb -csv -noheader cass.duckdb "SELECT * FROM students" > students_noheader.csv
+duckdb -csv cass.duckdb "SELECT * FROM students" > students.csv
 ```
 
 ### Export to Markdown
 
 ```bash
 # One-liner to markdown file
-duckdb -markdown cass.db "SELECT identifier, name FROM students ORDER BY identifier" > roster.md
+duckdb -markdown cass.duckdb "SELECT identifier, name FROM students ORDER BY identifier" > roster.md
 ```
 
 Or inside the REPL:
@@ -136,7 +136,7 @@ SELECT identifier, name FROM students ORDER BY identifier;
 COPY students TO 'students.json' (FORMAT JSON);
 
 -- Or from CLI:
--- duckdb -json cass.db "SELECT * FROM students" > students.json
+-- duckdb -json cass.duckdb "SELECT * FROM students" > students.json
 ```
 
 ### Export to Parquet (for sharing with Polars/Pandas later)
@@ -246,7 +246,7 @@ DuckDB ships with a built-in web UI powered by the `ui` extension. It launches a
 
 ```bash
 # Launch the web UI on your cass database
-duckdb -ui cass.db
+duckdb -ui cass.duckdb
 ```
 
 This will:
@@ -310,16 +310,16 @@ duckdb -readonly ~/.duckdb/extension_data/ui/ui.db "SELECT id, name, created FRO
 
 ```bash
 # Pipe a SQL file
-duckdb cass.db < query.sql
+duckdb cass.duckdb < query.sql
 
 # Use -f for the same thing
-duckdb cass.db -f query.sql
+duckdb cass.duckdb -f query.sql
 
 # Chain with other CLI tools
-duckdb -csv cass.db "SELECT identifier, name FROM students" | xan sort -s name
+duckdb -csv cass.duckdb "SELECT identifier, name FROM students" | xan sort -s name
 
 # Quick row count for all tables
-duckdb cass.db "SELECT table_name, estimated_row_count FROM duckdb_tables()"
+duckdb cass.duckdb "SELECT table_name, estimated_row_count FROM duckdb_tables()"
 ```
 
 ---
@@ -330,5 +330,5 @@ duckdb cass.db "SELECT table_name, estimated_row_count FROM duckdb_tables()"
 - **DESCRIBE**: `DESCRIBE SELECT ...` shows the output schema of any query without running it.
 - **Glob reads**: `SELECT * FROM read_csv('data/*.csv')` reads all matching files.
 - **Attach multiple DBs**: `ATTACH 'other.db' AS other; SELECT * FROM other.students;`
-- **Ephemeral DB**: `duckdb` with no filename creates an in-memory DB — useful for quick CSV wrangling without touching cass.db.
+- **Ephemeral DB**: `duckdb` with no filename creates an in-memory DB — useful for quick CSV wrangling without touching cass.duckdb.
 - **Safe exploration**: Use `-readonly` when you're just looking. Prevents accidental writes.
