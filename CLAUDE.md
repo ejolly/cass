@@ -81,7 +81,8 @@ cass backup --list                        # list existing backups
 cass restore backups/cass_2026-03-05.duckdb  # restore from backup (with confirmation)
 cass query "SELECT * FROM students"       # raw DuckDB SQL query
 cass query                                # interactive DuckDB REPL
-cass view                                 # open cass.duckdb in Dataflare (GUI viewer)
+cass view                                 # browser-based DB viewer (AG Grid spreadsheet UI)
+cass view --port 8080                     # use a fixed port
 cass db                                   # interactive DuckDB REPL (alias)
 cass db clean                             # clear api_cache for git commits
 cass export grades --csv grades.csv       # export table to CSV
@@ -138,6 +139,7 @@ Python package (`cass/`) with Typer CLI, DuckDB storage, msgspec models, and Ric
 | `cass/canvas.py` | Canvas business logic: roster matching, name normalization, grade sync |
 | `cass/canvas_api.py` | Canvas HTTP client: typed `CanvasClient`, retry transport, token management |
 | `cass/fetch.py` | Download student files from repos |
+| `cass/viewer/` | Browser-based DB viewer: stdlib HTTP server + AG Grid frontend |
 | `cass/report.py` | Rich tables, CSV, markdown output formatting |
 
 ---
@@ -293,6 +295,7 @@ Task runner: [poethepoet](https://poethepoet.naber.me/) (dev dependency).
 ```bash
 uv run poe lint            # format (ruff) + lint (ruff) + type check (ty)
 uv run poe test            # run pytest suite
+uv run poe install         # install as global CLI tool (force reinstall)
 uv run poe docs            # generate API docs to docs/api/
 uv run poe docs-serve      # live-preview API docs
 uv build                   # build wheel + sdist
@@ -321,7 +324,7 @@ Team: **Ejolly** (EJO). Issues are prefixed `EJO-NNN`.
 | EJO-321 | User-friendly CLI commands for common data operations | High | Done |
 | EJO-322 | Canvas API compliance: User-Agent, rate limiting, 429 retry | High | Done |
 | EJO-323 | Documentation: README, CLI help, Google-style docstrings, pdoc | Medium | Done |
-| EJO-324 | Recommend Dataflare as interactive DB viewer/editor + CLI launcher | Low | Done |
+| EJO-324 | Bundled browser-based DB viewer (replaced Dataflare) | Low | Done |
 | EJO-325 | Canvas API layer: typed client, CLI subcommands, config-as-data | High | Done |
 
 ### Linear CLI essentials

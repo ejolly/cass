@@ -160,10 +160,11 @@ Backups are saved to a `backups/` directory (auto-created, gitignored).
 ```bash
 cass query "SELECT * FROM students WHERE github_username IS NOT NULL"
 cass query                    # interactive DuckDB REPL
-cass view                     # open cass.duckdb in Dataflare (GUI viewer)
+cass view                     # browser-based spreadsheet viewer (AG Grid)
+cass view --port 8080         # use a fixed port
 ```
 
-[Dataflare](https://dataflare.app/) is a recommended GUI for browsing and editing the database interactively. Install with `brew install --cask dataflare`.
+`cass view` opens a browser-based spreadsheet UI for browsing and editing the database — no external apps to install. Tables are sortable, filterable, and editable with changes written back to DuckDB. Views are shown read-only.
 
 ### Global flags
 
@@ -227,6 +228,7 @@ When both `[classroom]` and `[canvas]` are configured, `cass pull` will:
 | `db.py` | DuckDB database — schema, CRUD for all tables, raw queries |
 | `cache.py` | API response cache in separate `.cass_cache.duckdb` file |
 | `fetch.py` | Download student files from GitHub repos |
+| `viewer/` | Browser-based DB viewer — stdlib HTTP server + AG Grid frontend |
 | `report.py` | Output formatting — Rich tables, CSV, and markdown |
 | `models/` | msgspec.Struct types split into domain, github_api, canvas_api, grading |
 
@@ -325,6 +327,7 @@ Use `--no-cache` to bypass the API cache, or `--ttl 0` for immediate expiry. Run
 uv sync                       # install all dependencies
 uv run poe lint               # format + lint + type check
 uv run poe test               # run test suite
+uv run poe install            # install as global CLI tool
 uv run poe docs               # generate API docs to docs/api/
 uv run poe docs-serve         # live-preview API docs
 ```
