@@ -24,8 +24,12 @@ _EXCLUDED_TABLES = {"meta"}
 
 _READ_ONLY_TABLES = {
     "canvas_submissions",
+    "gh_assignments",
     "gh_submissions",
+    "gh_students",
     "gh_grades",
+    "assignments",
+    "students",
 }
 
 _CANVAS_PUSHABLE: dict[str, set[str]] = {
@@ -192,8 +196,36 @@ def get_table_rows(conn: duckdb.DuckDBPyConnection, table: str) -> list[dict[str
     )
 
 
+_DISPLAY_NAMES: dict[str, str] = {
+    "canvas_students": "Students",
+    "canvas_assignments": "Assignments",
+    "canvas_submissions": "Submissions",
+    "canvas_grades": "Gradebook",
+    "gh_students": "Students",
+    "gh_assignments": "Assignments",
+    "gh_submissions": "Submissions",
+    "gh_grades": "Grades",
+    "students": "Students",
+    "assignments": "Assignments",
+}
+
+# Desired display order within each group
+_GROUP_ORDER: dict[str, list[str]] = {
+    "canvas": ["canvas_students", "canvas_assignments", "canvas_submissions"],
+    "github": ["gh_students", "gh_assignments", "gh_submissions", "gh_grades"],
+    "combined": ["students", "assignments"],
+}
+
+
+def display_name(table: str) -> str:
+    """Return a user-friendly display name for a table."""
+    return _DISPLAY_NAMES.get(table, table)
+
+
 def classify_table(name: str) -> str:
     """Classify a table into a sidebar group."""
+    if name == "canvas_grades":
+        return "gradebook"
     if name.startswith("canvas_"):
         return "canvas"
     if name.startswith("gh_"):
@@ -201,20 +233,44 @@ def classify_table(name: str) -> str:
     return "combined"
 
 
+def _sort_group(items: list[dict[str, str]], order: list[str]) -> list[dict[str, str]]:
+    """Sort items by the predefined order, unknown items go last."""
+    rank = {name: i for i, name in enumerate(order)}
+    return sorted(items, key=lambda t: rank.get(t["name"], 999))
+
+
 def group_tables(
     tables: list[dict[str, str]],
 ) -> list[dict[str, Any]]:
     """Group tables into sidebar sections."""
-    combined = [t for t in tables if classify_table(t["name"]) == "combined"]
+    gradebook = [t for t in tables if classify_table(t["name"]) == "gradebook"]
     canvas = [t for t in tables if classify_table(t["name"]) == "canvas"]
     github = [t for t in tables if classify_table(t["name"]) == "github"]
+    combined = [t for t in tables if classify_table(t["name"]) == "combined"]
     groups: list[dict[str, Any]] = []
-    if combined:
-        groups.append({"label": "Combined Data", "items": combined})
+    if gradebook:
+        groups.append({"label": "Gradebook", "items": gradebook, "style": "gradebook"})
     if canvas:
-        groups.append({"label": "Canvas LMS", "items": canvas})
+        groups.append(
+            {
+                "label": "Canvas LMS",
+                "items": _sort_group(canvas, _GROUP_ORDER["canvas"]),
+            }
+        )
     if github:
-        groups.append({"label": "GitHub Classroom", "items": github})
+        groups.append(
+            {
+                "label": "GitHub Classroom",
+                "items": _sort_group(github, _GROUP_ORDER["github"]),
+            }
+        )
+    if combined:
+        groups.append(
+            {
+                "label": "Combined",
+                "items": _sort_group(combined, _GROUP_ORDER["combined"]),
+            }
+        )
     return groups
 
 
@@ -385,6 +441,170 @@ def row_id_js(pk_cols: list[str]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Gradebook pivot view
+# ---------------------------------------------------------------------------
+
+
+def build_gradebook_view(
+    conn: duckdb.DuckDBPyConnection,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Build pivoted gradebook data: students as rows, assignments as columns.
+
+    Returns:
+        (row_data, col_defs) — ready for AG Grid.
+    """
+    # Fetch assignments ordered by assignment_group then name
+    assignments = conn.execute(
+        "SELECT canvas_id, name, points_possible, published, assignment_group "
+        "FROM canvas_assignments ORDER BY assignment_group, name"
+    ).fetchall()
+
+    # Fetch students ordered by sortable_name
+    students = conn.execute(
+        "SELECT canvas_id, name, sortable_name FROM canvas_students "
+        "ORDER BY sortable_name"
+    ).fetchall()
+
+    # Fetch all grades into a lookup: (user_id, assignment_id) -> posted_grade
+    grades_raw = conn.execute(
+        "SELECT canvas_user_id, canvas_assignment_id, posted_grade FROM canvas_grades"
+    ).fetchall()
+    grade_map: dict[tuple[int, int], str] = {
+        (int(r[0]), int(r[1])): r[2] for r in grades_raw
+    }
+
+    # Build column defs
+    col_defs: list[dict[str, Any]] = [
+        {
+            "headerName": "Student",
+            "field": "_student_name",
+            "pinned": "left",
+            "minWidth": 160,
+            "sortable": True,
+            "filter": False,
+            "resizable": True,
+            "editable": False,
+            "cellStyle": {"fontWeight": "600"},
+        },
+    ]
+
+    # Group assignments by assignment_group for column groups
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for a_id, a_name, pts, published, group in assignments:
+        field = f"_a{a_id}"
+        subtitle = "Unpublished" if not published else f"Out of {pts:g}"
+        child: dict[str, Any] = {
+            "headerName": a_name,
+            "field": field,
+            "minWidth": 90,
+            "sortable": True,
+            "filter": False,
+            "resizable": True,
+            "editable": True,
+            "headerTooltip": f"{a_name} — {subtitle}",
+            "wrapHeaderText": True,
+            "autoHeaderHeight": True,
+        }
+        if not published:
+            child["cellStyle"] = {"opacity": "0.45"}
+        else:
+            child["cellStyle"] = {"backgroundColor": "rgba(59, 130, 246, 0.08)"}
+        groups.setdefault(group or "Ungrouped", []).append(child)
+
+    for group_name, children in groups.items():
+        if len(groups) > 1:
+            col_defs.append(
+                {
+                    "headerName": group_name,
+                    "children": children,
+                }
+            )
+        else:
+            col_defs.extend(children)
+
+    # Hidden ID column for row identification
+    col_defs.append({"field": "_canvas_user_id", "hide": True})
+
+    # Build row data: one row per student
+    row_data: list[dict[str, Any]] = []
+    for s_id, s_name, _sortable in students:
+        row: dict[str, Any] = {
+            "_student_name": s_name,
+            "_canvas_user_id": int(s_id),
+        }
+        for a_id, *_rest in assignments:
+            row[f"_a{a_id}"] = grade_map.get((int(s_id), int(a_id)), "")
+        row_data.append(row)
+
+    return row_data, col_defs
+
+
+def attach_gradebook_edit_handler(
+    grid: ui.aggrid,
+    conn: duckdb.DuckDBPyConnection,
+    pending: _PendingChanges,
+    update_pending_display: Any,
+) -> None:
+    """Attach edit handler for the pivoted gradebook grid.
+
+    Maps cell edits back to the normalized canvas_grades table.
+    """
+
+    def on_cell_changed(e: Any) -> None:
+        data = e.args
+        col_def = data.get("colDef")
+        if col_def:
+            col_field = col_def["field"]
+        else:
+            col_field = data.get("colId", data.get("column"))
+        if not col_field or not col_field.startswith("_a"):
+            return
+
+        canvas_assignment_id = int(col_field[2:])  # strip "_a" prefix
+        canvas_user_id = data["data"]["_canvas_user_id"]
+        new_grade = data["value"] or ""
+
+        # Fetch old value
+        old_row = conn.execute(
+            "SELECT posted_grade FROM canvas_grades "
+            "WHERE canvas_user_id = ? AND canvas_assignment_id = ?",
+            [canvas_user_id, canvas_assignment_id],
+        ).fetchone()
+
+        if old_row is None:
+            # Insert new grade row
+            conn.execute(
+                "INSERT INTO canvas_grades "
+                "(canvas_user_id, canvas_assignment_id, posted_grade, updated_at) "
+                "VALUES (?, ?, ?, 0)",
+                [canvas_user_id, canvas_assignment_id, new_grade],
+            )
+            old_value = ""
+        else:
+            old_value = old_row[0]
+            conn.execute(
+                "UPDATE canvas_grades SET posted_grade = ? "
+                "WHERE canvas_user_id = ? AND canvas_assignment_id = ?",
+                [new_grade, canvas_user_id, canvas_assignment_id],
+            )
+
+        # Track as pending Canvas change
+        pk: dict[str, object] = {
+            "canvas_user_id": canvas_user_id,
+            "canvas_assignment_id": canvas_assignment_id,
+        }
+        track_change(pending, "canvas_grades", pk, "posted_grade", old_value, new_grade)
+        update_pending_display()
+        notify("Saved grade")
+        grid.run_grid_method(  # pyright: ignore[reportUnknownMemberType]
+            "flashCells",
+            {"columns": [col_field], "flashDuration": 300, "fadeDuration": 200},
+        )
+
+    grid.on("cellValueChanged", on_cell_changed)
+
+
+# ---------------------------------------------------------------------------
 # CSS
 # ---------------------------------------------------------------------------
 
@@ -420,7 +640,7 @@ _CUSTOM_CSS = """
     padding: 0.5rem 0;
 }
 .sidebar-group-label {
-    font-size: 0.65rem;
+    font-size: 0.7rem;
     font-weight: 700;
     letter-spacing: 0.05em;
     opacity: 0.5;
@@ -428,11 +648,13 @@ _CUSTOM_CSS = """
     padding: 0.75rem 1rem 0.25rem 1rem;
 }
 .sidebar-item {
-    display: block;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
     width: 100%;
     text-align: left;
     padding: 0.35rem 1rem;
-    font-size: 0.75rem;
+    font-size: 0.8rem;
     font-family: 'SF Mono', 'Fira Code', 'Consolas',
         ui-monospace, monospace;
     color: rgba(255, 255, 255, 0.7);
@@ -450,6 +672,29 @@ _CUSTOM_CSS = """
     background: rgba(59, 130, 246, 0.2);
     color: white;
     font-weight: 600;
+}
+.sidebar-pill {
+    font-size: 0.55rem;
+    padding: 0.05rem 0.35rem;
+    border-radius: 9999px;
+    font-weight: 600;
+    white-space: nowrap;
+    margin-left: auto;
+}
+.sidebar-pill-viewonly {
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.35);
+}
+.sidebar-pill-editable {
+    background: rgba(34, 197, 94, 0.15);
+    color: #4ade80;
+}
+.sidebar-gradebook {
+    font-size: 0.85rem;
+    font-weight: 700;
+    padding: 0.5rem 1rem;
+    color: rgba(255, 255, 255, 0.9);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 /* Toolbar */
 .toolbar {
@@ -512,7 +757,7 @@ _CUSTOM_CSS = """
     border-radius: 0.25rem;
     background: transparent;
     color: inherit;
-    width: 12rem;
+    width: 18rem;
     outline: none;
 }
 .search-input:focus {
@@ -693,7 +938,7 @@ def start_nicegui_server(port: int = 0) -> None:
             editable = is_editable(conn, table_name)
             tl = table_label["ref"]
             if tl is not None:
-                tl.text = table_name
+                tl.text = display_name(table_name)
 
             be = badge_el["ref"]
             if be is not None:
@@ -704,21 +949,37 @@ def start_nicegui_server(port: int = 0) -> None:
                         add="badge-editable",
                     )
                 else:
-                    be.text = "READ-ONLY"
+                    be.text = "VIEW ONLY"
                     be.classes(
                         remove="badge-editable",
                         add="badge-readonly",
                     )
 
-            # Build grid
-            row_data = get_table_rows(conn, table_name)
-            col_defs = build_column_defs(conn, table_name)
-            pk_cols = get_primary_keys(conn, table_name) if editable else []
+            # Build grid data
+            is_gradebook = table_name == "canvas_grades"
+            if is_gradebook:
+                row_data, col_defs = build_gradebook_view(conn)
+                pk_cols: list[str] = []
+            else:
+                row_data = get_table_rows(conn, table_name)
+                col_defs = build_column_defs(conn, table_name)
+                pk_cols = get_primary_keys(conn, table_name) if editable else []
 
             ml = meta_label["ref"]
             if ml is not None:
-                n_visible = sum(1 for c in col_defs if not c.get("hide"))
-                ml.text = f"{len(row_data)} rows \u00b7 {n_visible} columns"
+                n_visible = sum(
+                    1 for c in col_defs if not c.get("hide") and "children" not in c
+                )
+                # Count children in column groups
+                n_visible += sum(
+                    len(c["children"]) for c in col_defs if "children" in c
+                )
+                if is_gradebook:
+                    ml.text = (
+                        f"{len(row_data)} students \u00b7 {n_visible - 1} assignments"
+                    )
+                else:
+                    ml.text = f"{len(row_data)} rows \u00b7 {n_visible} columns"
 
             # Clear and rebuild grid container
             container = grid_container["ref"]
@@ -735,8 +996,15 @@ def start_nicegui_server(port: int = 0) -> None:
                         },
                         "animateRows": True,
                         "enableCellTextSelection": True,
-                        ":getRowId": (f"(params) => {row_id_js(pk_cols)}"),
                     }
+
+                    if is_gradebook:
+                        grid_options[":getRowId"] = (
+                            "(params) => String(params.data._canvas_user_id)"
+                        )
+                    else:
+                        grid_options[":getRowId"] = f"(params) => {row_id_js(pk_cols)}"
+
                     # Dim unpublished rows in canvas_assignments
                     if table_name == "canvas_assignments":
                         grid_options[":getRowStyle"] = (
@@ -752,7 +1020,14 @@ def start_nicegui_server(port: int = 0) -> None:
                         .style("height: calc(100vh - 3rem)")
                     )
 
-                    if editable:
+                    if is_gradebook:
+                        attach_gradebook_edit_handler(
+                            grid,
+                            conn,
+                            pending,
+                            update_pending_display,
+                        )
+                    elif editable:
                         attach_edit_handler(
                             grid,
                             conn,
@@ -807,15 +1082,21 @@ def start_nicegui_server(port: int = 0) -> None:
 
                 with ui.element("div").classes("sidebar-nav"):
                     for group in groups:
-                        ui.element("div").classes("sidebar-group-label").props(
-                            f'innerHTML="{group["label"]}"'
-                        )
-                        for t in group["items"]:
+                        is_gradebook = group.get("style") == "gradebook"
+                        if is_gradebook:
+                            # Gradebook rendered as a standalone styled item
+                            t = group["items"][0]
                             tn = t["name"]
+                            dn = display_name(tn)
+                            pill = (
+                                "<span class='sidebar-pill"
+                                " sidebar-pill-editable'>"
+                                "editable</span>"
+                            )
                             btn = (
                                 ui.element("button")
-                                .classes("sidebar-item")
-                                .props(f'innerHTML="{tn}"')
+                                .classes("sidebar-item sidebar-gradebook")
+                                .props(f'innerHTML="{dn}{pill}"')
                                 .on(
                                     "click",
                                     lambda _e, n=tn: load_table(n),
@@ -824,6 +1105,38 @@ def start_nicegui_server(port: int = 0) -> None:
                             sidebar_buttons[tn] = btn
                             if tn == current_table["name"]:
                                 btn.classes(add="active")
+                        else:
+                            ui.element("div").classes("sidebar-group-label").props(
+                                f'innerHTML="{group["label"]}"'
+                            )
+                            for t in group["items"]:
+                                tn = t["name"]
+                                dn = display_name(tn)
+                                editable_item = is_editable(conn, tn)
+                                if editable_item:
+                                    pill = (
+                                        "<span class='sidebar-pill"
+                                        " sidebar-pill-editable'>"
+                                        "editable</span>"
+                                    )
+                                else:
+                                    pill = (
+                                        "<span class='sidebar-pill"
+                                        " sidebar-pill-viewonly'>"
+                                        "view-only</span>"
+                                    )
+                                btn = (
+                                    ui.element("button")
+                                    .classes("sidebar-item")
+                                    .props(f'innerHTML="{dn}{pill}"')
+                                    .on(
+                                        "click",
+                                        lambda _e, n=tn: load_table(n),
+                                    )
+                                )
+                                sidebar_buttons[tn] = btn
+                                if tn == current_table["name"]:
+                                    btn.classes(add="active")
 
             # --- Main content ---
             with ui.element("div").classes("main-content"):
@@ -860,6 +1173,28 @@ def start_nicegui_server(port: int = 0) -> None:
                     clear_btn_ref["ref"] = rb
 
                     with ui.element("div").classes("toolbar-right"):
+                        # Export CSV button
+                        eb = (
+                            ui.element("button")
+                            .classes("toolbar-btn")
+                            .props('innerHTML="CSV"')
+                            .on("click", lambda _: export_csv(grid_container))
+                        )
+                        export_btn_ref["ref"] = eb
+
+                        # Export Markdown button
+                        (
+                            ui.element("button")
+                            .classes("toolbar-btn")
+                            .props('innerHTML="Markdown"')
+                            .on(
+                                "click",
+                                lambda _: export_markdown(
+                                    grid_container, current_table
+                                ),
+                            )
+                        )
+
                         si = (
                             ui.input(
                                 placeholder="Search rows...",
@@ -875,15 +1210,6 @@ def start_nicegui_server(port: int = 0) -> None:
                                 e.args,  # pyright: ignore[reportUnknownMemberType]
                             ),
                         )
-
-                        # Export CSV button
-                        eb = (
-                            ui.element("button")
-                            .classes("toolbar-btn")
-                            .props('innerHTML="Export CSV"')
-                            .on("click", lambda _: export_csv(grid_container))
-                        )
-                        export_btn_ref["ref"] = eb
 
                         # Push to Canvas button (hidden initially)
                         pb = (
@@ -1093,6 +1419,63 @@ def export_csv(grid_container: dict[str, Any]) -> None:
         grid.run_grid_method("exportDataAsCsv")  # pyright: ignore[reportUnknownMemberType]
 
 
+def _grid_to_markdown(grid: ui.aggrid) -> str:
+    """Convert AG Grid options to a markdown table string."""
+    col_defs = cast(list[Any], grid.options.get("columnDefs", []))  # pyright: ignore[reportUnknownMemberType]
+    row_data = cast(list[Any], grid.options.get("rowData", []))  # pyright: ignore[reportUnknownMemberType]
+
+    # Flatten column groups and collect visible columns
+    headers: list[str] = []
+    fields: list[str] = []
+    for col in col_defs:
+        children: list[Any] = col.get("children", [])  # pyright: ignore[reportUnknownMemberType]
+        if children:
+            for child in children:  # pyright: ignore[reportUnknownVariableType]
+                if not child.get("hide"):  # pyright: ignore[reportUnknownMemberType]
+                    headers.append(str(child.get("headerName", child["field"])))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+                    fields.append(str(child["field"]))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+        elif not col.get("hide"):  # pyright: ignore[reportUnknownMemberType]
+            headers.append(str(col.get("headerName", col["field"])))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+            fields.append(str(col["field"]))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+
+    # Build table
+    widths = [len(h) for h in headers]
+    rows_str: list[list[str]] = []
+    for row in row_data:  # pyright: ignore[reportUnknownVariableType]
+        cells = [str(row.get(f, "") or "") for f in fields]  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+        for i, cell in enumerate(cells):
+            widths[i] = max(widths[i], len(cell))
+        rows_str.append(cells)
+
+    def fmt(cells: list[str]) -> str:
+        return (
+            "| "
+            + " | ".join(c.ljust(w) for c, w in zip(cells, widths, strict=True))
+            + " |"
+        )
+
+    lines = [
+        fmt(headers),
+        "| " + " | ".join("-" * w for w in widths) + " |",
+        *[fmt(r) for r in rows_str],
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def export_markdown(
+    grid_container: dict[str, Any],
+    current_table: dict[str, str],
+) -> None:
+    """Export current grid data as a markdown file download."""
+    grid = find_grid(grid_container)
+    if grid is None:
+        return
+    title = display_name(current_table["name"])
+    md = f"# {title}\n\n{_grid_to_markdown(grid)}"
+    filename = f"{current_table['name']}.md"
+    ui.download(md.encode(), filename)
+
+
 def reload_current_grid(
     conn: duckdb.DuckDBPyConnection,
     grid_container: dict[str, Any],
@@ -1101,7 +1484,10 @@ def reload_current_grid(
     """Reload the AG Grid with fresh data from the DB."""
     grid = find_grid(grid_container)
     if grid is not None:
-        new_rows = get_table_rows(conn, table_name)
+        if table_name == "canvas_grades":
+            new_rows, _col_defs = build_gradebook_view(conn)
+        else:
+            new_rows = get_table_rows(conn, table_name)
         grid.options["rowData"] = new_rows  # pyright: ignore[reportUnknownMemberType]
         grid.update()
 

@@ -27,12 +27,12 @@ Install: `uv tool install cass` or `uvx cass`.
 | `cass import` | Import a CSV file into the database |
 | `cass view` | Open the database in a browser-based viewer |
 
-## Grade Commands (`cass grades`)
+## Gradebook Commands (`cass gradebook`)
 
 | Command | Description |
 |---------|-------------|
-| `cass grades` | Show the gradebook as a student x assignment matrix |
-| `cass grades push` | Sync grades to Canvas LMS (dry-run by default) |
+| `cass gradebook` | Show the gradebook as a student x assignment matrix |
+| `cass gradebook push` | Sync grades to Canvas LMS (dry-run by default) |
 
 ## Database Commands (`cass db`)
 

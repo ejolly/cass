@@ -1,6 +1,6 @@
 """Canvas sync primitives — push grades and assignments to Canvas LMS.
 
-Shared by both the CLI (``cass grades push``) and the NiceGUI viewer.
+Shared by both the CLI (``cass gradebook push``) and the NiceGUI viewer.
 """
 
 from __future__ import annotations
