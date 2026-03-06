@@ -14,3 +14,4 @@ grade-data/
 cass.duckdb.wal
 cass.toml
 docs/api/
+backups/

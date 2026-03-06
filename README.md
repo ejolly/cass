@@ -144,6 +144,17 @@ cass canvas sync --dry-run           # preview config-as-data sync
 cass canvas sync --apply             # apply config-as-data sync
 ```
 
+### Backup & restore
+
+```bash
+cass backup                               # timestamped copy → backups/
+cass backup --tag "pre-regrade"           # add a descriptive tag
+cass backup --list                        # list existing backups
+cass restore backups/cass_2026-03-05_14-30-00.duckdb  # restore (with confirmation)
+```
+
+Backups are saved to a `backups/` directory (auto-created, gitignored).
+
 ### Database tools
 
 ```bash
