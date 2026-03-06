@@ -956,11 +956,12 @@ def import_csv(
 
 
 @app.command()
-def view() -> None:
-    """Open the database in Dataflare (GUI viewer)."""
-    import subprocess
-
+def view(
+    port: int = typer.Option(0, "--port", help="Port number (0 = auto-select)"),
+) -> None:
+    """Open the database in a browser-based viewer."""
     from . import db
+    from .viewer import start_server
 
     db_file = Path(db.db_path())
     if not db_file.exists():
@@ -969,17 +970,7 @@ def view() -> None:
         )
         raise typer.Exit(code=1)
 
-    result = subprocess.run(
-        ["open", "-Ra", "Dataflare"], capture_output=True, text=True
-    )
-    if result.returncode != 0:
-        console.print("[red]Dataflare is not installed.[/red]")
-        console.print("Install it with: [bold]brew install --cask dataflare[/bold]")
-        console.print("Or download from: https://dataflare.app/")
-        raise typer.Exit(code=1)
-
-    console.print(f"Opening [bold]{db_file.name}[/bold] in Dataflare...")
-    subprocess.run(["open", "-a", "Dataflare", str(db_file.resolve())])
+    start_server(port=port)
 
 
 @db_app.callback()
