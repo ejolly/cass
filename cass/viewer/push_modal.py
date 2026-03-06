@@ -12,6 +12,7 @@ from nicegui import ui
 from . import canvas_apply, canvas_preview
 from .config import PendingChanges
 from .grid import (
+    clear_pending_cells,
     notify,
     reload_current_grid,
 )
@@ -232,6 +233,7 @@ def open_push_modal(
                 result = canvas_apply(conn, pending)
                 if result["ok"]:
                     dialog.close()
+                    clear_pending_cells()
                     update_pending_display()
                     notify("Pushed to Canvas")
                     reload_current_grid(conn, grid_container, current_table["name"])

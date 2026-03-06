@@ -18,6 +18,7 @@ from .config import (
 )
 from .grid import (
     apply_search,
+    attach_date_autocommit,
     attach_edit_handler,
     attach_gradebook_edit_handler,
     build_column_defs,
@@ -169,6 +170,9 @@ _CUSTOM_CSS = """
     font-weight: 600;
     background: rgba(245, 158, 11, 0.2);
     color: #fbbf24;
+}
+.cell-pending {
+    background: rgba(245, 158, 11, 0.15) !important;
 }
 .toolbar-btn-danger {
     background: rgba(239, 68, 68, 0.15);
@@ -431,6 +435,7 @@ def start_nicegui_server(port: int = 0) -> None:
                         },
                         "animateRows": True,
                         "enableCellTextSelection": True,
+                        "stopEditingWhenCellsLoseFocus": True,
                     }
 
                     if is_gb:
@@ -462,6 +467,9 @@ def start_nicegui_server(port: int = 0) -> None:
                             pending,
                             update_pending_display,
                         )
+
+                    if is_gb or editable:
+                        attach_date_autocommit(grid)
 
             # Clear search
             sr = search_ref["ref"]

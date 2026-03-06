@@ -34,7 +34,10 @@ def sanitize(obj: object) -> object:  # pyright: ignore[reportUnknownParameterTy
     """Replace float NaN/Inf with None and convert datetimes for JSON."""
     if isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
         return None
-    if isinstance(obj, (datetime, date, time)):
+    if isinstance(obj, datetime):
+        # Strip timezone for HTML datetime-local input compatibility (YYYY-MM-DDTHH:MM)
+        return obj.strftime("%Y-%m-%dT%H:%M")
+    if isinstance(obj, (date, time)):
         return obj.isoformat()
     if isinstance(obj, list):
         return [sanitize(v) for v in obj]  # pyright: ignore[reportUnknownArgumentType,reportUnknownVariableType]
@@ -84,6 +87,11 @@ _SUBMISSION_DATE_JS = """
     return text;
 }
 """.strip()
+
+_PENDING_CELL_RULE = (
+    "window._pendingCells && window._pendingCells.has("
+    "String(node.id) + '::' + colDef.field)"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -266,6 +274,16 @@ def build_column_defs(
 
     editable = is_editable(conn, table)
     pk_cols = get_primary_keys(conn, table) if editable else []
+
+    # Pre-fetch select editor values for canvas_assignments
+    group_values: list[str] = []
+    if table == "canvas_assignments":
+        group_rows = conn.execute(
+            "SELECT DISTINCT assignment_group FROM canvas_assignments "
+            "WHERE assignment_group != '' ORDER BY assignment_group"
+        ).fetchall()
+        group_values = [row[0] for row in group_rows]
+
     defs: list[dict[str, Any]] = []
     for name in display_cols:
         dtype = col_types.get(name, "VARCHAR")
@@ -287,6 +305,8 @@ def build_column_defs(
             # Date string editor for editable datetime columns
             if editable and name not in pk_cols:
                 col_def["cellEditor"] = "agDateStringCellEditor"
+                if "TIMESTAMP" in dtype:
+                    col_def["cellEditorParams"] = {"includeTime": True}
 
         # Type-specific editors for editable columns
         if editable and name not in pk_cols:
@@ -294,6 +314,14 @@ def build_column_defs(
                 col_def["cellEditor"] = "agCheckboxCellEditor"
             elif "INT" in dtype or "DOUBLE" in dtype or "FLOAT" in dtype:
                 col_def["cellEditor"] = "agNumberCellEditor"
+            # Select editor for assignment_group on canvas_assignments
+            elif (
+                table == "canvas_assignments"
+                and name == "assignment_group"
+                and group_values
+            ):
+                col_def["cellEditor"] = "agSelectCellEditor"
+                col_def["cellEditorParams"] = {"values": group_values}
 
         # PK columns: bold, dimmed, not editable
         if name in pk_cols:
@@ -306,6 +334,9 @@ def build_column_defs(
         # Editability: only non-PK columns on editable tables
         if editable and name not in pk_cols:
             col_def["editable"] = True
+            col_def[":cellClassRules"] = {
+                "cell-pending": _PENDING_CELL_RULE,
+            }
 
         defs.append(col_def)
 
@@ -390,6 +421,7 @@ def build_gradebook_view(
             "headerTooltip": f"{a_name} — {subtitle}",
             "wrapHeaderText": True,
             "autoHeaderHeight": True,
+            ":cellClassRules": {"cell-pending": _PENDING_CELL_RULE},
         }
         if not published:
             child["cellStyle"] = {"opacity": "0.45"}
@@ -430,6 +462,49 @@ def build_gradebook_view(
 # ---------------------------------------------------------------------------
 
 
+_DATE_AUTOCOMMIT_JS = """
+(e) => {
+    const input = e.api.getCellEditorInstances()[0]?.getGui()
+        ?.querySelector('input[type="date"], input[type="datetime-local"]');
+    if (input) {
+        input.addEventListener('change', () => e.api.stopEditing(), {once: true});
+    }
+}
+""".strip()
+
+
+def _mark_pending_cell(
+    grid: ui.aggrid,
+    row_id: str,
+    col_field: str,
+    is_pending: bool,
+) -> None:
+    """Add or remove a cell from the JS pending set and refresh its style."""
+    escaped_key = json.dumps(f"{row_id}::{col_field}")
+    if is_pending:
+        js = (
+            f"window._pendingCells = window._pendingCells || new Set();"
+            f"window._pendingCells.add({escaped_key})"
+        )
+    else:
+        js = f"if (window._pendingCells) window._pendingCells.delete({escaped_key})"
+    ui.run_javascript(js)
+    grid.run_grid_method(  # pyright: ignore[reportUnknownMemberType]
+        "refreshCells",
+        {"columns": [col_field], "force": True},
+    )
+
+
+def clear_pending_cells() -> None:
+    """Clear all pending cell highlights."""
+    ui.run_javascript("if (window._pendingCells) window._pendingCells.clear()")
+
+
+def attach_date_autocommit(grid: ui.aggrid) -> None:
+    """Auto-commit date/datetime editors on value selection."""
+    grid.options[":onCellEditingStarted"] = _DATE_AUTOCOMMIT_JS  # pyright: ignore[reportUnknownMemberType]
+
+
 def attach_edit_handler(
     grid: ui.aggrid,
     conn: duckdb.DuckDBPyConnection,
@@ -447,7 +522,7 @@ def attach_edit_handler(
             col_field = col_def["field"]
         else:
             col_field = data.get("colId", data.get("column"))
-        if col_field is None:
+        if col_field is None or "value" not in data:
             return
         new_value = data["value"]
         row = data["data"]
@@ -466,14 +541,24 @@ def attach_edit_handler(
             )
             update_pending_display()
             notify(f"Saved {col_field}")
-            grid.run_grid_method(  # pyright: ignore[reportUnknownMemberType]
-                "flashCells",
-                {
-                    "columns": [col_field],
-                    "flashDuration": 300,
-                    "fadeDuration": 200,
-                },
+
+            # Determine AG Grid row ID (mirrors row_id_js)
+            if len(pk_cols) == 1:
+                row_id = str(row[pk_cols[0]])
+            else:
+                row_id = "::".join(str(row[c]) for c in pk_cols)
+            # Check if change is still pending after track_change
+            pk_key = (
+                str(next(iter(pk.values())))
+                if len(pk) == 1
+                else json.dumps(pk, sort_keys=True)
             )
+            still_pending = (
+                table_name in pending
+                and pk_key in pending[table_name]
+                and col_field in pending[table_name][pk_key]
+            )
+            _mark_pending_cell(grid, row_id, col_field, still_pending)
         else:
             notify(
                 f"Error: {result.get('error', 'unknown')}",
@@ -498,7 +583,7 @@ def attach_gradebook_edit_handler(
             col_field = col_def["field"]
         else:
             col_field = data.get("colId", data.get("column"))
-        if not col_field or not col_field.startswith("_a"):
+        if not col_field or not col_field.startswith("_a") or "value" not in data:
             return
 
         canvas_assignment_id = int(col_field[2:])  # strip "_a" prefix
@@ -534,10 +619,16 @@ def attach_gradebook_edit_handler(
         track_change(pending, "canvas_grades", pk, "posted_grade", old_value, new_grade)
         update_pending_display()
         notify("Saved grade")
-        grid.run_grid_method(  # pyright: ignore[reportUnknownMemberType]
-            "flashCells",
-            {"columns": [col_field], "flashDuration": 300, "fadeDuration": 200},
+
+        # Row ID is _canvas_user_id; check if change is still pending
+        row_id = str(canvas_user_id)
+        pk_key = json.dumps(dict(sorted(pk.items())), sort_keys=True)
+        still_pending = (
+            "canvas_grades" in pending
+            and pk_key in pending["canvas_grades"]
+            and "posted_grade" in pending["canvas_grades"][pk_key]
         )
+        _mark_pending_cell(grid, row_id, col_field, still_pending)
 
     grid.on("cellValueChanged", on_cell_changed)
 
@@ -684,6 +775,7 @@ def revert_pending(
                 sql = f"UPDATE {table} SET {col_name} = ? WHERE {where_clause}"
                 conn.execute(sql, [change["baseline"], *pk_values])
     pending.clear()
+    clear_pending_cells()
     update_pending_display()
     reload_current_grid(conn, grid_container, current_table["name"])
     notify(f"Reverted {count} change{'s' if count != 1 else ''}")
