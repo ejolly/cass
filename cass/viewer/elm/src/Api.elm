@@ -99,7 +99,7 @@ updateCell table pk column value =
         { url = "/api/update/" ++ table
         , body = Http.jsonBody body
         , expect =
-            Http.expectJson (GotUpdateResult table pk column)
+            Http.expectJson (GotUpdateResult table)
                 (D.map3
                     (\ok err pc -> { ok = ok, error = err, pendingCount = pc })
                     (D.field "ok" D.bool)

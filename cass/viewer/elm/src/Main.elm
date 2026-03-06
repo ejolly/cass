@@ -83,11 +83,7 @@ init _ =
       , columnTypes = []
       , filteredRowCount = 0
       , editing = Nothing
-      , showModal = False
-      , modalLoading = False
-      , modalPushing = False
-      , previewData = Nothing
-      , pushResults = Nothing
+      , modal = ModalClosed
       }
     , Cmd.batch [ Api.fetchTables, Api.fetchPending ]
     )
@@ -271,7 +267,7 @@ update msg model =
                                     List.map .name schema.columns
 
                                 effectiveEditable =
-                                    schema.editable && not (View.isCombinedTable tableName)
+                                    schema.editable && classifyTable tableName /= Combined
 
                                 isEditable =
                                     effectiveEditable
@@ -336,7 +332,7 @@ update msg model =
         CancelEdit ->
             ( { model | editing = Nothing }, Cmd.none )
 
-        GotUpdateResult table pk column result ->
+        GotUpdateResult table result ->
             case result of
                 Ok resp ->
                     if resp.ok then
@@ -346,7 +342,7 @@ update msg model =
                         in
                         ( { model
                             | pendingCount = newPending
-                            , statusMessage = Just { text = "Saved", statusClass = "success" }
+                            , statusMessage = Just { text = "Saved", level = Success }
                           }
                         , Cmd.batch
                             [ setStatusTimer "Saved" 3000
@@ -355,74 +351,56 @@ update msg model =
                         )
 
                     else
+                        let
+                            errText =
+                                resp.error |> Maybe.withDefault "Update failed"
+                        in
                         ( { model
-                            | statusMessage =
-                                Just
-                                    { text = resp.error |> Maybe.withDefault "Update failed"
-                                    , statusClass = "error"
-                                    }
+                            | statusMessage = Just { text = errText, level = Error }
                           }
-                        , setStatusTimer (resp.error |> Maybe.withDefault "Update failed") 3000
+                        , setStatusTimer errText 3000
                         )
 
                 Err _ ->
                     ( { model
-                        | statusMessage = Just { text = "Network error", statusClass = "error" }
+                        | statusMessage = Just { text = "Network error", level = Error }
                       }
                     , setStatusTimer "Network error" 3000
                     )
 
         -- Canvas push modal
         OpenPushModal ->
-            ( { model
-                | showModal = True
-                , modalLoading = True
-                , modalPushing = False
-                , previewData = Nothing
-                , pushResults = Nothing
-              }
+            ( { model | modal = ModalLoading }
             , Api.fetchPreview
             )
 
         ClosePushModal ->
-            ( { model
-                | showModal = False
-                , modalLoading = False
-                , modalPushing = False
-                , previewData = Nothing
-                , pushResults = Nothing
-              }
-            , Cmd.none
-            )
+            ( { model | modal = ModalClosed }, Cmd.none )
 
         GotPreview result ->
             case result of
                 Ok preview ->
-                    ( { model | modalLoading = False, previewData = Just preview }, Cmd.none )
+                    ( { model | modal = ModalPreview preview }, Cmd.none )
 
                 Err err ->
-                    ( { model
-                        | modalLoading = False
-                        , previewData = Nothing
-                        , error = Just (Api.httpErrorToString err)
-                      }
-                    , Cmd.none
-                    )
+                    ( { model | modal = ModalError (Api.httpErrorToString err) }, Cmd.none )
 
         ApplyPush ->
-            ( { model | modalPushing = True }, Api.applyPush )
+            case model.modal of
+                ModalPreview preview ->
+                    ( { model | modal = ModalPushing preview }, Api.applyPush )
+
+                _ ->
+                    ( model, Cmd.none )
 
         GotApplyResult result ->
             case result of
                 Ok resp ->
                     if resp.ok then
                         ( { model
-                            | showModal = False
-                            , modalPushing = False
+                            | modal = ModalClosed
                             , pendingCount = 0
-                            , statusMessage = Just { text = "Pushed to Canvas", statusClass = "success" }
-                            , pushResults = Nothing
-                            , previewData = Nothing
+                            , statusMessage = Just { text = "Pushed to Canvas", level = Success }
                           }
                         , Cmd.batch
                             [ setStatusTimer "Pushed to Canvas" 6000
@@ -436,24 +414,20 @@ update msg model =
                         )
 
                     else
-                        ( { model
-                            | modalPushing = False
-                            , pushResults = Just resp.results
-                          }
+                        ( { model | modal = ModalResults resp.results }
                         , Api.fetchPending
                         )
 
                 Err _ ->
                     ( { model
-                        | modalPushing = False
-                        , statusMessage = Just { text = "Push failed", statusClass = "error" }
-                        , showModal = False
+                        | modal = ModalClosed
+                        , statusMessage = Just { text = "Push failed", level = Error }
                       }
                     , setStatusTimer "Push failed" 6000
                     )
 
         EscapePressed ->
-            if model.showModal then
+            if model.modal /= ModalClosed then
                 update ClosePushModal model
 
             else if model.editing /= Nothing then
@@ -491,20 +465,18 @@ Matches the sidebar display order: Combined Data → Canvas → GitHub.
 pickFirstTable : List TableInfo -> Maybe String
 pickFirstTable tables =
     let
-        combined =
-            List.filter
-                (\t ->
-                    not (String.startsWith "canvas_" t.name)
-                        && not (String.startsWith "gh_" t.name)
-                )
-                tables
+        sortKey t =
+            case classifyTable t.name of
+                Combined ->
+                    0
 
-        canvas =
-            List.filter (\t -> String.startsWith "canvas_" t.name) tables
+                Canvas ->
+                    1
 
-        github =
-            List.filter (\t -> String.startsWith "gh_" t.name) tables
+                GitHub ->
+                    2
     in
-    List.concatMap identity [ combined, canvas, github ]
+    tables
+        |> List.sortBy sortKey
         |> List.head
         |> Maybe.map .name
