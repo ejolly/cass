@@ -1,4 +1,4 @@
-module View exposing (getDisplayedColumns, initGrid, isCombinedTable, view)
+module View exposing (getDisplayedColumns, initGrid, view)
 
 {-| All view code for the viewer, written with elm-ui.
 
@@ -73,11 +73,12 @@ view model =
         , Font.color p.text
         , Background.color p.bg
         , htmlAttribute (Html.Events.preventDefaultOn "keydown" keyDecoder)
-        , if model.showModal then
-            inFront (viewModal p model)
+        , case model.modal of
+            ModalClosed ->
+                inFront none
 
-          else
-            inFront none
+            _ ->
+                inFront (viewModal p model)
         ]
         (row [ width fill, height fill ]
             [ viewSidebar p model
@@ -176,19 +177,14 @@ viewSidebarHeader p =
 viewTableGroups : Palette -> Model -> List (Element Msg)
 viewTableGroups p model =
     let
+        combined =
+            List.filter (\t -> classifyTable t.name == Combined) model.tables
+
         canvas =
-            List.filter (\t -> String.startsWith "canvas_" t.name) model.tables
+            List.filter (\t -> classifyTable t.name == Canvas) model.tables
 
         github =
-            List.filter (\t -> String.startsWith "gh_" t.name) model.tables
-
-        master =
-            List.filter
-                (\t ->
-                    not (String.startsWith "canvas_" t.name)
-                        && not (String.startsWith "gh_" t.name)
-                )
-                model.tables
+            List.filter (\t -> classifyTable t.name == GitHub) model.tables
 
         viewGroup label items =
             if List.isEmpty items then
@@ -208,7 +204,7 @@ viewTableGroups p model =
                     )
                 ]
     in
-    viewGroup "Combined Data" master
+    viewGroup "Combined Data" combined
         ++ viewGroup "Canvas LMS" canvas
         ++ viewGroup "GitHub Classroom" github
 
@@ -331,7 +327,7 @@ viewBadge p model =
         ( Just schema, Just tableName ) ->
             let
                 effectiveEditable =
-                    schema.editable && not (isCombinedTable tableName)
+                    schema.editable && classifyTable tableName /= Combined
 
                 ( label, bgColor, textColor ) =
                     if effectiveEditable then
@@ -461,16 +457,16 @@ viewStatusMessage p model =
     case model.statusMessage of
         Just status ->
             let
+                -- Pattern matching on a custom type instead of string comparison.
+                -- The compiler will tell us if we add a new StatusLevel variant
+                -- but forget to handle it here.
                 fontColor =
-                    case status.statusClass of
-                        "success" ->
+                    case status.level of
+                        Success ->
                             p.success
 
-                        "error" ->
+                        Error ->
                             p.error
-
-                        _ ->
-                            p.text
             in
             el [ Font.size 12, Font.color fontColor ]
                 (text status.text)
@@ -657,6 +653,9 @@ viewModalHeader p =
         ]
 
 
+{-| Modal body — pattern matches on `ModalState` instead of juggling
+multiple booleans. Each variant renders exactly the UI for that state.
+-}
 viewModalBody : Palette -> Model -> Element Msg
 viewModalBody p model =
     el
@@ -665,26 +664,24 @@ viewModalBody p model =
         , scrollbarY
         , height (fill |> minimum 100)
         ]
-        (if model.modalLoading then
-            el [ centerX, Font.color p.textDim ] (text "Comparing with Canvas...")
+        (case model.modal of
+            ModalLoading ->
+                el [ centerX, Font.color p.textDim ] (text "Comparing with Canvas...")
 
-         else
-            case model.pushResults of
-                Just results ->
-                    viewPushResults p results
+            ModalResults results ->
+                viewPushResults p results
 
-                Nothing ->
-                    case model.previewData of
-                        Just preview ->
-                            viewPreviewChanges p preview
+            ModalPreview preview ->
+                viewPreviewChanges p preview
 
-                        Nothing ->
-                            case model.error of
-                                Just err ->
-                                    el [ Font.color p.error ] (text err)
+            ModalPushing preview ->
+                viewPreviewChanges p preview
 
-                                Nothing ->
-                                    el [ centerX, Font.color p.textDim ] (text "No pending changes")
+            ModalError err ->
+                el [ Font.color p.error ] (text err)
+
+            ModalClosed ->
+                none
         )
 
 
@@ -730,32 +727,38 @@ viewPreviewChanges p preview =
             ]
 
 
+{-| Render a table of changes with a header row and data rows.
+
+Uses a plain `column` with a manual header `row` — simpler than
+`Element.table` and keeps the headers aligned with data rows since
+both use `width fill` on each cell.
+
+-}
 viewChangeTable : Palette -> String -> List String -> List CanvasChange -> (Palette -> CanvasChange -> Element Msg) -> Element Msg
 viewChangeTable p title headers changes rowView =
     column [ width fill, spacing 6 ]
         [ el [ Font.semiBold, Font.size 13 ] (text title)
-        , Element.table [ width fill, spacing 0 ]
-            { data = changes
-            , columns =
-                List.map
+        , column [ width fill ]
+            (row
+                [ width fill
+                , Border.widthEach { bottom = 2, left = 0, right = 0, top = 0 }
+                , Border.color p.border
+                ]
+                (List.map
                     (\h ->
-                        { header =
-                            el
-                                [ paddingXY 10 6
-                                , Font.size 11
-                                , Font.color p.textDim
-                                , Font.semiBold
-                                , Border.widthEach { bottom = 2, left = 0, right = 0, top = 0 }
-                                , Border.color p.border
-                                ]
-                                (text (String.toUpper h))
-                        , width = fill
-                        , view = \_ -> none
-                        }
+                        el
+                            [ width fill
+                            , paddingXY 10 6
+                            , Font.size 11
+                            , Font.color p.textDim
+                            , Font.semiBold
+                            ]
+                            (text (String.toUpper h))
                     )
                     headers
-            }
-        , column [ width fill ] (List.map (rowView p) changes)
+                )
+                :: List.map (rowView p) changes
+            )
         ]
 
 
@@ -870,6 +873,9 @@ viewPushResults p results =
         ]
 
 
+{-| Modal footer — the button label and available actions change based
+on the current `ModalState`. Pattern matching makes each case explicit.
+-}
 viewModalFooter : Palette -> Model -> Element Msg
 viewModalFooter p model =
     row
@@ -895,15 +901,16 @@ viewModalFooter p model =
                 { onPress = Just ClosePushModal
                 , label =
                     text
-                        (if model.pushResults /= Nothing then
-                            "Close"
+                        (case model.modal of
+                            ModalResults _ ->
+                                "Close"
 
-                         else
-                            "Cancel"
+                            _ ->
+                                "Cancel"
                         )
                 }
-            , case ( model.previewData, model.pushResults, model.modalPushing ) of
-                ( Just preview, Nothing, False ) ->
+            , case model.modal of
+                ModalPreview preview ->
                     let
                         pushableCount =
                             List.length (List.filter (\c -> c.error == Nothing) preview.changes)
@@ -925,7 +932,7 @@ viewModalFooter p model =
                     else
                         none
 
-                ( _, Nothing, True ) ->
+                ModalPushing _ ->
                     el
                         [ Font.size 12
                         , Font.semiBold
@@ -973,16 +980,6 @@ rowCountText model =
 
     else
         ""
-
-
-
--- HELPERS
-
-
-isCombinedTable : String -> Bool
-isCombinedTable name =
-    not (String.startsWith "canvas_" name)
-        && not (String.startsWith "gh_" name)
 
 
 

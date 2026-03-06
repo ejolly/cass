@@ -2,15 +2,19 @@ module Types exposing
     ( CanvasChange
     , ColumnSchema
     , EditState
+    , ModalState(..)
     , Model
     , Msg(..)
     , PreviewData
     , PushResult
     , Row
+    , StatusLevel(..)
     , StatusMessage
     , TableData
     , TableInfo
     , TableSchema
+    , TableSource(..)
+    , classifyTable
     )
 
 {-| All types for the viewer app, gathered in one module.
@@ -71,11 +75,26 @@ type alias Row =
     { values : Dict String String }
 
 
+{-| Status severity level.
+
+In Elm, prefer a custom type over a string tag whenever you have a
+fixed set of possibilities. The compiler ensures every `case` branch
+is covered — no silent typos like `"sucess"` slipping through.
+
+Compare to Svelte/TS, where you might use `type Level = "success" | "error"`.
+Elm's custom type gives you the same safety without string matching.
+
+-}
+type StatusLevel
+    = Success
+    | Error
+
+
 {-| A transient status message shown in the toolbar (e.g. "Saved", "Push failed").
 -}
 type alias StatusMessage =
     { text : String
-    , statusClass : String
+    , level : StatusLevel
     }
 
 
@@ -87,6 +106,40 @@ type alias EditState =
     , originalValue : String
     , pk : Dict String String
     }
+
+
+{-| Categorizes which data source a table belongs to.
+
+Extracted as a type so the prefix-checking logic lives in one place
+instead of being duplicated across sidebar grouping, table selection,
+and editability checks.
+
+-}
+type TableSource
+    = Combined
+    | Canvas
+    | GitHub
+
+
+{-| Classify a table name by its prefix.
+
+    classifyTable "canvas_grades" --> Canvas
+
+    classifyTable "gh_submissions" --> GitHub
+
+    classifyTable "students" --> Combined
+
+-}
+classifyTable : String -> TableSource
+classifyTable name =
+    if String.startsWith "canvas_" name then
+        Canvas
+
+    else if String.startsWith "gh_" name then
+        GitHub
+
+    else
+        Combined
 
 
 {-| A single change in the Canvas preview diff.
@@ -120,6 +173,34 @@ type alias PushResult =
     }
 
 
+{-| The state of the Canvas push modal.
+
+This is the "Making Impossible States Impossible" pattern — a core
+Elm design guideline. Instead of 5 independent fields (showModal,
+modalLoading, modalPushing, previewData, pushResults) where most
+combinations are nonsensical, a single custom type enumerates exactly
+the states the modal can be in. Each variant carries only the data
+relevant to that state.
+
+Compare to Svelte, where you might use a `status` string variable
+and several `{#if}` blocks that the compiler can't cross-check.
+Elm's exhaustive `case` matching means you can't forget a state.
+
+The variants form a clear lifecycle:
+ModalClosed → ModalLoading → ModalPreview → ModalPushing → ModalClosed
+↓ ↓
+ModalError ModalResults
+
+-}
+type ModalState
+    = ModalClosed
+    | ModalLoading
+    | ModalPreview PreviewData
+    | ModalPushing PreviewData
+    | ModalResults (List PushResult)
+    | ModalError String
+
+
 type alias Model =
     { tables : List TableInfo
     , selectedTable : Maybe String
@@ -135,11 +216,7 @@ type alias Model =
     , columnTypes : List String
     , filteredRowCount : Int
     , editing : Maybe EditState
-    , showModal : Bool
-    , modalLoading : Bool
-    , modalPushing : Bool
-    , previewData : Maybe PreviewData
-    , pushResults : Maybe (List PushResult)
+    , modal : ModalState
     }
 
 
@@ -169,7 +246,7 @@ type Msg
     | EditChanged String
     | CommitEdit
     | CancelEdit
-    | GotUpdateResult String (Dict String String) String (Result Http.Error { ok : Bool, error : Maybe String, pendingCount : Maybe Int })
+    | GotUpdateResult String (Result Http.Error { ok : Bool, error : Maybe String, pendingCount : Maybe Int })
       -- Canvas push modal
     | OpenPushModal
     | ClosePushModal
