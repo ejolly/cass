@@ -447,3 +447,86 @@ class TestCanvasClient:
         with client:
             assert not client._http.is_closed
         assert client._http.is_closed
+
+    def test_graphql_post_assignment_grades(self, mock_client):
+        """postAssignmentGrades returns a Progress object."""
+        client, transport = mock_client
+        transport.add(
+            json_data={
+                "data": {
+                    "postAssignmentGrades": {
+                        "progress": {"_id": "77", "state": "queued"},
+                        "errors": [],
+                    }
+                }
+            }
+        )
+        p = client.post_assignment_grades(200, graded_only=True)
+        assert p is not None
+        assert p.id == 77
+        assert p.workflow_state == "queued"
+        req = transport.requests[0]
+        assert req.method == "POST"
+        assert "/api/graphql" in str(req.url)
+
+    def test_graphql_post_assignment_grades_no_progress(self, mock_client):
+        """postAssignmentGrades returns None when no progress is started."""
+        client, transport = mock_client
+        transport.add(
+            json_data={
+                "data": {
+                    "postAssignmentGrades": {
+                        "progress": None,
+                        "errors": [],
+                    }
+                }
+            }
+        )
+        p = client.post_assignment_grades(200)
+        assert p is None
+
+    def test_graphql_post_assignment_grades_error(self, mock_client):
+        """postAssignmentGrades raises on validation errors."""
+        client, transport = mock_client
+        transport.add(
+            json_data={
+                "data": {
+                    "postAssignmentGrades": {
+                        "progress": None,
+                        "errors": [
+                            {"attribute": "assignmentId", "message": "not found"}
+                        ],
+                    }
+                }
+            }
+        )
+        with pytest.raises(RuntimeError, match="postAssignmentGrades failed"):
+            client.post_assignment_grades(999)
+
+    def test_graphql_hide_assignment_grades(self, mock_client):
+        """hideAssignmentGrades returns a Progress object."""
+        client, transport = mock_client
+        transport.add(
+            json_data={
+                "data": {
+                    "hideAssignmentGrades": {
+                        "progress": {"_id": "88", "state": "queued"},
+                        "errors": [],
+                    }
+                }
+            }
+        )
+        p = client.hide_assignment_grades(200)
+        assert p is not None
+        assert p.id == 88
+
+    def test_graphql_top_level_error(self, mock_client):
+        """GraphQL top-level errors raise RuntimeError."""
+        client, transport = mock_client
+        transport.add(
+            json_data={
+                "errors": [{"message": "permission denied"}],
+            }
+        )
+        with pytest.raises(RuntimeError, match="Canvas GraphQL error"):
+            client.post_assignment_grades(200)

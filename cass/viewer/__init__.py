@@ -515,8 +515,13 @@ def _apply_assignments(
 def _apply_grades(
     table_changes: dict,
     client: CanvasClient,
+    conn: duckdb.DuckDBPyConnection,
 ) -> list[dict[str, object]]:
-    """Push pending grade changes to Canvas via bulk update_grades."""
+    """Push pending grade changes to Canvas via bulk update_grades.
+
+    For assignments with ``post_manually=True``, grades are also posted
+    (made visible to students) via the Canvas GraphQL API.
+    """
     results: list[dict[str, object]] = []
 
     # Group by assignment_id for bulk push
@@ -532,6 +537,13 @@ def _apply_grades(
             by_assignment.setdefault(aid, {})[uid] = str(grade_val)
             pk_keys_by_assignment.setdefault(aid, []).append(pk_key)
 
+    # Look up post_manually status
+    manual_rows = conn.execute(
+        "SELECT canvas_id, post_manually FROM canvas_assignments"
+    ).fetchall()
+    post_manually_map = {r[0]: r[1] for r in manual_rows}
+
+    pushed_aids: list[int] = []
     for aid, grade_data in by_assignment.items():
         try:
             progress = client.bulk_push_grades(aid, grade_data)
@@ -543,6 +555,7 @@ def _apply_grades(
                     "count": len(grade_data),
                 }
             )
+            pushed_aids.append(aid)
             # Clear successful changes
             for pk_key in pk_keys_by_assignment[aid]:
                 table_changes.pop(pk_key, None)
@@ -553,6 +566,31 @@ def _apply_grades(
                     "ok": False,
                     "error": str(e),
                     "count": len(grade_data),
+                }
+            )
+
+    # Post grades for manual-post assignments (make visible to students)
+    for aid in pushed_aids:
+        if not post_manually_map.get(aid):
+            continue
+        try:
+            p = client.post_assignment_grades(aid, graded_only=True)
+            if p:
+                client.wait_for_progress(p.id)
+            results.append(
+                {
+                    "canvas_assignment_id": aid,
+                    "ok": True,
+                    "action": "posted_to_students",
+                }
+            )
+        except Exception as e:
+            results.append(
+                {
+                    "canvas_assignment_id": aid,
+                    "ok": False,
+                    "action": "posted_to_students",
+                    "error": str(e),
                 }
             )
 
@@ -576,7 +614,7 @@ def _canvas_apply(
         if assignment_changes:
             results.extend(_apply_assignments(assignment_changes, c))
         if grade_changes:
-            results.extend(_apply_grades(grade_changes, c))
+            results.extend(_apply_grades(grade_changes, c, conn))
 
     # Clean up empty table entries
     if not assignment_changes:

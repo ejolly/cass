@@ -576,6 +576,120 @@ class CanvasClient:
             time.sleep(1.0)
         raise RuntimeError(f"Canvas bulk operation timed out after {timeout:.0f}s")
 
+    # --- GraphQL ---
+
+    def _graphql(self, query: str, variables: dict | None = None) -> dict:
+        """Execute a Canvas GraphQL mutation/query.
+
+        Args:
+            query: GraphQL query or mutation string.
+            variables: Optional variables dict.
+
+        Returns:
+            The ``data`` dict from the GraphQL response.
+
+        Raises:
+            RuntimeError: If the response contains top-level errors.
+        """
+        # GraphQL endpoint is at /api/graphql, not under /api/v1
+        base = self._base_url.replace("/api/v1", "")
+        payload: dict[str, object] = {"query": query}
+        if variables:
+            payload["variables"] = variables
+        resp = self._client.post(
+            f"{base}/api/graphql",
+            json=payload,
+        )
+        resp.raise_for_status()
+        body = resp.json()
+        if body.get("errors"):
+            msgs = "; ".join(e.get("message", str(e)) for e in body["errors"])
+            raise RuntimeError(f"Canvas GraphQL error: {msgs}")
+        return body.get("data", {})
+
+    _POST_GRADES_MUTATION = """
+mutation ($assignmentId: ID!, $gradedOnly: Boolean) {
+  postAssignmentGrades(input: {assignmentId: $assignmentId, gradedOnly: $gradedOnly}) {
+    progress { _id state }
+    errors { attribute message }
+  }
+}
+"""
+
+    _HIDE_GRADES_MUTATION = """
+mutation ($assignmentId: ID!) {
+  hideAssignmentGrades(input: {assignmentId: $assignmentId}) {
+    progress { _id state }
+    errors { attribute message }
+  }
+}
+"""
+
+    def post_assignment_grades(
+        self, assignment_id: int, *, graded_only: bool = True
+    ) -> CanvasProgress | None:
+        """Post (reveal) grades to students for a manual-post assignment.
+
+        Uses the Canvas GraphQL ``postAssignmentGrades`` mutation.
+
+        Args:
+            assignment_id: Canvas assignment ID.
+            graded_only: If True, only post grades for graded submissions.
+
+        Returns:
+            Progress object for tracking, or None if no progress was started.
+
+        Raises:
+            RuntimeError: If the mutation returns validation errors.
+        """
+        data = self._graphql(
+            self._POST_GRADES_MUTATION,
+            {"assignmentId": str(assignment_id), "gradedOnly": graded_only},
+        )
+        result = data.get("postAssignmentGrades", {})
+        errors = result.get("errors") or []
+        if errors:
+            msgs = "; ".join(f"{e['attribute']}: {e['message']}" for e in errors)
+            raise RuntimeError(f"postAssignmentGrades failed: {msgs}")
+        progress = result.get("progress")
+        if progress and progress.get("_id"):
+            return CanvasProgress(
+                id=int(progress["_id"]),
+                workflow_state=progress.get("state", "queued"),
+            )
+        return None
+
+    def hide_assignment_grades(self, assignment_id: int) -> CanvasProgress | None:
+        """Hide grades from students for a manual-post assignment.
+
+        Uses the Canvas GraphQL ``hideAssignmentGrades`` mutation.
+
+        Args:
+            assignment_id: Canvas assignment ID.
+
+        Returns:
+            Progress object for tracking, or None if no progress was started.
+
+        Raises:
+            RuntimeError: If the mutation returns validation errors.
+        """
+        data = self._graphql(
+            self._HIDE_GRADES_MUTATION,
+            {"assignmentId": str(assignment_id)},
+        )
+        result = data.get("hideAssignmentGrades", {})
+        errors = result.get("errors") or []
+        if errors:
+            msgs = "; ".join(f"{e['attribute']}: {e['message']}" for e in errors)
+            raise RuntimeError(f"hideAssignmentGrades failed: {msgs}")
+        progress = result.get("progress")
+        if progress and progress.get("_id"):
+            return CanvasProgress(
+                id=int(progress["_id"]),
+                workflow_state=progress.get("state", "queued"),
+            )
+        return None
+
     # --- Quizzes ---
 
     def list_quizzes(self) -> list[CanvasQuiz]:

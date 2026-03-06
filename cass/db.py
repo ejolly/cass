@@ -547,6 +547,15 @@ def load_assignment_mappings() -> dict[str, int]:
     return {r[0]: r[1] for r in rows}
 
 
+def load_post_manually_map() -> dict[int, bool]:
+    """Return {canvas_id: post_manually} for all canvas assignments."""
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT canvas_id, post_manually FROM canvas_assignments"
+    ).fetchall()
+    return {r[0]: r[1] for r in rows}
+
+
 # ---------------------------------------------------------------------------
 # GH Submissions
 # ---------------------------------------------------------------------------
