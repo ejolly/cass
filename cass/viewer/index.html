@@ -106,6 +106,43 @@
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
     });
+
+    // Port: Cell double-click detection
+    // Walks the DOM to find column ID and row values, sends to Elm.
+    document.addEventListener("dblclick", (e) => {
+      // Find the clicked cell within a grid row
+      const row = e.target.closest('[data-testid="row"]');
+      if (!row) return;
+
+      // Get all header cells to map column index → column ID
+      const headerContainer = document.getElementById("_header_-_container_");
+      if (!headerContainer) return;
+
+      const headerCells = headerContainer.querySelectorAll(":scope > div");
+      const dataCells = row.querySelectorAll(":scope > div");
+
+      // Find which cell was clicked
+      const clickedCell = e.target.closest('[data-testid="row"] > div');
+      if (!clickedCell) return;
+
+      const cellIndex = Array.from(dataCells).indexOf(clickedCell);
+      if (cellIndex < 0 || cellIndex >= headerCells.length) return;
+
+      // Extract column ID from header (strip " (PK)" suffix if present)
+      const headerText = headerCells[cellIndex].textContent.trim().split("\n")[0].trim();
+      const columnId = headerText.replace(/ \(PK\)$/, "");
+
+      // Build rowValues: { columnName: cellValue } for all columns
+      const rowValues = {};
+      headerCells.forEach((hCell, i) => {
+        if (i < dataCells.length) {
+          const colName = hCell.textContent.trim().split("\n")[0].trim().replace(/ \(PK\)$/, "");
+          rowValues[colName] = dataCells[i].textContent.trim();
+        }
+      });
+
+      app.ports.cellClicked.send({ columnId: columnId, rowValues: rowValues });
+    });
   </script>
 </body>
 </html>
