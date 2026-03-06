@@ -696,6 +696,17 @@
         hide: ["canvas_id"],
         order: ["assignment_group", "name", "points_possible", "due_at", "published"],
       },
+      canvas_students: {
+        hide: ["canvas_id"],
+      },
+      canvas_submissions: {
+        hide: ["canvas_user_id", "canvas_assignment_id"],
+        order: ["student_name", "assignment_name", "assignment_group", "submitted", "submitted_at", "late", "score", "workflow_state"],
+      },
+      canvas_grades: {
+        hide: ["canvas_user_id", "canvas_assignment_id"],
+        order: ["student_name", "assignment_name", "assignment_group", "score", "posted_grade", "updated_at"],
+      },
     };
 
     function applyColumnOverrides(table, defs) {

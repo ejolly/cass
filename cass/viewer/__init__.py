@@ -21,9 +21,53 @@ console = Console()
 
 _EXCLUDED_TABLES = {"meta"}
 
+# Tables that are generated/pulled data and should not be editable in the viewer.
+_READ_ONLY_TABLES = {
+    "canvas_submissions",
+    "canvas_grades",
+    "gh_submissions",
+    "gh_grades",
+}
+
 # Columns on canvas tables that can be pushed back to the Canvas API.
 _CANVAS_PUSHABLE: dict[str, set[str]] = {
     "canvas_assignments": {"name", "points_possible", "due_at", "published"},
+}
+
+# Enriched queries that JOIN in human-readable names for ID-heavy tables.
+_ENRICHED_QUERIES: dict[str, str] = {
+    "canvas_submissions": """
+        SELECT
+            cs.canvas_user_id,
+            cs.canvas_assignment_id,
+            st.name AS student_name,
+            ca.name AS assignment_name,
+            ca.assignment_group,
+            cs.submitted,
+            cs.submitted_at,
+            cs.late,
+            cs.lateness_seconds,
+            cs.score,
+            cs.workflow_state,
+            cs.fetched_at
+        FROM canvas_submissions cs
+        LEFT JOIN canvas_students st ON cs.canvas_user_id = st.canvas_id
+        LEFT JOIN canvas_assignments ca ON cs.canvas_assignment_id = ca.canvas_id
+    """,
+    "canvas_grades": """
+        SELECT
+            cg.canvas_user_id,
+            cg.canvas_assignment_id,
+            st.name AS student_name,
+            ca.name AS assignment_name,
+            ca.assignment_group,
+            cg.score,
+            cg.posted_grade,
+            cg.updated_at
+        FROM canvas_grades cg
+        LEFT JOIN canvas_students st ON cg.canvas_user_id = st.canvas_id
+        LEFT JOIN canvas_assignments ca ON cg.canvas_assignment_id = ca.canvas_id
+    """,
 }
 
 
@@ -110,7 +154,9 @@ def _get_schema(conn: duckdb.DuckDBPyConnection, table: str) -> dict[str, object
 
     tables = _get_tables(conn)
     table_type = next((t["type"] for t in tables if t["name"] == table), None)
-    editable = table_type == "table" and len(pk_cols) > 0
+    editable = (
+        table_type == "table" and len(pk_cols) > 0 and table not in _READ_ONLY_TABLES
+    )
 
     return {
         "table": table,
@@ -123,7 +169,8 @@ def _get_schema(conn: duckdb.DuckDBPyConnection, table: str) -> dict[str, object
 
 def _get_table_data(conn: duckdb.DuckDBPyConnection, table: str) -> dict[str, object]:
     """Return all rows from a table/view as JSON-friendly structure."""
-    result = conn.execute(f"SELECT * FROM {table}")  # noqa: S608
+    query = _ENRICHED_QUERIES.get(table, f"SELECT * FROM {table}")
+    result = conn.execute(query)  # noqa: S608
     col_names = [desc[0] for desc in result.description]
     col_types = [str(desc[1]) for desc in result.description]
     rows = result.fetchall()
