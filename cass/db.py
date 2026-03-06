@@ -24,8 +24,8 @@ from .models import (
     CanvasSubmission,
     GHAssignment,
     GHGrade,
-    GHSubmission,
     GHStudentInfo,
+    GHSubmission,
     Student,
 )
 
@@ -284,7 +284,8 @@ def save_canvas_students(
     sections = sis_section_map or {}
     conn.executemany(
         "INSERT OR REPLACE INTO canvas_students "
-        "(canvas_id, name, sortable_name, email, login_id, sis_user_id, sis_section_id) "
+        "(canvas_id, name, sortable_name, email, "
+        "login_id, sis_user_id, sis_section_id) "
         "VALUES (?, ?, ?, ?, ?, ?, ?)",
         [
             (
@@ -328,7 +329,7 @@ def load_canvas_students() -> list[CanvasStudent]:
 
 
 def upsert_students(students: list[Student]) -> int:
-    """Upsert into the master students table, preserving existing github_username mappings."""
+    """Upsert into master students table, preserving existing github_username."""
     conn = get_db()
     if not students:
         return 0
@@ -407,7 +408,7 @@ def save_gh_assignments(assignments: list[GHAssignment]) -> int:
         deadline: datetime | None = None
         if a.deadline:
             try:
-                deadline = datetime.fromisoformat(a.deadline.replace("Z", "+00:00"))
+                deadline = datetime.fromisoformat(a.deadline)
             except ValueError:
                 pass
         rows.append(
@@ -430,7 +431,8 @@ def save_gh_assignments(assignments: list[GHAssignment]) -> int:
             "ON CONFLICT (slug) DO UPDATE SET "
             "gh_id = EXCLUDED.gh_id, title = EXCLUDED.title, "
             "deadline = EXCLUDED.deadline, points_possible = EXCLUDED.points_possible, "
-            "accepted = EXCLUDED.accepted, submissions_count = EXCLUDED.submissions_count, "
+            "accepted = EXCLUDED.accepted, "
+            "submissions_count = EXCLUDED.submissions_count, "
             "passing_count = EXCLUDED.passing_count",
             row,
         )
@@ -463,7 +465,7 @@ def save_canvas_assignments(
         due_at: datetime | None = None
         if a.due_at:
             try:
-                due_at = datetime.fromisoformat(a.due_at.replace("Z", "+00:00"))
+                due_at = datetime.fromisoformat(a.due_at)
             except ValueError:
                 pass
         rows.append(
@@ -479,7 +481,8 @@ def save_canvas_assignments(
         )
     conn.executemany(
         "INSERT OR REPLACE INTO canvas_assignments "
-        "(canvas_id, name, points_possible, due_at, published, assignment_group, post_manually) "
+        "(canvas_id, name, points_possible, due_at, "
+        "published, assignment_group, post_manually) "
         "VALUES (?, ?, ?, ?, ?, ?, ?)",
         rows,
     )

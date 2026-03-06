@@ -7,14 +7,13 @@ __docformat__ = "google"
 import subprocess
 from pathlib import Path
 
+import msgspec
 from rich.console import Console
 
-import msgspec
-
-from .classroom import build_repo_map
 from ..config import get_config
-from .gh import api_cached
 from ..models import Assignment, GHContentItem, Student
+from .classroom import build_repo_map
+from .gh import api_cached
 
 console = Console()
 
@@ -137,7 +136,8 @@ def fetch_assignment(
                 downloaded += 1
             else:
                 console.print(
-                    f"  [red]{student.display_name}: failed to download {item.name}[/red]"
+                    f"  [red]{student.display_name}: "
+                    f"failed to download {item.name}[/red]"
                 )
                 errors += 1
 

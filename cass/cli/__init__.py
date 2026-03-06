@@ -24,7 +24,8 @@ app = typer.Typer(
 grades_app = typer.Typer(
     invoke_without_command=True,
     no_args_is_help=False,
-    help="Show the gradebook as a student x assignment matrix, or push grades to Canvas.",
+    help="Show the gradebook as a student x assignment matrix, "
+    "or push grades to Canvas.",
 )
 app.add_typer(grades_app, name="grades")
 db_app = typer.Typer(
@@ -110,7 +111,8 @@ def _status() -> None:
     cfg_path = config_file_path()
     if not cfg_path:
         console.print(
-            "[yellow]No cass.toml found.[/yellow] Run [bold]cass init[/bold] to create one."
+            "[yellow]No cass.toml found.[/yellow] "
+            "Run [bold]cass init[/bold] to create one."
         )
         return
 
@@ -127,7 +129,8 @@ def _status() -> None:
 
     if cfg.has_canvas:
         console.print(
-            f"  Canvas: [bold]{cfg.canvas_base_url}[/bold] course={cfg.canvas_course_id}"
+            f"  Canvas: [bold]{cfg.canvas_base_url}[/bold] "
+            f"course={cfg.canvas_course_id}"
         )
     else:
         console.print("  Canvas: [dim]not configured[/dim]")
@@ -480,9 +483,9 @@ def grades_callback(
             " JOIN students s ON s.canvas_id = cg.canvas_user_id"
             " JOIN assignments a ON a.canvas_assignment_id = cg.canvas_assignment_id"
         ).fetchall()
-    except Exception:
+    except Exception as exc:
         console.print("[yellow]No grades. Run [bold]cass pull[/bold] first.[/yellow]")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from exc
 
     if not rows:
         console.print("[yellow]No grades. Run [bold]cass pull[/bold] first.[/yellow]")
@@ -499,7 +502,7 @@ def grades_callback(
     assignment_ids = sorted(assignments_set)
     student_ids = sorted(students_set)
 
-    headers = ["Student"] + assignment_ids
+    headers = ["Student", *assignment_ids]
     matrix_rows: list[list[str]] = []
     for sid in student_ids:
         row = [sid] + [grade_map.get((sid, aid), "-") for aid in assignment_ids]
@@ -678,7 +681,8 @@ def drop(
 
     if db.is_remote():
         console.print(
-            "[yellow]Database is on MotherDuck — use the MotherDuck UI to manage it.[/yellow]"
+            "[yellow]Database is on MotherDuck "
+            "— use the MotherDuck UI to manage it.[/yellow]"
         )
         raise typer.Exit(code=1)
 
@@ -764,7 +768,8 @@ def backup(
         db_file = Path(db.db_path())
         if not db_file.exists():
             console.print(
-                "[yellow]No database to back up. Run [bold]cass pull[/bold] first.[/yellow]"
+                "[yellow]No database to back up. "
+                "Run [bold]cass pull[/bold] first.[/yellow]"
             )
             raise typer.Exit(code=1)
 
@@ -775,7 +780,8 @@ def backup(
 
     size_kb = dest.stat().st_size / 1024
     console.print(
-        f"[green]Backed up → {dest.relative_to(project_root)} ({size_kb:.0f} KB)[/green]"
+        f"[green]Backed up → "
+        f"{dest.relative_to(project_root)} ({size_kb:.0f} KB)[/green]"
     )
 
 
@@ -814,9 +820,9 @@ def restore(
             except Exception:
                 counts[tbl] = 0
         backup_conn.close()
-    except Exception as e:
-        console.print(f"[red]Invalid database file: {e}[/red]")
-        raise typer.Exit(code=1)
+    except Exception as exc:
+        console.print(f"[red]Invalid database file: {exc}[/red]")
+        raise typer.Exit(code=1) from exc
 
     src_kb = src.stat().st_size / 1024
     console.print(f"  Backup: [bold]{src.name}[/bold] ({src_kb:.0f} KB)")
@@ -836,9 +842,8 @@ def restore(
         else:
             console.print("  Current DB: [dim]none[/dim]")
 
-    if not yes:
-        if not typer.confirm("\nReplace current database with this backup?"):
-            raise typer.Abort()
+    if not yes and not typer.confirm("\nReplace current database with this backup?"):
+        raise typer.Abort()
 
     if db.is_remote():
         # Restore into MotherDuck via hybrid attach
@@ -965,7 +970,8 @@ def export_table(
 
     if table not in _VALID_TABLES:
         console.print(
-            f"[red]Unknown table '{table}'. Choose from: {', '.join(_VALID_TABLES)}[/red]"
+            f"[red]Unknown table '{table}'. "
+            f"Choose from: {', '.join(_VALID_TABLES)}[/red]"
         )
         raise typer.Exit(code=1)
 
@@ -1058,7 +1064,8 @@ def import_csv(
 
     if table not in _VALID_TABLES:
         console.print(
-            f"[red]Unknown table '{table}'. Choose from: {', '.join(_VALID_TABLES)}[/red]"
+            f"[red]Unknown table '{table}'. "
+            f"Choose from: {', '.join(_VALID_TABLES)}[/red]"
         )
         raise typer.Exit(code=1)
 

@@ -3,15 +3,14 @@
 import httpx
 import pytest
 
+from cass.canvas.client import _RetryTransport
 from cass.canvas.matching import (
     _normalize,
-    slugify,
     find_candidates,
     match_students,
+    slugify,
 )
-from cass.canvas.client import _RetryTransport
 from cass.models import CanvasStudent, GHStudentInfo
-
 
 # --- _normalize ---
 

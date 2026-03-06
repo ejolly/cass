@@ -82,7 +82,7 @@ def markdown_table(headers: list[str], rows: list[list[str]]) -> str:
             widths[i] = max(widths[i], len(cell))
 
     def fmt_row(cells: list[str]) -> str:
-        padded = [c.ljust(w) for c, w in zip(cells, widths)]
+        padded = [c.ljust(w) for c, w in zip(cells, widths, strict=True)]
         return "| " + " | ".join(padded) + " |"
 
     lines = [

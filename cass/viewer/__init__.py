@@ -16,7 +16,8 @@ from typing import TYPE_CHECKING
 import duckdb
 from rich.console import Console
 
-from ..db import db_path, reset as db_reset
+from ..db import db_path
+from ..db import reset as db_reset
 
 if TYPE_CHECKING:
     from ..canvas.client import CanvasClient
@@ -90,7 +91,7 @@ class _ViewerEncoder(json.JSONEncoder):
             return o.isoformat()
         return super().default(o)
 
-    def encode(self, o: object) -> str:  # noqa: D102
+    def encode(self, o: object) -> str:
         return super().encode(_sanitize(o))
 
 
@@ -134,7 +135,7 @@ def _get_table_names(conn: duckdb.DuckDBPyConnection) -> set[str]:
 
 def _get_column_names(conn: duckdb.DuckDBPyConnection, table: str) -> list[str]:
     """Return column names for a table."""
-    cols_raw = conn.execute(f"DESCRIBE {table}").fetchall()  # noqa: S608
+    cols_raw = conn.execute(f"DESCRIBE {table}").fetchall()
     return [row[0] for row in cols_raw]
 
 
@@ -155,7 +156,7 @@ def _get_primary_keys(conn: duckdb.DuckDBPyConnection, table: str) -> list[str]:
 
 def _get_schema(conn: duckdb.DuckDBPyConnection, table: str) -> dict[str, object]:
     """Return column defs, primary keys, editability, and pushable info."""
-    cols_raw = conn.execute(f"DESCRIBE {table}").fetchall()  # noqa: S608
+    cols_raw = conn.execute(f"DESCRIBE {table}").fetchall()
     columns: list[dict[str, object]] = [
         {"name": row[0], "type": row[1], "nullable": row[2] == "YES"}
         for row in cols_raw
@@ -181,7 +182,7 @@ def _get_schema(conn: duckdb.DuckDBPyConnection, table: str) -> dict[str, object
 def _get_table_data(conn: duckdb.DuckDBPyConnection, table: str) -> dict[str, object]:
     """Return all rows from a table/view as JSON-friendly structure."""
     query = _ENRICHED_QUERIES.get(table, f"SELECT * FROM {table}")
-    result = conn.execute(query)  # noqa: S608
+    result = conn.execute(query)
     col_names = [desc[0] for desc in result.description]
     col_types = [str(desc[1]) for desc in result.description]
     rows = result.fetchall()
@@ -229,16 +230,16 @@ def _update_cell(
 
     # Capture old value before update
     old_row = conn.execute(
-        f"SELECT {column} FROM {table} WHERE {where_clause}",  # noqa: S608
+        f"SELECT {column} FROM {table} WHERE {where_clause}",
         pk_values,
     ).fetchone()
     old_value = old_row[0] if old_row else None
 
-    sql = f"UPDATE {table} SET {column} = ? WHERE {where_clause}"  # noqa: S608
+    sql = f"UPDATE {table} SET {column} = ? WHERE {where_clause}"
     conn.execute(sql, [value, *pk_values])
 
     verify = conn.execute(
-        f"SELECT {column} FROM {table} WHERE {where_clause}",  # noqa: S608
+        f"SELECT {column} FROM {table} WHERE {where_clause}",
         pk_values,
     ).fetchone()
 
@@ -282,7 +283,7 @@ def _track_change(
         return
 
     pk_key = (
-        str(list(pk.values())[0]) if len(pk) == 1 else json.dumps(pk, sort_keys=True)
+        str(next(iter(pk.values()))) if len(pk) == 1 else json.dumps(pk, sort_keys=True)
     )
 
     table_changes = pending.setdefault(table, {})
@@ -647,7 +648,7 @@ class ViewerHandler(BaseHTTPRequestHandler):
     pending_changes: _PendingChanges
     use_classic: bool
 
-    def log_message(self, format: str, *args: object) -> None:  # noqa: A002
+    def log_message(self, format: str, *args: object) -> None:
         """Suppress default stderr logging."""
 
     def _send_json(self, data: object, status: int = 200) -> None:
@@ -680,7 +681,7 @@ class ViewerHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(content)
 
-    def do_GET(self) -> None:  # noqa: N802
+    def do_GET(self) -> None:
         """Handle GET requests."""
         if self.path == "/":
             if self.use_classic:
@@ -725,7 +726,7 @@ class ViewerHandler(BaseHTTPRequestHandler):
         else:
             self._send_error_json(404, "Not found")
 
-    def do_POST(self) -> None:  # noqa: N802
+    def do_POST(self) -> None:
         """Handle POST requests."""
         if self.path == "/api/canvas/preview":
             try:

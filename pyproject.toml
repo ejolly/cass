@@ -86,6 +86,36 @@ sequence = [
     { cmd = "cp cass/viewer/elm/elm.js cass/viewer/elm.js" },
 ]
 
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "W",    # pycodestyle warnings
+    "I",    # isort (import sorting)
+    "B",    # flake8-bugbear (common pitfalls)
+    "UP",   # pyupgrade (modern syntax)
+    "SIM",  # flake8-simplify
+    "RUF",  # ruff-specific rules
+    "TCH",  # flake8-type-checking (TYPE_CHECKING guards)
+    "C4",   # flake8-comprehensions
+    "PIE",  # flake8-pie (misc. lints)
+    "PT",   # flake8-pytest-style
+    "RSE",  # flake8-raise
+    "RET",  # flake8-return
+    "FURB", # refurb (modern Python idioms)
+]
+ignore = [
+    "RET504",  # unnecessary assignment before return (often clearer with name)
+    "UP015",   # redundant open mode (explicit "r" is fine)
+    "TCH",     # TYPE_CHECKING guards — msgspec Structs need runtime type access
+    "SIM105",  # contextlib.suppress — try/except/pass is often clearer
+    "RSE102",  # unnecessary parens on raise — raise typer.Exit() is idiomatic Typer
+    "PT006",   # parametrize tuple — "a, b" vs ("a", "b") is a style choice
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["cass"]
+
 [tool.basedpyright]
 typeCheckingMode = "strict"
 pythonVersion = "3.11"

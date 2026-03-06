@@ -15,6 +15,7 @@ import logging
 import os
 import re
 import time
+from typing import Any
 
 import httpx
 import msgspec
@@ -206,8 +207,7 @@ class CanvasClient:
             if m := _LINK_NEXT_RE.search(link):
                 url = m.group(1)
                 base = str(self._client.base_url)
-                if url.startswith(base):
-                    url = url[len(base) :]
+                url = url.removeprefix(base)
 
         return results
 
@@ -602,7 +602,7 @@ class CanvasClient:
 
     def _graphql(
         self, query: str, variables: dict[str, object] | None = None
-    ) -> dict[str, object]:
+    ) -> dict[str, Any]:
         """Execute a Canvas GraphQL mutation/query.
 
         Args:
@@ -666,17 +666,16 @@ mutation ($assignmentId: ID!) {
         Raises:
             RuntimeError: If the mutation returns validation errors.
         """
-        raw = self._graphql(
+        data = self._graphql(
             self._POST_GRADES_MUTATION,
             {"assignmentId": str(assignment_id), "gradedOnly": graded_only},
         )
-        data: dict[str, object] = raw
-        result: dict[str, object] = data.get("postAssignmentGrades", {})  # type: ignore[assignment]  # pyright: nested dict
-        errors: list[dict[str, str]] = result.get("errors") or []  # type: ignore[assignment]  # pyright: nested dict
+        result = data.get("postAssignmentGrades", {})
+        errors: list[Any] = result.get("errors") or []
         if errors:
             msgs = "; ".join(f"{e['attribute']}: {e['message']}" for e in errors)
             raise RuntimeError(f"postAssignmentGrades failed: {msgs}")
-        progress: dict[str, str] | None = result.get("progress")  # type: ignore[assignment]  # pyright: nested dict
+        progress = result.get("progress")
         if progress and progress.get("_id"):
             return CanvasProgress(
                 id=int(progress["_id"]),
@@ -698,17 +697,16 @@ mutation ($assignmentId: ID!) {
         Raises:
             RuntimeError: If the mutation returns validation errors.
         """
-        raw = self._graphql(
+        data = self._graphql(
             self._HIDE_GRADES_MUTATION,
             {"assignmentId": str(assignment_id)},
         )
-        data: dict[str, object] = raw
-        result: dict[str, object] = data.get("hideAssignmentGrades", {})  # type: ignore[assignment]  # pyright: nested dict
-        errors: list[dict[str, str]] = result.get("errors") or []  # type: ignore[assignment]  # pyright: nested dict
+        result = data.get("hideAssignmentGrades", {})
+        errors: list[Any] = result.get("errors") or []
         if errors:
             msgs = "; ".join(f"{e['attribute']}: {e['message']}" for e in errors)
             raise RuntimeError(f"hideAssignmentGrades failed: {msgs}")
-        progress: dict[str, str] | None = result.get("progress")  # type: ignore[assignment]  # pyright: nested dict
+        progress = result.get("progress")
         if progress and progress.get("_id"):
             return CanvasProgress(
                 id=int(progress["_id"]),

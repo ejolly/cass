@@ -197,7 +197,7 @@ def test_update_rejects_no_pk_table(server):
 
 
 def test_update_rejects_unknown_table(server):
-    status, result = _post(
+    status, _result = _post(
         server,
         "/api/update/nonexistent",
         {

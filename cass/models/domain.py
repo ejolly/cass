@@ -1,4 +1,7 @@
-"""Domain models for cass — user-facing types for students, assignments, submissions, grades."""
+"""Domain models for cass.
+
+User-facing types for students, assignments, submissions, grades.
+"""
 
 from __future__ import annotations
 
