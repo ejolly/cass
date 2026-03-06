@@ -137,7 +137,7 @@ def test_index_page(server):
     with urlopen(f"{server}/") as resp:
         assert resp.status == 200
         html = resp.read().decode()
-        assert "elm-app" in html
+        assert "cass" in html.lower()
 
 
 def test_tables_endpoint(server):

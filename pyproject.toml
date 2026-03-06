@@ -50,7 +50,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["cass"]
-exclude = ["cass/viewer/elm/"]
+exclude = ["cass/viewer/elm/", "cass/viewer/ui/"]
 
 [project.scripts]
 cass = "cass.cli:app"
@@ -62,8 +62,8 @@ sequence = [
     { cmd = "ruff check cass/ tests/" },
     { cmd = "ty check" },
     { cmd = "basedpyright cass/" },
-    { shell = "npx --yes @biomejs/biome check --files-ignore-unknown=true cass/viewer/index.html cass/viewer/index_classic.html" },
-    { cmd = "elm-format --validate cass/viewer/elm/src/" },
+    { shell = "npx --yes @biomejs/biome check --files-ignore-unknown=true cass/viewer/index_classic.html" },
+    { shell = "cd cass/viewer/ui && bun run check" },
 ]
 
 [tool.poe.tasks.test]
@@ -78,13 +78,19 @@ cmd = "pdoc cass/ --docformat google -o docs/api/"
 help = "Live-preview API docs"
 cmd = "pdoc cass/ --docformat google"
 
-[tool.poe.tasks.elm-build]
-help = "Build the Elm viewer frontend (format + compile)"
+[tool.poe.tasks.ui-build]
+help = "Build the Svelte viewer frontend"
 sequence = [
-    { cmd = "elm-format --yes src/", cwd = "cass/viewer/elm" },
-    { cmd = "elm make src/Main.elm --optimize --output=elm.js", cwd = "cass/viewer/elm" },
-    { cmd = "cp cass/viewer/elm/elm.js cass/viewer/elm.js" },
+    { shell = "cd cass/viewer/ui && bun run build" },
 ]
+
+[tool.poe.tasks.ui-test]
+help = "Run Svelte viewer tests"
+shell = "cd cass/viewer/ui && bun run test"
+
+[tool.poe.tasks.ui-dev]
+help = "Start Svelte dev server (with HMR)"
+shell = "cd cass/viewer/ui && bun run dev"
 
 [tool.ruff.lint]
 select = [
@@ -121,8 +127,8 @@ typeCheckingMode = "strict"
 pythonVersion = "3.11"
 
 [tool.poe.tasks.install]
-help = "Build Elm viewer and install cass as a global CLI tool"
+help = "Build Svelte viewer and install cass as a global CLI tool"
 sequence = [
-    { ref = "elm-build" },
+    { ref = "ui-build" },
     { cmd = "uv tool install . --force --reinstall" },
 ]

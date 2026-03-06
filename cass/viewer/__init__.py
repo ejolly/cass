@@ -681,19 +681,40 @@ class ViewerHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(content)
 
+    def _send_css(self, content: bytes) -> None:
+        self.send_response(200)
+        self.send_header("Content-Type", "text/css; charset=utf-8")
+        self.send_header("Content-Length", str(len(content)))
+        self.end_headers()
+        self.wfile.write(content)
+
     def do_GET(self) -> None:
         """Handle GET requests."""
         if self.path == "/":
             if self.use_classic:
                 html = files("cass.viewer").joinpath("index_classic.html").read_bytes()
             else:
-                html = files("cass.viewer").joinpath("index.html").read_bytes()
+                html = files("cass.viewer.dist").joinpath("index.html").read_bytes()
             self._send_html(html)
             return
 
-        if self.path == "/elm.js" and not self.use_classic:
-            js = files("cass.viewer").joinpath("elm.js").read_bytes()
-            self._send_js(js)
+        # Serve static assets from dist/ (Svelte build output)
+        if not self.use_classic and self.path.startswith("/assets/"):
+            asset_name = self.path.split("/")[-1]
+            try:
+                data = (
+                    files("cass.viewer.dist.assets").joinpath(asset_name).read_bytes()
+                )
+            except FileNotFoundError:
+                self._send_error_json(404, "Not found")
+                return
+
+            if asset_name.endswith(".js"):
+                self._send_js(data)
+            elif asset_name.endswith(".css"):
+                self._send_css(data)
+            else:
+                self._send_error_json(404, "Not found")
             return
 
         if self.path == "/api/pending":
