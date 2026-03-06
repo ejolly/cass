@@ -26,6 +26,7 @@ dependencies = [
     "duckdb>=1.4.4",
     "msgspec>=0.20.0",
     "httpx>=0.28.1",
+    "pytz>=2024.1",
 ]
 
 [project.urls]

@@ -14,18 +14,19 @@ from .canvas_api import (
     CanvasModuleItem,
     CanvasQuiz,
     CanvasStudent,
-    CanvasSubmission,
+    CanvasSubmissionResponse,
     CanvasTab,
     CanvasUser,
     MatchResult,
 )
 from .domain import (
     Assignment,
-    DataSource,
-    Grade,
+    CanvasGrade,
+    CanvasSubmission,
+    GHGrade,
+    GHSubmission,
     GradeSource,
     Student,
-    Submission,
 )
 from .github_api import (
     GHAcceptedAssignment,
@@ -41,18 +42,20 @@ from .github_api import (
 )
 from .grading import (
     _format_lateness,
-    compute_grade,
+    compute_canvas_grade,
+    compute_gh_grade,
     numeric_grade,
 )
 
 __all__ = [
     # Domain
     "Assignment",
-    "DataSource",
-    "Grade",
+    "CanvasGrade",
+    "CanvasSubmission",
+    "GHGrade",
+    "GHSubmission",
     "GradeSource",
     "Student",
-    "Submission",
     # GitHub API
     "GHAcceptedAssignment",
     "GHAssignment",
@@ -76,12 +79,13 @@ __all__ = [
     "CanvasModuleItem",
     "CanvasQuiz",
     "CanvasStudent",
-    "CanvasSubmission",
+    "CanvasSubmissionResponse",
     "CanvasTab",
     "CanvasUser",
     "MatchResult",
     # Grading
     "_format_lateness",
-    "compute_grade",
+    "compute_canvas_grade",
+    "compute_gh_grade",
     "numeric_grade",
 ]

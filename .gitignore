@@ -6,6 +6,8 @@ canvas-token.txt
 canvas_mapping.json
 classroom_roster.csv
 cass.duckdb
+.cass_cache.duckdb
+.cass_cache.duckdb.wal
 grade-data/
 .ruff_cache/
 .pytest_cache/

@@ -6,7 +6,7 @@ import json
 import shutil
 import subprocess
 
-from . import db
+from . import cache
 
 
 def _require_gh() -> None:
@@ -81,11 +81,11 @@ def api_cached(
 ) -> dict | list:
     """Cache-through wrapper around api()."""
     if not force_refresh:
-        raw = db.cache_load(endpoint, ttl_hours)
+        raw = cache.cache_load(endpoint, ttl_hours)
         if raw is not None:
             cached = json.loads(raw)
             if isinstance(cached, (dict, list)):
                 return cached
     data = api(endpoint, paginate=paginate)
-    db.cache_save(endpoint, json.dumps(data))
+    cache.cache_save(endpoint, json.dumps(data))
     return data

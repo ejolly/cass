@@ -28,7 +28,9 @@ _FINAL_PROJECT_SLUG = "final-project"
 
 
 def _student_dir(student: Student) -> str:
-    return student.identifier.lower().replace(" ", "-")
+    if student.github_username:
+        return student.github_username.lower()
+    return student.display_name.lower().replace(" ", "-")
 
 
 def _download_file(url: str, dest: Path) -> bool:
@@ -70,50 +72,38 @@ def fetch_assignment(
     ttl_hours: float = 6,
     force_refresh: bool = False,
 ) -> None:
-    """Download files for one assignment across all students.
-
-    Downloads code files (``.py``, ``.qmd``) from repo roots, or PDFs
-    from ``pdfs/`` for the final project. Files are saved under
-    ``students/{student}/{assignment}/``.
-
-    Args:
-        assignment: The assignment whose repos to fetch from.
-        students: Roster of students to download for.
-        force: Re-download files that already exist locally.
-        limit: Max students to process (0 = all).
-        ttl_hours: Cache TTL for GitHub API calls.
-        force_refresh: Bypass API cache if True.
-    """
-    repo_map = build_repo_map(
-        assignment, ttl_hours=ttl_hours, force_refresh=force_refresh
-    )
-    is_final = assignment.slug == _FINAL_PROJECT_SLUG
+    """Download files for one assignment across all students."""
+    slug = assignment.gh_assignment_slug or assignment.slug
+    repo_map = build_repo_map(slug, ttl_hours=ttl_hours, force_refresh=force_refresh)
+    is_final = slug == _FINAL_PROJECT_SLUG
     dest_root = get_config().root / STUDENTS_DIR
 
     downloaded = 0
     skipped = 0
     errors = 0
 
-    sorted_students = sorted(students, key=lambda s: s.identifier.lower())
+    sorted_students = sorted(students, key=lambda s: s.display_name.lower())
     if limit > 0:
         sorted_students = sorted_students[:limit]
 
     for student in sorted_students:
+        if not student.github_username:
+            continue
         repo_short = repo_map.get(student.handle_lower)
         if not repo_short:
-            console.print(f"  [dim]{student.identifier}: no repo[/dim]")
+            console.print(f"  [dim]{student.display_name}: no repo[/dim]")
             errors += 1
             continue
 
         student_slug = _student_dir(student)
-        dest_dir = dest_root / student_slug / assignment.slug
+        dest_dir = dest_root / student_slug / slug
 
         if is_final:
             contents = _list_contents(
                 repo_short, "pdfs", ttl_hours=ttl_hours, force_refresh=force_refresh
             )
             if not contents:
-                console.print(f"  [dim]{student.identifier}: no pdfs/ dir[/dim]")
+                console.print(f"  [dim]{student.display_name}: no pdfs/ dir[/dim]")
                 errors += 1
                 continue
             target_exts = _PDF_EXTS
@@ -122,7 +112,7 @@ def fetch_assignment(
                 repo_short, "", ttl_hours=ttl_hours, force_refresh=force_refresh
             )
             if not contents:
-                console.print(f"  [dim]{student.identifier}: empty repo[/dim]")
+                console.print(f"  [dim]{student.display_name}: empty repo[/dim]")
                 errors += 1
                 continue
             target_exts = _CODE_EXTS
@@ -147,7 +137,7 @@ def fetch_assignment(
                 downloaded += 1
             else:
                 console.print(
-                    f"  [red]{student.identifier}: failed to download {item.name}[/red]"
+                    f"  [red]{student.display_name}: failed to download {item.name}[/red]"
                 )
                 errors += 1
 

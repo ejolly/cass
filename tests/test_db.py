@@ -1,55 +1,83 @@
-"""Tests for cass.db — DuckDB CRUD round-trips."""
-
-import time
+"""Tests for cass.db — DuckDB CRUD round-trips with schema v6."""
 
 from cass import db
-from cass.models import Assignment, Grade, Student, Submission
+from cass.models import (
+    Assignment,
+    CanvasGrade,
+    CanvasStudent,
+    CanvasSubmission,
+    GHGrade,
+    GHStudentInfo,
+    GHSubmission,
+    Student,
+)
 
 
-def test_students_roundtrip(db_conn):
-    students = [
-        Student(
-            identifier="alice",
-            github_username="alice-gh",
-            github_id="1",
-            name="Alice Smith",
-            email="alice@example.com",
-            canvas_id="100",
+# --- GH Students (source) ---
+
+
+def test_gh_students_roundtrip(db_conn):
+    gh_students = [
+        GHStudentInfo(
+            login="alice-gh", id="1", name="Alice Smith", email="alice@x.com"
         ),
-        Student(
-            identifier="bob",
-            github_username="bob-gh",
-            github_id="2",
-            name="Bob Jones",
-            canvas_id="200",
-        ),
-        Student(
-            identifier="charlie",
-            github_username="charlie-gh",
-            github_id="3",
-            name="Charlie Brown",
-        ),
+        GHStudentInfo(login="bob-gh", id="2", name="Bob Jones"),
     ]
-    assert db.save_students(students) == 3
+    assert db.save_gh_students(gh_students) == 2
+    loaded = db.load_gh_students()
+    assert len(loaded) == 2
+    assert loaded[0].login == "alice-gh"
+    assert loaded[0].name == "Alice Smith"
+
+
+# --- Canvas Students (source) ---
+
+
+def test_canvas_students_roundtrip(db_conn):
+    canvas_students = [
+        CanvasStudent(id=100, name="Alice Smith", email="alice@ucsd.edu"),
+        CanvasStudent(id=200, name="Bob Jones"),
+    ]
+    assert db.save_canvas_students(canvas_students) == 2
+    loaded = db.load_canvas_students()
+    assert len(loaded) == 2
+    assert loaded[0].name == "Alice Smith"
+    assert loaded[0].email == "alice@ucsd.edu"
+
+
+# --- Students (master) ---
+
+
+def test_upsert_students(db_conn):
+    students = [
+        Student(canvas_id=100, name="Alice Smith", email="alice@ucsd.edu"),
+        Student(canvas_id=200, name="Bob Jones"),
+    ]
+    assert db.upsert_students(students) == 2
     loaded = db.load_students(include_excluded=True)
-    assert len(loaded) == 3
-    # Sorted by lower(identifier)
-    assert loaded[0].identifier == "alice"
+    assert len(loaded) == 2
+    assert loaded[0].canvas_id == 100
+    assert loaded[0].name == "Alice Smith"
+
+
+def test_upsert_preserves_github_mapping(db_conn):
+    db.upsert_students([Student(canvas_id=100, name="Alice")])
+    db.update_student_github(100, "alice-gh")
+
+    # Re-upsert without github_username — should preserve the mapping
+    db.upsert_students([Student(canvas_id=100, name="Alice Smith")])
+    loaded = db.load_students()
     assert loaded[0].github_username == "alice-gh"
     assert loaded[0].name == "Alice Smith"
-    assert loaded[0].email == "alice@example.com"
-    assert loaded[0].canvas_id == "100"
-    assert loaded[1].email == ""  # default
-    assert loaded[2].identifier == "charlie"
 
 
 def test_students_exclude_filter(db_conn):
     students = [
-        Student(identifier="alice", excluded=False),
-        Student(identifier="bob", excluded=True),
-        Student(identifier="charlie", excluded=False),
+        Student(canvas_id=100, name="Alice", excluded=False),
+        Student(canvas_id=200, name="Bob", excluded=True),
+        Student(canvas_id=300, name="Charlie", excluded=False),
     ]
-    db.save_students(students)
+    db.upsert_students(students)
     all_students = db.load_students(include_excluded=True)
     assert len(all_students) == 3
     active = db.load_students(include_excluded=False)
@@ -59,126 +87,251 @@ def test_students_exclude_filter(db_conn):
 
 def test_students_exist(db_conn):
     assert db.students_exist() is False
-    db.save_students([Student(identifier="alice")])
+    db.upsert_students([Student(canvas_id=100, name="Alice")])
     assert db.students_exist() is True
+
+
+def test_update_student_github(db_conn):
+    db.upsert_students([Student(canvas_id=100, name="Alice")])
+    db.update_student_github(100, "Alice-GH")
+    loaded = db.load_students()
+    assert loaded[0].github_username == "alice-gh"  # lowercased
+
+
+# --- Assignments (master) ---
 
 
 def test_assignments_roundtrip(db_conn):
     assignments = [
         Assignment(
-            id="hw-01",
-            source="github",
-            title="Homework 01",
             slug="hw-01",
+            title="Homework 01",
+            gh_assignment_slug="hw-01",
+            canvas_assignment_id=42,
             points_possible=1.0,
-            accepted=25,
-            submissions_count=20,
-            passing_count=18,
         ),
         Assignment(
-            id="quiz-1",
-            source="canvas",
+            slug="quiz-1",
             title="Quiz 1",
-            canvas_id=42,
+            canvas_assignment_id=43,
             points_possible=50.0,
         ),
     ]
-    assert db.save_assignments(assignments) == 2
+    assert db.upsert_assignments(assignments) == 2
     loaded = db.load_assignments()
     assert len(loaded) == 2
-    # Sorted by id
-    assert loaded[0].id == "hw-01"
-    assert loaded[0].source == "github"
-    assert loaded[0].accepted == 25
-    assert loaded[0].submissions_count == 20
-    assert loaded[0].passing_count == 18
-    assert loaded[1].id == "quiz-1"
-    assert loaded[1].canvas_id == 42
+    assert loaded[0].slug == "hw-01"
+    assert loaded[0].gh_assignment_slug == "hw-01"
+    assert loaded[0].canvas_assignment_id == 42
+    assert loaded[1].slug == "quiz-1"
     assert loaded[1].points_possible == 50.0
-    assert loaded[1].submissions_count == 0  # default
-    assert loaded[1].passing_count == 0  # default
 
 
-def test_submissions_roundtrip(db_conn):
+def test_load_assignment_mappings(db_conn):
+    assignments = [
+        Assignment(
+            slug="hw-01",
+            title="HW 01",
+            gh_assignment_slug="hw-01",
+            canvas_assignment_id=42,
+        ),
+        Assignment(slug="quiz-1", title="Quiz 1", canvas_assignment_id=43),
+    ]
+    db.upsert_assignments(assignments)
+    mappings = db.load_assignment_mappings()
+    assert mappings == {"hw-01": 42}
+
+
+# --- GH Submissions ---
+
+
+def test_gh_submissions_roundtrip(db_conn):
     subs = [
-        Submission(
-            student_id="alice",
-            assignment_id="hw-01",
-            source="github",
+        GHSubmission(
+            github_username="alice",
+            assignment_slug="hw-01",
             submitted=True,
             commits_after_deadline=2,
             commit_count=15,
             passing=True,
             gh_autograder_score="10/10",
         ),
-        Submission(
-            student_id="bob",
-            assignment_id="hw-01",
-            source="github",
+        GHSubmission(
+            github_username="bob",
+            assignment_slug="hw-01",
             submitted=True,
             late=True,
             lateness_seconds=3600,
         ),
-        Submission(
-            student_id="alice", assignment_id="hw-02", source="github", submitted=False
+    ]
+    assert db.save_gh_submissions(subs) == 2
+    loaded = db.load_gh_submissions()
+    assert len(loaded) == 2
+    hw01 = db.load_gh_submissions(assignment_slug="hw-01")
+    assert len(hw01) == 2
+    assert hw01[0].github_username == "alice"
+    assert hw01[0].commits_after_deadline == 2
+    assert hw01[0].passing is True
+    assert hw01[1].github_username == "bob"
+    assert hw01[1].late is True
+
+
+# --- Canvas Submissions ---
+
+
+def test_canvas_submissions_roundtrip(db_conn):
+    subs = [
+        CanvasSubmission(
+            canvas_user_id=100,
+            canvas_assignment_id=42,
+            submitted=True,
+            score=8.0,
+            workflow_state="graded",
+        ),
+        CanvasSubmission(
+            canvas_user_id=200,
+            canvas_assignment_id=42,
+            submitted=False,
         ),
     ]
-    assert db.save_submissions(subs) == 3
-    all_subs = db.load_submissions()
-    assert len(all_subs) == 3
-    hw01 = db.load_submissions(assignment_id="hw-01")
-    assert len(hw01) == 2
-    assert hw01[0].student_id == "alice"
-    assert hw01[0].commits_after_deadline == 2
-    assert hw01[0].commit_count == 15
-    assert hw01[0].passing is True
-    assert hw01[0].gh_autograder_score == "10/10"
-    assert hw01[1].student_id == "bob"
-    assert hw01[1].late is True
-    assert hw01[1].commit_count == 0  # default
-    assert hw01[1].passing is False  # default
+    assert db.save_canvas_submissions(subs) == 2
 
 
-def test_grades_roundtrip(db_conn):
+# --- GH Grades ---
+
+
+def test_gh_grades_roundtrip(db_conn):
     grades = [
-        Grade(student_id="alice", assignment_id="hw-01", grade="1", numeric_score=1.0),
-        Grade(
-            student_id="bob",
-            assignment_id="hw-01",
+        GHGrade(
+            github_username="alice",
+            assignment_slug="hw-01",
+            grade="1",
+            numeric_score=1.0,
+        ),
+        GHGrade(
+            github_username="bob",
+            assignment_slug="hw-01",
             grade="0 (+1d 01:01)",
             numeric_score=0.0,
         ),
-        Grade(
-            student_id="alice", assignment_id="hw-02", grade="1+ (3)", numeric_score=1.0
-        ),
     ]
-    assert db.save_grades(grades) == 3
-    all_grades = db.load_grades()
-    assert len(all_grades) == 3
-    hw01 = db.load_grades(assignment_id="hw-01")
+    assert db.save_gh_grades(grades) == 2
+    loaded = db.load_gh_grades()
+    assert len(loaded) == 2
+    hw01 = db.load_gh_grades(assignment_slug="hw-01")
     assert len(hw01) == 2
     assert hw01[0].grade == "1"
     assert hw01[0].numeric_score == 1.0
     assert hw01[1].grade == "0 (+1d 01:01)"
 
 
-def test_cache_roundtrip(db_conn):
-    db.cache_save("test-key", '{"data": 1}')
-    # Fresh load
-    result = db.cache_load("test-key", ttl_hours=1)
-    assert result == '{"data": 1}'
-    # Expired load — patch fetched_at to the past
-    db_conn.execute(
-        "UPDATE api_cache SET fetched_at = ? WHERE endpoint = ?",
-        [time.time() - 7200, "test-key"],
+# --- Canvas Grades ---
+
+
+def test_canvas_grades_roundtrip(db_conn):
+    grades = [
+        CanvasGrade(
+            canvas_user_id=100,
+            canvas_assignment_id=42,
+            score=8.0,
+            posted_grade="8/10",
+        ),
+        CanvasGrade(
+            canvas_user_id=200,
+            canvas_assignment_id=42,
+            score=None,
+            posted_grade="-",
+        ),
+    ]
+    assert db.save_canvas_grades(grades) == 2
+    loaded = db.load_canvas_grades()
+    assert len(loaded) == 2
+    by_aid = db.load_canvas_grades(canvas_assignment_id=42)
+    assert len(by_aid) == 2
+    assert by_aid[0].posted_grade == "8/10"
+    assert by_aid[0].score == 8.0
+    assert by_aid[1].posted_grade == "-"
+
+
+# --- Views ---
+
+
+def test_v_submissions_view(db_conn):
+    """v_submissions joins sources through master tables."""
+    db.upsert_students([Student(canvas_id=100, github_username="alice", name="Alice")])
+    db.upsert_assignments(
+        [
+            Assignment(
+                slug="hw-01",
+                title="HW 01",
+                gh_assignment_slug="hw-01",
+                canvas_assignment_id=42,
+            )
+        ]
     )
-    result = db.cache_load("test-key", ttl_hours=1)
-    assert result is None
+    db.save_gh_submissions(
+        [
+            GHSubmission(
+                github_username="alice",
+                assignment_slug="hw-01",
+                submitted=True,
+            )
+        ]
+    )
+    db.save_canvas_submissions(
+        [
+            CanvasSubmission(
+                canvas_user_id=100,
+                canvas_assignment_id=42,
+                submitted=True,
+                score=9.0,
+            )
+        ]
+    )
+
+    conn = db.get_db()
+    rows = conn.execute("SELECT * FROM v_submissions ORDER BY source").fetchall()
+    assert len(rows) == 2
+    sources = {r[2] for r in rows}
+    assert sources == {"github", "canvas"}
 
 
-def test_cache_clear(db_conn):
-    db.cache_save("key-1", '{"a": 1}')
-    db.cache_save("key-2", '{"b": 2}')
-    assert db.cache_count() == 2
-    db.cache_clear()
-    assert db.cache_count() == 0
+def test_v_grades_view(db_conn):
+    """v_grades joins grade tables through master tables."""
+    db.upsert_students([Student(canvas_id=100, github_username="alice", name="Alice")])
+    db.upsert_assignments(
+        [
+            Assignment(
+                slug="hw-01",
+                title="HW 01",
+                gh_assignment_slug="hw-01",
+                canvas_assignment_id=42,
+            )
+        ]
+    )
+    db.save_gh_grades(
+        [
+            GHGrade(
+                github_username="alice",
+                assignment_slug="hw-01",
+                grade="1",
+                numeric_score=1.0,
+            )
+        ]
+    )
+    db.save_canvas_grades(
+        [
+            CanvasGrade(
+                canvas_user_id=100,
+                canvas_assignment_id=42,
+                score=9.0,
+                posted_grade="9/10",
+            )
+        ]
+    )
+
+    conn = db.get_db()
+    rows = conn.execute("SELECT * FROM v_grades ORDER BY source").fetchall()
+    assert len(rows) == 2
+    sources = {r[3] for r in rows}
+    assert sources == {"github", "canvas"}

@@ -4,71 +4,68 @@ from __future__ import annotations
 
 __docformat__ = "google"
 
-from .domain import Assignment, Grade, Submission
+from .domain import CanvasGrade, CanvasSubmission, GHGrade, GHSubmission
 
 
-def compute_grade(sub: Submission, assign: Assignment) -> Grade:
-    """Compute a grade from a submission."""
-    if sub.source == "github":
-        return _compute_github_grade(sub, assign)
-    return _compute_canvas_grade(sub, assign)
-
-
-def _compute_github_grade(sub: Submission, assign: Assignment) -> Grade:
+def compute_gh_grade(sub: GHSubmission) -> GHGrade:
+    """Compute a grade from a GitHub Classroom submission."""
     if not sub.submitted:
-        return Grade(
-            student_id=sub.student_id,
-            assignment_id=sub.assignment_id,
+        return GHGrade(
+            github_username=sub.github_username,
+            assignment_slug=sub.assignment_slug,
             grade="0",
             numeric_score=0.0,
         )
     if sub.late:
         lateness = _format_lateness(sub.lateness_seconds)
-        return Grade(
-            student_id=sub.student_id,
-            assignment_id=sub.assignment_id,
+        return GHGrade(
+            github_username=sub.github_username,
+            assignment_slug=sub.assignment_slug,
             grade=f"0 ({lateness})",
             numeric_score=0.0,
         )
     if sub.commits_after_deadline == 0:
-        return Grade(
-            student_id=sub.student_id,
-            assignment_id=sub.assignment_id,
+        return GHGrade(
+            github_username=sub.github_username,
+            assignment_slug=sub.assignment_slug,
             grade="1",
             numeric_score=1.0,
         )
-    return Grade(
-        student_id=sub.student_id,
-        assignment_id=sub.assignment_id,
+    return GHGrade(
+        github_username=sub.github_username,
+        assignment_slug=sub.assignment_slug,
         grade=f"1+ ({sub.commits_after_deadline})",
         numeric_score=1.0,
     )
 
 
-def _compute_canvas_grade(sub: Submission, assign: Assignment) -> Grade:
+def compute_canvas_grade(
+    sub: CanvasSubmission, points_possible: float = 0.0
+) -> CanvasGrade:
+    """Compute a grade from a Canvas submission."""
     if not sub.submitted:
-        return Grade(
-            student_id=sub.student_id,
-            assignment_id=sub.assignment_id,
-            grade="-",
-            numeric_score=None,
+        return CanvasGrade(
+            canvas_user_id=sub.canvas_user_id,
+            canvas_assignment_id=sub.canvas_assignment_id,
+            score=None,
+            posted_grade="-",
         )
     if sub.score is None:
-        return Grade(
-            student_id=sub.student_id,
-            assignment_id=sub.assignment_id,
-            grade="?",
-            numeric_score=None,
+        return CanvasGrade(
+            canvas_user_id=sub.canvas_user_id,
+            canvas_assignment_id=sub.canvas_assignment_id,
+            score=None,
+            posted_grade="?",
         )
-    if assign.points_possible > 0:
-        grade_str = f"{sub.score:g}/{assign.points_possible:g}"
+    if points_possible > 0:
+        grade_str = f"{sub.score:g}/{points_possible:g}"
     else:
         grade_str = f"{sub.score:g}"
-    return Grade(
-        student_id=sub.student_id,
-        assignment_id=sub.assignment_id,
-        grade=grade_str,
-        numeric_score=sub.score,
+    return CanvasGrade(
+        canvas_user_id=sub.canvas_user_id,
+        canvas_assignment_id=sub.canvas_assignment_id,
+        score=sub.score,
+        posted_grade=grade_str,
     )
 
 

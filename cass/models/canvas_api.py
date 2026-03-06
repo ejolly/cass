@@ -198,8 +198,8 @@ class CanvasTab(msgspec.Struct):
 # --- Submissions (used by existing grading flow) ---
 
 
-class CanvasSubmission(msgspec.Struct):
-    """Canvas submission record."""
+class CanvasSubmissionResponse(msgspec.Struct):
+    """Canvas submission API response."""
 
     user_id: int
     submitted_at: str | None = None

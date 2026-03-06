@@ -1,4 +1,4 @@
-"""Tests for cass.canvas — name matching, slugification, roster mapping."""
+"""Tests for cass.canvas — name matching, slugification."""
 
 import httpx
 import pytest
@@ -7,11 +7,10 @@ from cass.canvas import (
     _normalize,
     _slugify,
     find_candidates,
-    mapping_from_roster,
     match_students,
 )
 from cass.canvas_api import _RetryTransport
-from cass.models import CanvasStudent, GHStudentInfo, Student
+from cass.models import CanvasStudent, GHStudentInfo
 
 
 # --- _normalize ---
@@ -119,27 +118,6 @@ def test_find_candidates_empty():
     pool = [CanvasStudent(id=i, name=f"Student {i}") for i in range(10)]
     result = find_candidates(gh, pool)
     assert len(result) == 5
-
-
-# --- mapping_from_roster ---
-
-
-def test_mapping_from_roster():
-    students = [
-        Student(identifier="alice", github_username="alice-gh", canvas_id="100"),
-        Student(identifier="bob", github_username="bob-gh", canvas_id="200"),
-        Student(
-            identifier="charlie", github_username="", canvas_id="300"
-        ),  # no gh -> skip
-        Student(
-            identifier="diana", github_username="diana-gh", canvas_id=""
-        ),  # no canvas -> skip
-        Student(
-            identifier="eve", github_username="eve-gh", canvas_id="not-a-number"
-        ),  # bad -> skip
-    ]
-    result = mapping_from_roster(students)
-    assert result == {"alice-gh": 100, "bob-gh": 200}
 
 
 # --- _RetryTransport ---

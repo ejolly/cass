@@ -33,7 +33,7 @@ from .models import (
     CanvasModuleItem,
     CanvasQuiz,
     CanvasStudent,
-    CanvasSubmission,
+    CanvasSubmissionResponse,
     CanvasTab,
     CanvasUser,
 )
@@ -448,7 +448,7 @@ class CanvasClient:
 
     # --- Submissions ---
 
-    def list_submissions(self, assignment_id: int) -> list[CanvasSubmission]:
+    def list_submissions(self, assignment_id: int) -> list[CanvasSubmissionResponse]:
         """List submissions for an assignment.
 
         Args:
@@ -460,7 +460,7 @@ class CanvasClient:
         data = self._get_paginated(
             self._course(f"/assignments/{assignment_id}/submissions")
         )
-        return msgspec.convert(data, list[CanvasSubmission], strict=False)
+        return msgspec.convert(data, list[CanvasSubmissionResponse], strict=False)
 
     def push_grade(
         self, assignment_id: int, student_canvas_id: int, grade: str
