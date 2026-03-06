@@ -37,6 +37,7 @@ from .github_api import (
     GHContentItem,
     GHProfile,
     GHRepository,
+    GHRosterEntry,
     GHStudent,
     GHStudentInfo,
 )
@@ -65,6 +66,7 @@ __all__ = [
     "GHContentItem",
     "GHProfile",
     "GHRepository",
+    "GHRosterEntry",
     "GHStudent",
     "GHStudentInfo",
     # Canvas API

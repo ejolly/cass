@@ -20,7 +20,7 @@ from .models import (
     GHAcceptedAssignment,
     GHAssignment,
     GHCommit,
-    GHProfile,
+    GHRosterEntry,
     GHStudentInfo,
     GHSubmission,
     Student,
@@ -68,47 +68,39 @@ async def fetch_all_students(
     ttl_hours: float = 6,
     force_refresh: bool = False,
 ) -> list[GHStudentInfo]:
-    """Aggregate unique students across all assignments."""
+    """Aggregate unique students from the grades endpoint (has roster names).
+
+    The ``/assignments/{id}/grades`` endpoint returns ``roster_identifier``
+    (the real name from the classroom roster) paired with ``github_username``,
+    which is far more reliable than GitHub profile lookups.
+    """
     assignments = await fetch_assignments(
         client, ttl_hours=ttl_hours, force_refresh=force_refresh
     )
     seen: dict[str, GHStudentInfo] = {}
 
     for assignment in assignments:
-        gh_id = await _resolve_gh_id(client, assignment.slug)
         data = await client.get_cached(
-            f"/assignments/{gh_id}/accepted_assignments",
+            f"/assignments/{assignment.id}/grades",
             ttl_hours=ttl_hours,
             force_refresh=force_refresh,
             paginate=True,
         )
-        accepted = msgspec.convert(data, list[GHAcceptedAssignment])
-        for entry in accepted:
-            for student in entry.students:
-                if student.login and student.login.lower() not in seen:
-                    seen[student.login.lower()] = GHStudentInfo(
-                        login=student.login,
-                        id=str(student.id),
-                    )
+        entries = msgspec.convert(data, list[GHRosterEntry])
+        for entry in entries:
+            login = entry.github_username
+            if not login:
+                continue
+            key = login.lower()
+            if key not in seen:
+                seen[key] = GHStudentInfo(
+                    login=login,
+                    name=entry.roster_identifier,
+                )
+            elif not seen[key].name and entry.roster_identifier:
+                seen[key].name = entry.roster_identifier
 
-    # Parallel profile lookups
-    students = list(seen.values())
-
-    async def lookup_profile(s: GHStudentInfo) -> None:
-        try:
-            profile_data = await client.get_cached(
-                f"/users/{s.login}",
-                ttl_hours=ttl_hours,
-                force_refresh=force_refresh,
-            )
-            profile = msgspec.convert(profile_data, GHProfile)
-            s.name = profile.name or ""
-            s.email = profile.email or ""
-        except Exception:
-            pass
-
-    await asyncio.gather(*(lookup_profile(s) for s in students))
-    return sorted(students, key=lambda s: s.login.lower())
+    return sorted(seen.values(), key=lambda s: s.login.lower())
 
 
 async def fetch_submissions(
