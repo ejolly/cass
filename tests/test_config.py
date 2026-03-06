@@ -2,7 +2,13 @@
 
 import pytest
 
-from cass.config import Config, find_project_root, reset_config, write_config
+from cass.config import (
+    CanvasModuleSpec,
+    Config,
+    find_project_root,
+    reset_config,
+    write_config,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -80,3 +86,62 @@ def test_has_classroom(classroom_id, org, expected, tmp_path):
 def test_has_canvas(base_url, course_id, expected, tmp_path):
     cfg = Config(root=tmp_path, canvas_base_url=base_url, canvas_course_id=course_id)
     assert cfg.has_canvas is expected
+
+
+# --- Config-as-data (canvas.modules / canvas.assignments) ---
+
+
+def test_load_canvas_modules(tmp_path, monkeypatch):
+    """Parse [[canvas.modules]] from cass.toml."""
+    toml = tmp_path / "cass.toml"
+    toml.write_text(
+        '[canvas]\nbase_url = "https://canvas.example.com"\ncourse_id = 1\n\n'
+        '[[canvas.modules]]\nname = "Week 1"\npublished = false\n\n'
+        '[[canvas.modules]]\nname = "Week 2"\npublished = true\n'
+    )
+    monkeypatch.chdir(tmp_path)
+    reset_config()
+    from cass.config import _load_config
+
+    cfg = _load_config()
+    assert len(cfg.canvas_modules) == 2
+    assert cfg.canvas_modules[0] == CanvasModuleSpec(name="Week 1", published=False)
+    assert cfg.canvas_modules[1] == CanvasModuleSpec(name="Week 2", published=True)
+
+
+def test_load_canvas_assignments(tmp_path, monkeypatch):
+    """Parse [[canvas.assignments]] from cass.toml."""
+    toml = tmp_path / "cass.toml"
+    toml.write_text(
+        '[canvas]\nbase_url = "https://canvas.example.com"\ncourse_id = 1\n\n'
+        '[[canvas.assignments]]\nname = "HW1"\npoints = 10\n'
+        'submission_types = ["online_url"]\ndue_at = "2026-01-20T23:59:59-08:00"\n'
+        'published = true\ngroup = "Homework"\n'
+    )
+    monkeypatch.chdir(tmp_path)
+    reset_config()
+    from cass.config import _load_config
+
+    cfg = _load_config()
+    assert len(cfg.canvas_assignments) == 1
+    spec = cfg.canvas_assignments[0]
+    assert spec.name == "HW1"
+    assert spec.points == 10.0
+    assert spec.submission_types == ["online_url"]
+    assert spec.published is True
+    assert spec.group == "Homework"
+
+
+def test_load_no_declarations(tmp_path, monkeypatch):
+    """Config without [[canvas.modules/assignments]] has empty lists."""
+    toml = tmp_path / "cass.toml"
+    toml.write_text(
+        '[canvas]\nbase_url = "https://canvas.example.com"\ncourse_id = 1\n'
+    )
+    monkeypatch.chdir(tmp_path)
+    reset_config()
+    from cass.config import _load_config
+
+    cfg = _load_config()
+    assert cfg.canvas_modules == []
+    assert cfg.canvas_assignments == []

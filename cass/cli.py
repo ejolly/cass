@@ -11,6 +11,7 @@ import typer
 from rich.console import Console
 
 from . import __version__
+from .cli_canvas import canvas_app
 
 app = typer.Typer(
     invoke_without_command=True,
@@ -28,6 +29,7 @@ db_app = typer.Typer(
     help="Database tools: interactive REPL and cache management.",
 )
 app.add_typer(db_app, name="db")
+app.add_typer(canvas_app, name="canvas")
 
 console = Console()
 

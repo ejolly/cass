@@ -3,9 +3,20 @@
 __docformat__ = "google"
 
 from .canvas_api import (
+    CanvasAnnouncement,
     CanvasAssignment,
+    CanvasAssignmentGroup,
+    CanvasCourse,
+    CanvasEnrollment,
+    CanvasFile,
+    CanvasFolder,
+    CanvasModule,
+    CanvasModuleItem,
+    CanvasQuiz,
     CanvasStudent,
     CanvasSubmission,
+    CanvasTab,
+    CanvasUser,
     MatchResult,
 )
 from .domain import (
@@ -54,9 +65,20 @@ __all__ = [
     "GHStudent",
     "GHStudentInfo",
     # Canvas API
+    "CanvasAnnouncement",
     "CanvasAssignment",
+    "CanvasAssignmentGroup",
+    "CanvasCourse",
+    "CanvasEnrollment",
+    "CanvasFile",
+    "CanvasFolder",
+    "CanvasModule",
+    "CanvasModuleItem",
+    "CanvasQuiz",
     "CanvasStudent",
     "CanvasSubmission",
+    "CanvasTab",
+    "CanvasUser",
     "MatchResult",
     # Grading
     "_format_lateness",
