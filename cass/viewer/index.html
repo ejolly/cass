@@ -7,16 +7,23 @@
   <script src="https://cdn.jsdelivr.net/npm/ag-grid-community@33/dist/ag-grid-community.min.js"></script>
   <style>
     :root {
-      --sidebar-width: 220px;
+      --sidebar-width: 230px;
       --bg: #fafafa;
       --sidebar-bg: #f0f0f0;
       --sidebar-active: #e0e0e0;
+      --sidebar-hover: #e8e8e8;
       --text: #1a1a1a;
       --text-dim: #888;
+      --text-faint: #aaa;
       --border: #ddd;
       --accent: #2563eb;
+      --accent-light: #dbeafe;
       --success: #16a34a;
       --error: #dc2626;
+      --input-bg: #fff;
+      --input-border: #ccc;
+      --badge-bg: #e5e7eb;
+      --badge-text: #6b7280;
     }
 
     @media (prefers-color-scheme: dark) {
@@ -24,12 +31,19 @@
         --bg: #1a1a1a;
         --sidebar-bg: #222;
         --sidebar-active: #333;
+        --sidebar-hover: #2a2a2a;
         --text: #e5e5e5;
         --text-dim: #777;
+        --text-faint: #555;
         --border: #333;
         --accent: #60a5fa;
+        --accent-light: #1e3a5f;
         --success: #4ade80;
         --error: #f87171;
+        --input-bg: #2a2a2a;
+        --input-border: #444;
+        --badge-bg: #374151;
+        --badge-text: #9ca3af;
       }
     }
 
@@ -44,6 +58,8 @@
       overflow: hidden;
     }
 
+    /* ── Sidebar ──────────────────────────────────────── */
+
     #sidebar {
       width: var(--sidebar-width);
       min-width: var(--sidebar-width);
@@ -52,64 +68,127 @@
       display: flex;
       flex-direction: column;
       overflow-y: auto;
+      transition: width 0.2s ease, min-width 0.2s ease, opacity 0.2s ease;
     }
 
-    #sidebar h1 {
-      font-size: 16px;
+    #sidebar.collapsed {
+      width: 0;
+      min-width: 0;
+      overflow: hidden;
+      border-right: none;
+    }
+
+    #sidebar-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    #sidebar-header h1 {
+      font-size: 15px;
       font-weight: 700;
-      padding: 16px;
       letter-spacing: 0.05em;
       color: var(--text-dim);
       text-transform: uppercase;
     }
 
-    #sidebar .section-label {
-      font-size: 11px;
+    .collapse-btn {
+      background: none;
+      border: none;
+      color: var(--text-dim);
+      cursor: pointer;
+      padding: 4px;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.15s, color 0.15s;
+    }
+
+    .collapse-btn:hover {
+      background: var(--sidebar-active);
+      color: var(--text);
+    }
+
+    #sidebar-toggle {
+      position: absolute;
+      top: 10px;
+      left: 8px;
+      z-index: 10;
+      background: var(--sidebar-bg);
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+      cursor: pointer;
+      padding: 4px 6px;
+      border-radius: 4px;
+      font-size: 14px;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.15s, color 0.15s;
+    }
+
+    #sidebar-toggle:hover {
+      background: var(--sidebar-active);
+      color: var(--text);
+    }
+
+    #sidebar.collapsed ~ #main #sidebar-toggle {
+      display: flex;
+    }
+
+    .section-group {
+      padding-bottom: 4px;
+    }
+
+    .section-label {
+      font-size: 10px;
       font-weight: 600;
       color: var(--text-dim);
-      padding: 12px 16px 4px;
+      padding: 14px 16px 4px;
       text-transform: uppercase;
-      letter-spacing: 0.05em;
+      letter-spacing: 0.06em;
+      user-select: none;
     }
 
-    #sidebar .table-item {
-      padding: 8px 16px;
+    .table-item {
+      padding: 7px 16px;
       cursor: pointer;
       font-size: 13px;
       font-family: "SF Mono", "Fira Code", "Consolas", monospace;
       transition: background 0.1s;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      white-space: nowrap;
     }
 
-    #sidebar .table-item:hover { background: var(--sidebar-active); }
-    #sidebar .table-item.active {
+    .table-item:hover { background: var(--sidebar-hover); }
+    .table-item.active {
       background: var(--accent);
       color: #fff;
     }
 
-    #sidebar .table-item .view-badge {
-      font-size: 10px;
-      color: var(--text-dim);
-      font-style: italic;
-      margin-left: 4px;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    }
-
-    #sidebar .table-item.active .view-badge { color: rgba(255,255,255,0.7); }
+    /* ── Main area ────────────────────────────────────── */
 
     #main {
       flex: 1;
       display: flex;
       flex-direction: column;
       overflow: hidden;
+      position: relative;
     }
 
     #toolbar {
       display: flex;
       align-items: center;
-      padding: 10px 16px;
+      padding: 8px 16px;
       border-bottom: 1px solid var(--border);
-      gap: 12px;
+      gap: 10px;
       min-height: 44px;
+      flex-wrap: wrap;
     }
 
     #table-name {
@@ -117,13 +196,81 @@
       font-size: 14px;
     }
 
+    #table-badge {
+      font-size: 10px;
+      font-weight: 500;
+      padding: 2px 7px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    #table-badge.editable {
+      background: #dcfce7;
+      color: #166534;
+    }
+
+    #table-badge.readonly {
+      background: var(--badge-bg);
+      color: var(--badge-text);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      #table-badge.editable {
+        background: #14532d;
+        color: #86efac;
+      }
+    }
+
     #table-info {
       font-size: 12px;
       color: var(--text-dim);
     }
 
-    #status {
+    .toolbar-right {
       margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    #search-box {
+      font-size: 13px;
+      padding: 5px 10px;
+      border: 1px solid var(--input-border);
+      border-radius: 6px;
+      background: var(--input-bg);
+      color: var(--text);
+      width: 200px;
+      outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+
+    #search-box::placeholder { color: var(--text-faint); }
+
+    #search-box:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px var(--accent-light);
+    }
+
+    .toolbar-btn {
+      font-size: 12px;
+      padding: 5px 10px;
+      border: 1px solid var(--input-border);
+      border-radius: 6px;
+      background: var(--input-bg);
+      color: var(--text);
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s;
+      white-space: nowrap;
+    }
+
+    .toolbar-btn:hover {
+      border-color: var(--accent);
+      background: var(--accent-light);
+    }
+
+    #status {
       font-size: 12px;
       transition: opacity 0.3s;
     }
@@ -146,77 +293,156 @@
 
     #empty-state {
       display: flex;
+      flex-direction: column;
       align-items: center;
       justify-content: center;
       height: 100%;
       color: var(--text-dim);
       font-size: 14px;
+      gap: 8px;
+    }
+
+    #empty-state .hint {
+      font-size: 12px;
+      color: var(--text-faint);
+    }
+
+    kbd {
+      font-size: 11px;
+      padding: 1px 5px;
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      background: var(--sidebar-bg);
+      font-family: inherit;
     }
   </style>
 </head>
 <body>
   <nav id="sidebar">
-    <h1>cass</h1>
+    <div id="sidebar-header">
+      <h1>cass</h1>
+      <button type="button" class="collapse-btn" id="collapse-btn" title="Collapse sidebar">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true">
+          <path d="M10 3L5 8L10 13"/>
+        </svg>
+      </button>
+    </div>
     <div id="table-list"></div>
   </nav>
   <div id="main">
+    <button type="button" id="sidebar-toggle" title="Show sidebar">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true">
+        <path d="M6 3L11 8L6 13"/>
+      </svg>
+    </button>
     <div id="toolbar">
       <span id="table-name"></span>
+      <span id="table-badge"></span>
       <span id="table-info"></span>
-      <span id="status"></span>
+      <div class="toolbar-right">
+        <input id="search-box" type="text" placeholder="Search rows..." disabled>
+        <button type="button" class="toolbar-btn" id="export-btn" disabled title="Download as CSV">Export CSV</button>
+        <span id="status"></span>
+      </div>
     </div>
     <div id="grid-container">
-      <div id="empty-state">Select a table from the sidebar</div>
+      <div id="empty-state">
+        <div>Select a table from the sidebar</div>
+        <div class="hint">Use <kbd>Ctrl</kbd>+<kbd>K</kbd> to search within a table</div>
+      </div>
     </div>
   </div>
 
   <script>
     const isDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
     const gridTheme = isDark ? "ag-theme-alpine-dark" : "ag-theme-alpine";
+    const isMac = navigator.platform.toUpperCase().includes("MAC");
 
     let gridApi = null;
     let currentTable = null;
     let currentSchema = null;
+    const combinedTables = new Set();
 
-    // ── Sidebar ──────────────────────────────────────────────
+    // ── Sidebar toggle ────────────────────────────────────
+
+    function toggleSidebar() {
+      const sidebar = document.getElementById("sidebar");
+      const toggle = document.getElementById("sidebar-toggle");
+      sidebar.classList.toggle("collapsed");
+      toggle.style.display = sidebar.classList.contains("collapsed") ? "flex" : "none";
+    }
+
+    document.getElementById("collapse-btn").addEventListener("click", toggleSidebar);
+    document.getElementById("sidebar-toggle").addEventListener("click", toggleSidebar);
+
+    // ── Sidebar ───────────────────────────────────────────
+
+    function categorize(tables) {
+      const groups = {
+        canvas: { label: "Canvas LMS", items: [] },
+        github: { label: "GitHub Classroom", items: [] },
+        master: { label: "Combined Data", items: [] },
+      };
+
+      for (const t of tables) {
+        if (t.name.startsWith("gh_")) {
+          groups.github.items.push(t);
+        } else if (t.name.startsWith("canvas_")) {
+          groups.canvas.items.push(t);
+        } else {
+          groups.master.items.push(t);
+        }
+      }
+      return groups;
+    }
 
     async function loadTables() {
       const res = await fetch("/api/tables");
       const data = await res.json();
+      const groups = categorize(data.tables);
 
       const listEl = document.getElementById("table-list");
       listEl.innerHTML = "";
 
-      const tables = data.tables.filter(t => t.type === "table");
-      const views = data.tables.filter(t => t.type === "view");
+      let firstTable = null;
 
-      if (tables.length) {
-        const label = document.createElement("div");
-        label.className = "section-label";
-        label.textContent = "Tables";
-        listEl.appendChild(label);
-        tables.forEach(t => listEl.appendChild(makeTableItem(t)));
+      // Track combined tables for read-only enforcement
+      combinedTables.clear();
+      for (const t of groups.master.items) {
+        combinedTables.add(t.name);
       }
 
-      if (views.length) {
+      for (const [, group] of Object.entries(groups)) {
+        if (!group.items.length) continue;
+
+        const section = document.createElement("div");
+        section.className = "section-group";
+
         const label = document.createElement("div");
         label.className = "section-label";
-        label.textContent = "Views";
-        listEl.appendChild(label);
-        views.forEach(t => listEl.appendChild(makeTableItem(t)));
+        label.textContent = group.label;
+        section.appendChild(label);
+
+        for (const t of group.items) {
+          section.appendChild(makeTableItem(t));
+          if (!firstTable) firstTable = t.name;
+        }
+
+        listEl.appendChild(section);
       }
 
-      // Auto-select first table
-      if (tables.length) selectTable(tables[0].name);
-      else if (views.length) selectTable(views[0].name);
+      if (firstTable) selectTable(firstTable);
     }
 
     function makeTableItem(t) {
       const el = document.createElement("div");
       el.className = "table-item";
       el.dataset.name = t.name;
-      el.innerHTML = t.name + (t.type === "view"
-        ? ' <span class="view-badge">(view)</span>' : "");
+
+      const nameSpan = document.createElement("span");
+      nameSpan.textContent = t.name;
+      el.appendChild(nameSpan);
+
       el.addEventListener("click", () => selectTable(t.name));
       return el;
     }
@@ -227,11 +453,54 @@
       });
     }
 
-    // ── Grid ─────────────────────────────────────────────────
+    // ── Search ────────────────────────────────────────────
+
+    const searchBox = document.getElementById("search-box");
+
+    searchBox.addEventListener("input", () => {
+      if (!gridApi) return;
+      gridApi.setGridOption("quickFilterText", searchBox.value);
+      updateRowCount();
+    });
+
+    // Keyboard shortcut: Ctrl+K / Cmd+K to focus search
+    document.addEventListener("keydown", (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        searchBox.focus();
+        searchBox.select();
+      }
+      // Escape to blur search
+      if (e.key === "Escape" && document.activeElement === searchBox) {
+        searchBox.blur();
+      }
+    });
+
+    // ── Grid ──────────────────────────────────────────────
+
+    function updateRowCount() {
+      const infoEl = document.getElementById("table-info");
+      if (!gridApi) return;
+
+      let displayed = 0;
+      gridApi.forEachNodeAfterFilter(() => { displayed++; });
+      const total = gridApi.getDisplayedRowCount !== undefined
+        ? (() => { let t = 0; gridApi.forEachNode(() => { t++; }); return t; })()
+        : displayed;
+
+      const colCount = gridApi.getColumnDefs().length;
+      const filterText = searchBox.value ? ` (${displayed} matching)` : "";
+      infoEl.textContent = `${total} rows · ${colCount} columns${filterText}`;
+    }
 
     async function selectTable(name) {
       currentTable = name;
       setActiveItem(name);
+
+      // Reset search
+      searchBox.value = "";
+      searchBox.disabled = false;
+      document.getElementById("export-btn").disabled = false;
 
       const [schemaRes, dataRes] = await Promise.all([
         fetch(`/api/schema/${name}`),
@@ -241,12 +510,26 @@
       const tableData = await dataRes.json();
       currentSchema = schema;
 
+      // Toolbar info
       document.getElementById("table-name").textContent = name;
-      const rowCount = tableData.rows.length;
-      const colCount = tableData.columns.length;
-      const editLabel = schema.editable ? "editable" : "read-only";
-      document.getElementById("table-info").textContent =
-        `${rowCount} rows · ${colCount} columns · ${editLabel}`;
+
+      const isCombined = combinedTables.has(name);
+      const editable = schema.editable && !isCombined;
+
+      const badge = document.getElementById("table-badge");
+      if (editable) {
+        badge.textContent = "editable";
+        badge.className = "editable";
+        badge.title = "Double-click a cell to edit";
+      } else {
+        badge.textContent = "read-only";
+        badge.className = "readonly";
+        badge.title = isCombined
+          ? "Populated by cass pull — edit source tables instead"
+          : "This table has no primary key and cannot be edited";
+      }
+      badge.id = "table-badge";
+
       setStatus("");
 
       const columnDefs = tableData.columns.map((col, i) => {
@@ -258,28 +541,26 @@
           sortable: true,
           filter: true,
           resizable: true,
-          editable: schema.editable && !isPK,
+          editable: editable && !isPK,
           minWidth: 80,
         };
 
-        // Style PK columns
         if (isPK) {
           def.cellStyle = { fontWeight: "500", color: "var(--text-dim)" };
-          def.headerName = col + " 🔑";
+          def.headerName = `${col} (PK)`;
         }
 
-        // Type-aware cell editors and formatting
-        if (colType && colType.includes("INT")) {
+        if (colType?.includes("INT")) {
           def.cellEditor = "agNumberCellEditor";
           def.cellEditorParams = { allowDecimals: false };
           def.filter = "agNumberColumnFilter";
-        } else if (colType && (colType.includes("DOUBLE") || colType.includes("FLOAT"))) {
+        } else if (colType?.includes("DOUBLE") || colType?.includes("FLOAT")) {
           def.cellEditor = "agNumberCellEditor";
           def.filter = "agNumberColumnFilter";
         } else if (colType === "BOOLEAN") {
           def.cellRenderer = (params) => {
             if (params.value === null || params.value === undefined) return "";
-            return params.value ? "✓" : "✗";
+            return params.value ? "Yes" : "No";
           };
           def.cellEditor = "agCheckboxCellEditor";
         }
@@ -287,7 +568,6 @@
         return def;
       });
 
-      // Convert rows (arrays) to objects keyed by column name
       const rowData = tableData.rows.map(row => {
         const obj = {};
         tableData.columns.forEach((col, i) => { obj[col] = row[i]; });
@@ -314,10 +594,16 @@
         singleClickEdit: false,
         stopEditingWhenCellsLoseFocus: true,
         onCellValueChanged: handleCellEdit,
+        onFirstDataRendered: (params) => {
+          params.api.autoSizeAllColumns();
+        },
+        onFilterChanged: () => { updateRowCount(); },
       });
+
+      updateRowCount();
     }
 
-    // ── Cell editing ─────────────────────────────────────────
+    // ── Cell editing ──────────────────────────────────────
 
     async function handleCellEdit(event) {
       if (!currentSchema || !currentSchema.editable) return;
@@ -343,11 +629,10 @@
 
         if (result.ok) {
           setStatus("Saved", "success");
-          flashCell(event, "success");
+          flashCell(event);
         } else {
           setStatus(result.error || "Update failed", "error");
-          flashCell(event, "error");
-          // Revert
+          flashCell(event);
           event.data[event.colDef.field] = event.oldValue;
           event.api.refreshCells({
             rowNodes: [event.node],
@@ -356,7 +641,7 @@
         }
       } catch (err) {
         setStatus("Network error", "error");
-        flashCell(event, "error");
+        flashCell(event);
         event.data[event.colDef.field] = event.oldValue;
         event.api.refreshCells({
           rowNodes: [event.node],
@@ -365,7 +650,7 @@
       }
     }
 
-    function flashCell(event, type) {
+    function flashCell(event) {
       event.api.flashCells({
         rowNodes: [event.node],
         columns: [event.colDef.field],
@@ -374,7 +659,18 @@
       });
     }
 
-    // ── Status bar ───────────────────────────────────────────
+    // ── Export CSV ─────────────────────────────────────────
+
+    function exportCSV() {
+      if (!gridApi || !currentTable) return;
+      gridApi.exportDataAsCsv({
+        fileName: `${currentTable}.csv`,
+      });
+    }
+
+    document.getElementById("export-btn").addEventListener("click", exportCSV);
+
+    // ── Status bar ────────────────────────────────────────
 
     function setStatus(message, type) {
       const el = document.getElementById("status");
@@ -393,11 +689,17 @@
       }
     }
 
-    // ── Init ─────────────────────────────────────────────────
+    // ── Init ──────────────────────────────────────────────
+
+    // Update keyboard hint based on platform
+    if (isMac) {
+      const hint = document.querySelector("#empty-state .hint");
+      if (hint) hint.innerHTML = 'Use <kbd>&#8984;</kbd>+<kbd>K</kbd> to search within a table';
+    }
 
     loadTables().catch(err => {
-      document.getElementById("empty-state").textContent =
-        "Failed to load tables: " + err.message;
+      document.getElementById("empty-state").innerHTML =
+        `Failed to load tables: ${err.message}`;
     });
   </script>
 </body>

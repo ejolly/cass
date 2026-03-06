@@ -261,8 +261,6 @@ The `cass.duckdb` file contains these tables (schema version 6). API cache lives
 | `gh_grades` | GitHub computed grades | `(github_username, assignment_slug)` |
 | `canvas_grades` | Canvas grades (ready for push) | `(canvas_user_id, canvas_assignment_id)` |
 
-**Views**: `v_submissions` and `v_grades` join source data through master tables for unified querying.
-
 Example queries:
 
 ```sql
@@ -272,11 +270,12 @@ SELECT name, github_username, canvas_id FROM students WHERE github_username IS N
 -- Late GitHub submissions
 SELECT github_username, assignment_slug, lateness_seconds FROM gh_submissions WHERE late = true;
 
--- Unified grades via view
-SELECT student, assignment, display_grade FROM v_grades ORDER BY student, assignment;
-
 -- Canvas grades ready for push
-SELECT canvas_user_id, canvas_assignment_id, posted_grade FROM canvas_grades;
+SELECT s.name, a.slug, cg.posted_grade
+FROM canvas_grades cg
+JOIN students s ON s.canvas_id = cg.canvas_user_id
+JOIN assignments a ON a.canvas_assignment_id = cg.canvas_assignment_id
+ORDER BY s.name, a.slug;
 ```
 
 ## Collaborative workflow

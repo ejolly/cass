@@ -148,7 +148,7 @@ Python package (`cass/`) with Typer CLI, DuckDB storage, msgspec models, and Ric
 
 Per-project DuckDB file (`cass.duckdb`) in the project root. Auto-created on first use. API cache is in a separate `.cass_cache.duckdb` file (gitignored) to keep the shared DB lean.
 
-Schema version 6. Tables:
+Schema version 7. Tables:
 
 Source tables (raw data from each platform):
 - `gh_students` — GitHub Classroom students (PK: github_username)
@@ -165,10 +165,6 @@ Master tables (unified joins):
 Grade tables:
 - `gh_grades` — GitHub computed grades (PK: github_username, assignment_slug)
 - `canvas_grades` — Canvas grades ready for push (PK: canvas_user_id, canvas_assignment_id)
-
-Views:
-- `v_submissions` — unified submission view joining through master tables
-- `v_grades` — unified grade view joining through master tables
 
 All tables are queryable via `cass query "SQL"`, the interactive REPL (`cass query`), or directly with the `duckdb` CLI:
 

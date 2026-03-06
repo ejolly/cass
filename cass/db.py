@@ -27,7 +27,7 @@ from .models import (
 )
 
 DB_FILENAME = "cass.duckdb"
-_SCHEMA_VERSION = 6
+_SCHEMA_VERSION = 7
 
 _conn: duckdb.DuckDBPyConnection | None = None
 
@@ -211,74 +211,6 @@ def _init_schema(conn: duckdb.DuckDBPyConnection) -> None:
             updated_at DOUBLE NOT NULL,
             PRIMARY KEY (canvas_user_id, canvas_assignment_id)
         )
-    """)
-
-    # --- Views ---
-
-    conn.execute("""
-        CREATE VIEW IF NOT EXISTS v_submissions AS
-        SELECT
-            s.name AS student,
-            a.slug AS assignment,
-            'github' AS source,
-            gs.submitted,
-            gs.late,
-            gs.lateness_seconds,
-            gs.repo_name,
-            gs.commits_after_deadline,
-            gs.commit_count,
-            gs.passing,
-            gs.gh_autograder_score,
-            NULL::DOUBLE AS score,
-            '' AS workflow_state
-        FROM gh_submissions gs
-        JOIN students s ON s.github_username = gs.github_username
-        JOIN assignments a ON a.gh_assignment_slug = gs.assignment_slug
-        UNION ALL
-        SELECT
-            s.name AS student,
-            a.slug AS assignment,
-            'canvas' AS source,
-            cs.submitted,
-            cs.late,
-            cs.lateness_seconds,
-            '' AS repo_name,
-            0 AS commits_after_deadline,
-            0 AS commit_count,
-            false AS passing,
-            '' AS gh_autograder_score,
-            cs.score,
-            cs.workflow_state
-        FROM canvas_submissions cs
-        JOIN students s ON s.canvas_id = cs.canvas_user_id
-        JOIN assignments a ON a.canvas_assignment_id = cs.canvas_assignment_id
-    """)
-
-    conn.execute("""
-        CREATE VIEW IF NOT EXISTS v_grades AS
-        SELECT
-            s.name AS student,
-            s.canvas_id,
-            a.slug AS assignment,
-            'github' AS source,
-            gg.grade AS display_grade,
-            gg.numeric_score,
-            a.canvas_assignment_id
-        FROM gh_grades gg
-        JOIN students s ON s.github_username = gg.github_username
-        JOIN assignments a ON a.gh_assignment_slug = gg.assignment_slug
-        UNION ALL
-        SELECT
-            s.name AS student,
-            s.canvas_id,
-            a.slug AS assignment,
-            'canvas' AS source,
-            cg.posted_grade AS display_grade,
-            cg.score AS numeric_score,
-            cg.canvas_assignment_id
-        FROM canvas_grades cg
-        JOIN students s ON s.canvas_id = cg.canvas_user_id
-        JOIN assignments a ON a.canvas_assignment_id = cg.canvas_assignment_id
     """)
 
 
