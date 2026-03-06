@@ -400,8 +400,7 @@ class CanvasClient:
         if due_at:
             params["assignment[due_at]"] = due_at
         if submission_types:
-            for i, st in enumerate(submission_types):
-                params[f"assignment[submission_types][{i}]"] = st
+            params["assignment[submission_types][]"] = submission_types
         if assignment_group_id:
             params["assignment[assignment_group_id]"] = assignment_group_id
         if description:
