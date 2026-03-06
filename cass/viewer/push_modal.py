@@ -29,9 +29,7 @@ def build_preview_html(
     parts: list[str] = []
 
     if assignment_changes:
-        parts.append(
-            '<h4 style="font-weight:600;margin-bottom:0.25rem">Assignment changes</h4>'
-        )
+        parts.append("<h4 class='text-sm font-semibold mb-1'>Assignment changes</h4>")
         parts.append('<table class="push-table"><thead><tr>')
         for h in ("Assignment", "Field", "On Canvas", "New value"):
             parts.append(f"<th>{h}</th>")
@@ -48,9 +46,7 @@ def build_preview_html(
             if "error" in ch:
                 name = escape(str(ch.get("name", "")))
                 err = escape(str(ch.get("error", "")))
-                parts.append(
-                    f'<td colspan="4" style="color:#f87171">{name}: {err}</td>'
-                )
+                parts.append(f'<td colspan="4" class="text-red-400">{name}: {err}</td>')
             else:
                 name = escape(str(ch.get("name", "")))
                 col = escape(str(ch.get("column", "")))
@@ -59,16 +55,13 @@ def build_preview_html(
                 cur = escape(str(ch.get("current", "null")))
                 parts.append(f"<td>{name}</td>")
                 parts.append(f"<td>{col}{warn}</td>")
-                parts.append(f'<td style="opacity:0.5">{live}</td>')
-                parts.append(f'<td style="font-weight:600">{cur}</td>')
+                parts.append(f'<td class="opacity-50">{live}</td>')
+                parts.append(f'<td class="font-semibold">{cur}</td>')
             parts.append("</tr>")
         parts.append("</tbody></table>")
 
     if grade_changes:
-        parts.append(
-            '<h4 style="font-weight:600;margin-top:1rem;'
-            'margin-bottom:0.25rem">Grade changes</h4>'
-        )
+        parts.append("<h4 class='text-sm font-semibold mt-4 mb-1'>Grade changes</h4>")
         parts.append('<table class="push-table"><thead><tr>')
         for h in ("Student \u2014 Assignment", "On Canvas", "New grade"):
             parts.append(f"<th>{h}</th>")
@@ -85,26 +78,23 @@ def build_preview_html(
             if "error" in ch:
                 name = escape(str(ch.get("name", "")))
                 err = escape(str(ch.get("error", "")))
-                parts.append(
-                    f'<td colspan="3" style="color:#f87171">{name}: {err}</td>'
-                )
+                parts.append(f'<td colspan="3" class="text-red-400">{name}: {err}</td>')
             else:
                 name = escape(str(ch.get("name", "")))
                 warn = " \u26a0" if ch.get("conflict") else ""
                 live = escape(str(ch.get("live", "null")))
                 cur = escape(str(ch.get("current", "null")))
                 parts.append(f"<td>{name}{warn}</td>")
-                parts.append(f'<td style="opacity:0.5">{live}</td>')
-                parts.append(f'<td style="font-weight:600">{cur}</td>')
+                parts.append(f'<td class="opacity-50">{live}</td>')
+                parts.append(f'<td class="font-semibold">{cur}</td>')
             parts.append("</tr>")
         parts.append("</tbody></table>")
 
     if has_conflicts:
         parts.append(
-            '<div style="color:#eab308;font-size:0.8rem;'
-            "margin-top:0.75rem;padding:0.5rem;"
-            "background:rgba(234,179,8,0.1);"
-            'border-radius:0.25rem">'
+            '<div class="text-yellow-500 text-xs mt-3 p-2'
+            " bg-yellow-500/10 rounded"
+            '">'
             "\u26a0 Some Canvas values differ from when you "
             "last pulled. Pushing will overwrite.</div>"
         )
@@ -120,24 +110,20 @@ def open_push_modal(
     current_table: dict[str, str],
 ) -> None:
     """Open the Push to Canvas modal with preview/push workflow."""
-    with ui.dialog() as dialog, ui.card().style("min-width: 32rem; max-width: 40rem"):
+    with ui.dialog() as dialog, ui.card().classes("min-w-[32rem] max-w-[40rem]"):
         dialog.open()
 
-        ui.label("Push to Canvas").style(
-            "font-size: 1.1rem; font-weight: 700; margin-bottom: 0.5rem"
-        )
+        ui.label("Push to Canvas").classes("text-lg font-bold mb-2")
         content_area = ui.element("div")
-        action_area = ui.element("div").style(
-            "display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1rem"
-        )
+        action_area = ui.row().classes("w-full justify-end gap-2 mt-4")
 
         state: dict[str, Any] = {"phase": "loading", "preview": None}
 
         def render_loading() -> None:
             content_area.clear()
             with content_area:
-                ui.label("Comparing with Canvas...").style(
-                    "opacity: 0.5; text-align: center; padding: 1rem 0"
+                ui.label("Comparing with Canvas...").classes(
+                    "opacity-50 text-center py-4"
                 )
             action_area.clear()
             with action_area:
@@ -152,8 +138,8 @@ def open_push_modal(
             content_area.clear()
             with content_area:
                 if not changes:
-                    ui.label("No pending changes").style(
-                        "opacity: 0.5; text-align: center; padding: 1rem 0"
+                    ui.label("No pending changes").classes(
+                        "opacity-50 text-center py-4"
                     )
                     return
 
@@ -175,31 +161,30 @@ def open_push_modal(
         def render_pushing() -> None:
             content_area.clear()
             with content_area:
-                ui.label("Pushing to Canvas...").style(
-                    "opacity: 0.5; text-align: center; padding: 1rem 0"
-                )
+                ui.label("Pushing to Canvas...").classes("opacity-50 text-center py-4")
             action_area.clear()
             with action_area:
-                ui.button("Pushing...", on_click=lambda: None).props(
-                    "color=primary disabled"
-                )
+                ui.button(
+                    "Pushing...",
+                    on_click=lambda: None,
+                ).props("color=primary disabled")
 
         def render_results(results: list[dict[str, object]]) -> None:
             succeeded = [r for r in results if r.get("ok")]
             failed = [r for r in results if not r.get("ok")]
             content_area.clear()
             with content_area:
-                ui.label(f"{len(succeeded)} pushed, {len(failed)} failed").style(
-                    "font-weight: 600; margin-bottom: 0.5rem"
+                ui.label(f"{len(succeeded)} pushed, {len(failed)} failed").classes(
+                    "font-semibold mb-2"
                 )
                 for r in results:
                     aid = r.get("canvas_id") or r.get("canvas_assignment_id") or "?"
                     if r.get("ok"):
-                        ui.label(f"\u2713 Assignment {aid}").style("color: #4ade80")
+                        ui.label(f"\u2713 Assignment {aid}").classes("text-green-400")
                     else:
                         err = r.get("error", "Unknown")
-                        ui.label(f"\u2717 Assignment {aid}: {err}").style(
-                            "color: #f87171"
+                        ui.label(f"\u2717 Assignment {aid}: {err}").classes(
+                            "text-red-400"
                         )
             action_area.clear()
             with action_area:
@@ -208,7 +193,7 @@ def open_push_modal(
         def render_error(message: str) -> None:
             content_area.clear()
             with content_area:
-                ui.label(message).style("color: #f87171")
+                ui.label(message).classes("text-red-400")
             action_area.clear()
             with action_area:
                 ui.button("Close", on_click=dialog.close).props("flat")
@@ -236,7 +221,11 @@ def open_push_modal(
                     clear_pending_cells()
                     update_pending_display()
                     notify("Pushed to Canvas")
-                    reload_current_grid(conn, grid_container, current_table["name"])
+                    reload_current_grid(
+                        conn,
+                        grid_container,
+                        current_table["name"],
+                    )
                 else:
                     state["phase"] = "results"
                     render_results(
