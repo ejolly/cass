@@ -23,6 +23,7 @@ class CanvasCourse(msgspec.Struct):
     enrollment_term_id: int = 0
     total_students: int | None = None
     time_zone: str = ""
+    grading_standard_id: int | None = None
 
 
 # --- Users & Enrollments ---
@@ -47,6 +48,7 @@ class CanvasEnrollment(msgspec.Struct):
     type: str = ""
     enrollment_state: str = ""
     role: str = ""
+    course_section_id: int = 0
 
 
 class CanvasUser(msgspec.Struct):
@@ -59,6 +61,35 @@ class CanvasUser(msgspec.Struct):
     sis_user_id: str | None = None
     login_id: str = ""
     enrollments: list[CanvasEnrollment] = []
+
+
+# --- Sections ---
+
+
+class CanvasSection(msgspec.Struct):
+    """Canvas course section."""
+
+    id: int
+    name: str
+    sis_section_id: str | None = None
+
+
+# --- Grading Standards ---
+
+
+class CanvasGradingSchemeEntry(msgspec.Struct):
+    """Single entry in a Canvas grading scheme (e.g. A = 0.94)."""
+
+    name: str
+    value: float
+
+
+class CanvasGradingStandard(msgspec.Struct):
+    """Canvas grading standard with scheme entries."""
+
+    id: int
+    title: str
+    grading_scheme: list[CanvasGradingSchemeEntry] = []
 
 
 # --- Modules ---
@@ -109,6 +140,7 @@ class CanvasAssignment(msgspec.Struct):
     unlock_at: str | None = None
     has_submitted_submissions: bool = False
     workflow_state: str = ""
+    post_manually: bool = False
 
 
 class CanvasAssignmentGroup(msgspec.Struct):

@@ -1,4 +1,4 @@
-"""Tests for cass.db — DuckDB CRUD round-trips with schema v6."""
+"""Tests for cass.db — DuckDB CRUD round-trips."""
 
 from cass import db
 from cass.config import Config
@@ -36,14 +36,25 @@ def test_gh_students_roundtrip(db_conn):
 
 def test_canvas_students_roundtrip(db_conn):
     canvas_students = [
-        CanvasStudent(id=100, name="Alice Smith", email="alice@ucsd.edu"),
+        CanvasStudent(
+            id=100, name="Alice Smith", email="alice@ucsd.edu", sis_user_id="A12345"
+        ),
         CanvasStudent(id=200, name="Bob Jones"),
     ]
-    assert db.save_canvas_students(canvas_students) == 2
+    sis_section_map = {100: "32146", 200: "32146"}
+    assert (
+        db.save_canvas_students(canvas_students, sis_section_map=sis_section_map) == 2
+    )
     loaded = db.load_canvas_students()
     assert len(loaded) == 2
     assert loaded[0].name == "Alice Smith"
     assert loaded[0].email == "alice@ucsd.edu"
+    assert loaded[0].sis_user_id == "A12345"
+    # sis_section_id is stored in DB but not loaded into CanvasStudent
+    row = db_conn.execute(
+        "SELECT sis_section_id FROM canvas_students WHERE canvas_id = 100"
+    ).fetchone()
+    assert row[0] == "32146"
 
 
 # --- Students (master) ---

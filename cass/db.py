@@ -1,8 +1,10 @@
 """DuckDB database for cass — per-project, self-contained.
 
-Schema v6: source-specific tables (gh_*, canvas_*) with proper keys,
+Schema v9: source-specific tables (gh_*, canvas_*) with proper keys,
 master tables (students, assignments) as unified joins, and separate
-grade tables for GH display and Canvas push.
+grade tables for GH display and Canvas push. v9 adds SIS fields
+(sis_user_id, sis_section_id) to canvas_students and post_manually
+to canvas_assignments.
 """
 
 from __future__ import annotations
@@ -26,7 +28,7 @@ from .models import (
 )
 
 DB_FILENAME = "cass.duckdb"
-_SCHEMA_VERSION = 8
+_SCHEMA_VERSION = 9
 
 _conn: duckdb.DuckDBPyConnection | None = None
 
@@ -119,7 +121,9 @@ def _init_schema(conn: duckdb.DuckDBPyConnection) -> None:
             name TEXT NOT NULL,
             sortable_name TEXT NOT NULL DEFAULT '',
             email TEXT NOT NULL DEFAULT '',
-            login_id TEXT NOT NULL DEFAULT ''
+            login_id TEXT NOT NULL DEFAULT '',
+            sis_user_id TEXT NOT NULL DEFAULT '',
+            sis_section_id TEXT NOT NULL DEFAULT ''
         )
     """)
     conn.execute("""
@@ -141,7 +145,8 @@ def _init_schema(conn: duckdb.DuckDBPyConnection) -> None:
             points_possible DOUBLE NOT NULL DEFAULT 0,
             due_at TIMESTAMPTZ,
             published BOOLEAN NOT NULL DEFAULT false,
-            assignment_group TEXT NOT NULL DEFAULT ''
+            assignment_group TEXT NOT NULL DEFAULT '',
+            post_manually BOOLEAN NOT NULL DEFAULT false
         )
     """)
     conn.execute("""
@@ -260,15 +265,37 @@ def load_gh_students() -> list[GHStudentInfo]:
 # ---------------------------------------------------------------------------
 
 
-def save_canvas_students(students: list[CanvasStudent]) -> int:
-    """Upsert Canvas students into the source table."""
+def save_canvas_students(
+    students: list[CanvasStudent],
+    sis_section_map: dict[int, str] | None = None,
+) -> int:
+    """Upsert Canvas students into the source table.
+
+    Args:
+        students: Canvas student objects (with sis_user_id from API).
+        sis_section_map: Optional mapping of canvas_id → sis_section_id,
+            built from enrollment + section data during pull.
+    """
     conn = get_db()
     if not students:
         return 0
+    sections = sis_section_map or {}
     conn.executemany(
         "INSERT OR REPLACE INTO canvas_students "
-        "(canvas_id, name, sortable_name, email, login_id) VALUES (?, ?, ?, ?, ?)",
-        [(s.id, s.name, s.sortable_name, s.email, s.login_id) for s in students],
+        "(canvas_id, name, sortable_name, email, login_id, sis_user_id, sis_section_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [
+            (
+                s.id,
+                s.name,
+                s.sortable_name,
+                s.email,
+                s.login_id,
+                s.sis_user_id or "",
+                sections.get(s.id, ""),
+            )
+            for s in students
+        ],
     )
     return len(students)
 
@@ -277,11 +304,18 @@ def load_canvas_students() -> list[CanvasStudent]:
     """Load all Canvas students."""
     conn = get_db()
     rows = conn.execute(
-        "SELECT canvas_id, name, sortable_name, email, login_id "
+        "SELECT canvas_id, name, sortable_name, email, login_id, sis_user_id "
         "FROM canvas_students ORDER BY name"
     ).fetchall()
     return [
-        CanvasStudent(id=r[0], name=r[1], sortable_name=r[2], email=r[3], login_id=r[4])
+        CanvasStudent(
+            id=r[0],
+            name=r[1],
+            sortable_name=r[2],
+            email=r[3],
+            login_id=r[4],
+            sis_user_id=r[5] or None,
+        )
         for r in rows
     ]
 
@@ -438,12 +472,13 @@ def save_canvas_assignments(
                 due_at,
                 a.published,
                 groups.get(a.assignment_group_id, ""),
+                a.post_manually,
             )
         )
     conn.executemany(
         "INSERT OR REPLACE INTO canvas_assignments "
-        "(canvas_id, name, points_possible, due_at, published, assignment_group) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
+        "(canvas_id, name, points_possible, due_at, published, assignment_group, post_manually) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
         rows,
     )
     return len(rows)
