@@ -534,17 +534,21 @@ def push(
         a.canvas_assignment_id: a.title for a in assignments if a.canvas_assignment_id
     }
 
+    post_manually_map = db.load_post_manually_map()
+
     table = Table(title="Grade Push Preview", show_edge=False, pad_edge=False)
     table.add_column("Canvas Assignment")
     table.add_column("Canvas ID", justify="right")
     table.add_column("Grades")
+    table.add_column("Post Policy")
 
     for aid, grades in sorted(by_assignment.items()):
         title = aid_to_title.get(aid, f"Assignment {aid}")
         pushable = [
             g for g in grades if g.posted_grade and g.posted_grade not in ("-", "?")
         ]
-        table.add_row(title, str(aid), str(len(pushable)))
+        policy = "[yellow]manual[/yellow]" if post_manually_map.get(aid) else "auto"
+        table.add_row(title, str(aid), str(len(pushable)), policy)
 
     console.print()
     console.print(table)
@@ -571,6 +575,7 @@ def push(
 
     total_posted = 0
     failed: list[str] = []
+    posted_aids: list[int] = []
     with CanvasClient() as c:
         for aid, grade_data in grade_data_by_aid.items():
             title = aid_to_title.get(aid, f"Assignment {aid}")
@@ -578,15 +583,36 @@ def push(
                 progress = c.bulk_push_grades(aid, grade_data)
                 c.wait_for_progress(progress.id)
                 total_posted += len(grade_data)
+                posted_aids.append(aid)
                 console.print(f"  [green]✓[/green] {title}: {len(grade_data)} grades")
             except Exception as e:
                 failed.append(f"{title}: {e}")
                 console.print(f"  [red]✗[/red] {title}: {e}")
 
+        # Post grades for manual-post assignments (make visible to students)
+        manual_aids = [aid for aid in posted_aids if post_manually_map.get(aid)]
+        if manual_aids:
+            console.print(
+                f"\n[dim]Posting grades for {len(manual_aids)} manual-post "
+                f"assignment(s)…[/dim]"
+            )
+            for aid in manual_aids:
+                title = aid_to_title.get(aid, f"Assignment {aid}")
+                try:
+                    p = c.post_assignment_grades(aid, graded_only=True)
+                    if p:
+                        c.wait_for_progress(p.id)
+                    console.print(
+                        f"  [green]✓[/green] {title}: grades now visible to students"
+                    )
+                except Exception as e:
+                    failed.append(f"{title} (post): {e}")
+                    console.print(f"  [red]✗[/red] {title} (post): {e}")
+
     if failed:
-        console.print(f"\n[red]Failed {len(failed)} assignment(s).[/red]")
+        console.print(f"\n[red]Failed {len(failed)} operation(s).[/red]")
     console.print(
-        f"\n[green]Posted {total_posted} grades, skipped {total_skipped}.[/green]"
+        f"\n[green]Pushed {total_posted} grades, skipped {total_skipped}.[/green]"
     )
 
 
