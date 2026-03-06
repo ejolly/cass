@@ -1,15 +1,12 @@
 <script lang="ts">
   import { app } from "$lib/state.svelte.js";
   import { classifyTable } from "$lib/types.js";
-  import { matchesSearch, buildCsvContent, downloadCsv } from "$lib/api.js";
   import { getDisplayedColumns } from "$lib/columns.js";
+  import { buildCsvContent, downloadCsv } from "$lib/api.js";
 
   function handleSearch(e: Event) {
-    const value = (e.target as HTMLInputElement).value;
-    app.searchText = value;
-    app.rows = value
-      ? app.allRows.filter((row) => matchesSearch(value, row))
-      : app.allRows;
+    // Just update state — DataGrid's $effect syncs to AG Grid quickFilter
+    app.searchText = (e.target as HTMLInputElement).value;
   }
 
   function handleExport() {
@@ -27,8 +24,7 @@
 
   const rowCountText = $derived.by(() => {
     if (!app.allRows.length) return "";
-    const base = `${app.allRows.length} rows \u00b7 ${app.columnNames.length} columns`;
-    return app.searchText ? `${base} (${app.rows.length} matching)` : base;
+    return `${app.allRows.length} rows \u00b7 ${app.columnNames.length} columns`;
   });
 </script>
 

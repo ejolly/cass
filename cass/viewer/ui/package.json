@@ -23,6 +23,7 @@
   "dependencies": {
     "@sveltejs/vite-plugin-svelte": "^6.2.4",
     "@tailwindcss/vite": "^4.2.1",
+    "ag-grid-community": "^33.3.2",
     "daisyui": "^5.0.0",
     "svelte": "^5.53.7",
     "tailwindcss": "^4.2.1",
