@@ -5,341 +5,81 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>cass — Database Viewer</title>
   <style>
-    :root {
-      --sidebar-width: 230px;
-      --bg: #fafafa;
-      --sidebar-bg: #f0f0f0;
-      --sidebar-active: #e0e0e0;
-      --sidebar-hover: #e8e8e8;
-      --text: #1a1a1a;
-      --text-dim: #888;
-      --text-faint: #aaa;
-      --border: #ddd;
-      --accent: #2563eb;
-      --accent-light: #dbeafe;
-      --success: #16a34a;
-      --error: #dc2626;
-      --input-bg: #fff;
-      --input-border: #ccc;
-      --badge-bg: #e5e7eb;
-      --badge-text: #6b7280;
-    }
-
-    @media (prefers-color-scheme: dark) {
-      :root {
-        --bg: #1a1a1a;
-        --sidebar-bg: #222;
-        --sidebar-active: #333;
-        --sidebar-hover: #2a2a2a;
-        --text: #e5e5e5;
-        --text-dim: #777;
-        --text-faint: #555;
-        --border: #333;
-        --accent: #60a5fa;
-        --accent-light: #1e3a5f;
-        --success: #4ade80;
-        --error: #f87171;
-        --input-bg: #2a2a2a;
-        --input-border: #444;
-        --badge-bg: #374151;
-        --badge-text: #9ca3af;
-      }
-    }
-
+    /* Reset — elm-ui handles all layout, but we need a clean base */
     * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { height: 100vh; overflow: hidden; }
 
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      height: 100vh;
-      overflow: hidden;
-    }
+    /*
+     * elm-advanced-grid overrides
+     *
+     * The grid renders its own HTML with elm-css inline styles,
+     * so we need !important to theme it. This is the one place
+     * where we can't avoid CSS — the grid library owns its DOM.
+     *
+     * Everything else (sidebar, toolbar, layout) is pure elm-ui
+     * with no CSS needed.
+     */
 
-    /* ── Layout ───────────────────────────────────────── */
-
-    .app {
-      display: flex;
-      height: 100vh;
-      overflow: hidden;
-    }
-
-    /* ── Sidebar ──────────────────────────────────────── */
-
-    #sidebar {
-      width: var(--sidebar-width);
-      min-width: var(--sidebar-width);
-      background: var(--sidebar-bg);
-      border-right: 1px solid var(--border);
-      display: flex;
-      flex-direction: column;
-      overflow-y: auto;
-      transition: width 0.2s ease, min-width 0.2s ease;
-    }
-
-    #sidebar.collapsed {
-      width: 0;
-      min-width: 0;
-      overflow: hidden;
-      border-right: none;
-    }
-
-    #sidebar-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 12px 16px;
-      border-bottom: 1px solid var(--border);
-    }
-
-    #sidebar-header h1 {
-      font-size: 15px;
-      font-weight: 700;
-      letter-spacing: 0.05em;
-      color: var(--text-dim);
-      text-transform: uppercase;
-      margin: 0;
-    }
-
-    .collapse-btn {
-      background: none;
-      border: none;
-      color: var(--text-dim);
-      cursor: pointer;
-      padding: 4px;
-      border-radius: 4px;
-      font-size: 18px;
-      line-height: 1;
-      transition: background 0.15s, color 0.15s;
-    }
-
-    .collapse-btn:hover {
-      background: var(--sidebar-active);
-      color: var(--text);
-    }
-
-    #sidebar-toggle {
-      position: absolute;
-      top: 10px;
-      left: 8px;
-      z-index: 10;
-      background: var(--sidebar-bg);
-      border: 1px solid var(--border);
-      color: var(--text-dim);
-      cursor: pointer;
-      padding: 4px 6px;
-      border-radius: 4px;
-      font-size: 18px;
-      line-height: 1;
-      transition: background 0.15s, color 0.15s;
-    }
-
-    #sidebar-toggle:hover {
-      background: var(--sidebar-active);
-      color: var(--text);
-    }
-
-    .section-group {
-      padding-bottom: 4px;
-    }
-
-    .section-label {
-      font-size: 10px;
-      font-weight: 600;
-      color: var(--text-dim);
-      padding: 14px 16px 4px;
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
-      user-select: none;
-    }
-
-    .table-item {
-      padding: 7px 16px;
-      cursor: pointer;
-      font-size: 13px;
-      font-family: "SF Mono", "Fira Code", "Consolas", monospace;
-      transition: background 0.1s;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      white-space: nowrap;
-    }
-
-    .table-item:hover { background: var(--sidebar-hover); }
-    .table-item.active {
-      background: var(--accent);
-      color: #fff;
-    }
-
-    /* ── Main area ────────────────────────────────────── */
-
-    #main {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      overflow: hidden;
-      position: relative;
-    }
-
-    #toolbar {
-      display: flex;
-      align-items: center;
-      padding: 8px 16px;
-      border-bottom: 1px solid var(--border);
-      gap: 10px;
-      min-height: 44px;
-      flex-wrap: wrap;
-    }
-
-    #table-name {
-      font-weight: 600;
-      font-size: 14px;
-    }
-
-    #table-badge {
-      font-size: 10px;
-      font-weight: 500;
-      padding: 2px 7px;
-      border-radius: 4px;
-      text-transform: uppercase;
-      letter-spacing: 0.03em;
-    }
-
-    #table-badge.editable {
-      background: #dcfce7;
-      color: #166534;
-    }
-
-    #table-badge.readonly {
-      background: var(--badge-bg);
-      color: var(--badge-text);
-    }
-
-    @media (prefers-color-scheme: dark) {
-      #table-badge.editable {
-        background: #14532d;
-        color: #86efac;
-      }
-    }
-
-    #table-info {
-      font-size: 12px;
-      color: var(--text-dim);
-    }
-
-    .toolbar-right {
-      margin-left: auto;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    #search-box {
-      font-size: 13px;
-      padding: 5px 10px;
-      border: 1px solid var(--input-border);
-      border-radius: 6px;
-      background: var(--input-bg);
-      color: var(--text);
-      width: 200px;
-      outline: none;
-      transition: border-color 0.15s, box-shadow 0.15s;
-    }
-
-    #search-box::placeholder { color: var(--text-faint); }
-
-    #search-box:focus {
-      border-color: var(--accent);
-      box-shadow: 0 0 0 2px var(--accent-light);
-    }
-
-    /* ── Grid area ────────────────────────────────────── */
-
-    #grid-container {
-      flex: 1;
-      overflow: hidden;
-    }
-
-    #empty-state {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      height: 100%;
-      color: var(--text-dim);
-      font-size: 14px;
-      gap: 8px;
-    }
-
-    /* ── elm-advanced-grid overrides ──────────────────── */
-    /* The grid uses elm-css inline styles, so !important is needed. */
-
-    #grid-container {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      font-size: 13px;
-      color: var(--text);
-    }
-
-    /* Header container (dark bar behind column headers) */
+    /* Header bar */
     #_header_-_container_ {
-      background-color: var(--sidebar-bg) !important;
-      border-bottom: 1px solid var(--border);
+      background-color: #f0f0f0 !important;
+      border-bottom: 1px solid #ddd;
     }
 
-    /* Individual column headers — override the light gradient */
+    /* Column headers */
     #_header_-_container_ > div {
       background-image: none !important;
-      background-color: var(--sidebar-bg) !important;
-      border-color: var(--border) !important;
-      color: var(--text) !important;
+      background-color: #f0f0f0 !important;
+      border-color: #ddd !important;
+      color: #1a1a1a !important;
     }
 
-    /* Header title text */
+    /* Header text */
     #_header_-_container_ span {
-      color: var(--text) !important;
+      color: #1a1a1a !important;
       font-weight: 600;
       font-size: 12px;
     }
 
-    /* Sort arrow icons */
+    /* Sort arrows */
     #_header_-_container_ svg {
-      fill: var(--text-dim) !important;
+      fill: #888 !important;
     }
 
-    /* Filter inputs in headers */
+    /* Filter inputs */
     #_header_-_container_ input {
-      background-color: var(--input-bg) !important;
-      color: var(--text) !important;
-      border: 1px solid var(--input-border) !important;
+      background-color: #fff !important;
+      color: #1a1a1a !important;
+      border: 1px solid #ccc !important;
       border-radius: 3px;
       padding: 2px 4px;
       font-size: 12px;
     }
 
     #_header_-_container_ input:focus {
-      border-color: var(--accent) !important;
+      border-color: #2563eb !important;
       outline: none;
     }
 
     /* Data cells */
-    #grid-container [data-testid="row"] > div {
-      border-color: var(--border) !important;
-      color: var(--text);
+    [data-testid="row"] > div {
+      border-color: #ddd !important;
+      color: #1a1a1a;
+      font-size: 13px;
     }
 
-    /* Alternating row backgrounds for readability */
-    #grid-container [data-testid="row"]:nth-child(even) {
-      background-color: color-mix(in srgb, var(--bg) 85%, var(--sidebar-bg));
+    /* Alternating rows */
+    [data-testid="row"]:nth-child(even) {
+      background-color: #f5f5f5;
     }
 
-    /* Drag handle dots */
-    #grid-container [data-testid^="dragHandle-"] div div {
-      background-color: var(--text-faint) !important;
+    /* Drag / resize handles */
+    [data-testid^="dragHandle-"] div div {
+      background-color: #aaa !important;
     }
 
-    /* Resize handle bars */
-    #grid-container [data-testid^="dragHandle-"] ~ div div {
-      background-color: var(--text-faint) !important;
+    [data-testid^="dragHandle-"] ~ div div {
+      background-color: #aaa !important;
     }
   </style>
 </head>

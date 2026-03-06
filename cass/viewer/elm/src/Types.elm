@@ -1,0 +1,91 @@
+module Types exposing
+    ( ColumnSchema
+    , Model
+    , Msg(..)
+    , Row
+    , TableData
+    , TableInfo
+    , TableSchema
+    )
+
+{-| All types for the viewer app, gathered in one module.
+
+In Svelte you'd define TypeScript interfaces in a `types.ts` file.
+In Elm, a `Types.elm` module serves the same role — single source of
+truth for every data shape in the app.
+
+Key difference from TS: Elm's `type` (union type) is exhaustively
+checked at compile time. The `Msg` type below is the equivalent of
+a discriminated union for all possible events.
+-}
+
+import Dict exposing (Dict)
+import Grid
+import Http
+import Json.Decode as D
+
+
+type alias TableInfo =
+    { name : String
+    , tableType : String
+    }
+
+
+type alias TableSchema =
+    { table : String
+    , columns : List ColumnSchema
+    , primaryKeys : List String
+    , editable : Bool
+    , canvasPushable : List String
+    }
+
+
+type alias ColumnSchema =
+    { name : String
+    , colType : String
+    , nullable : Bool
+    }
+
+
+type alias TableData =
+    { table : String
+    , columns : List String
+    , types : List String
+    , rows : List (List D.Value)
+    }
+
+
+{-| A row is a Dict from column name to string value.
+
+We normalize everything to strings for display in the grid.
+Similar to how AG Grid in JS works with `rowData` arrays of objects.
+-}
+type alias Row =
+    { values : Dict String String }
+
+
+type alias Model =
+    { tables : List TableInfo
+    , selectedTable : Maybe String
+    , schema : Maybe TableSchema
+    , rows : List Row
+    , gridModel : Maybe (Grid.Model Row)
+    , searchText : String
+    , sidebarCollapsed : Bool
+    , error : Maybe String
+    }
+
+
+{-| Every possible event in the app.
+
+In Svelte, events are scattered: on:click handlers, dispatched events,
+store subscriptions. In Elm, ALL events flow through this single type.
+The compiler guarantees you handle every variant in `update`.
+-}
+type Msg
+    = GotTables (Result Http.Error (List TableInfo))
+    | SelectTable String
+    | GotSchemaAndData String (Result Http.Error ( TableSchema, TableData ))
+    | GridMsg (Grid.Msg Row)
+    | SearchChanged String
+    | ToggleSidebar
