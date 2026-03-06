@@ -7,7 +7,7 @@ __docformat__ = "google"
 import json
 import math
 from datetime import date, datetime, time
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import duckdb
 from nicegui import ui
@@ -15,11 +15,8 @@ from nicegui import ui
 from ..db import db_path
 from ..db import reset as db_reset
 
-if TYPE_CHECKING:
-    pass
-
 # ---------------------------------------------------------------------------
-# Reuse existing viewer constants and helpers
+# Constants
 # ---------------------------------------------------------------------------
 
 _EXCLUDED_TABLES = {"meta"}
@@ -52,7 +49,8 @@ _ENRICHED_QUERIES: dict[str, str] = {
             cs.fetched_at
         FROM canvas_submissions cs
         LEFT JOIN canvas_students st ON cs.canvas_user_id = st.canvas_id
-        LEFT JOIN canvas_assignments ca ON cs.canvas_assignment_id = ca.canvas_id
+        LEFT JOIN canvas_assignments ca
+            ON cs.canvas_assignment_id = ca.canvas_id
     """,
     "canvas_grades": """
         SELECT
@@ -66,8 +64,45 @@ _ENRICHED_QUERIES: dict[str, str] = {
             cg.updated_at
         FROM canvas_grades cg
         LEFT JOIN canvas_students st ON cg.canvas_user_id = st.canvas_id
-        LEFT JOIN canvas_assignments ca ON cg.canvas_assignment_id = ca.canvas_id
+        LEFT JOIN canvas_assignments ca
+            ON cg.canvas_assignment_id = ca.canvas_id
     """,
+}
+
+# Column display config: hide internal IDs, reorder for readability
+_HIDDEN_COLUMNS: dict[str, list[str]] = {
+    "canvas_assignments": ["canvas_id"],
+    "canvas_students": ["canvas_id"],
+    "canvas_submissions": ["canvas_user_id", "canvas_assignment_id"],
+    "canvas_grades": ["canvas_user_id", "canvas_assignment_id"],
+}
+
+_COLUMN_ORDERING: dict[str, list[str]] = {
+    "canvas_assignments": [
+        "assignment_group",
+        "name",
+        "points_possible",
+        "due_at",
+        "published",
+    ],
+    "canvas_submissions": [
+        "student_name",
+        "assignment_name",
+        "assignment_group",
+        "submitted",
+        "submitted_at",
+        "late",
+        "score",
+        "workflow_state",
+    ],
+    "canvas_grades": [
+        "student_name",
+        "assignment_name",
+        "assignment_group",
+        "score",
+        "posted_grade",
+        "updated_at",
+    ],
 }
 
 # Type aliases for pending changes
@@ -78,7 +113,7 @@ _PendingChanges = dict[str, _TableChanges]
 
 
 # ---------------------------------------------------------------------------
-# Sanitization for AG Grid (NaN/Inf → None, datetime → isoformat)
+# Sanitization
 # ---------------------------------------------------------------------------
 
 
@@ -96,11 +131,13 @@ def _sanitize(obj: object) -> object:  # pyright: ignore[reportUnknownParameterT
 
 
 # ---------------------------------------------------------------------------
-# DB introspection (same as viewer/__init__.py)
+# DB introspection
 # ---------------------------------------------------------------------------
 
 
-def _get_tables(conn: duckdb.DuckDBPyConnection) -> list[dict[str, str]]:
+def _get_tables(
+    conn: duckdb.DuckDBPyConnection,
+) -> list[dict[str, str]]:
     """Return list of tables with their type."""
     rows = conn.execute(
         "SELECT table_name, table_type FROM information_schema.tables "
@@ -156,8 +193,34 @@ def _get_table_rows(
     ]
 
 
+def _classify_table(name: str) -> str:
+    """Classify a table into a sidebar group."""
+    if name.startswith("canvas_"):
+        return "canvas"
+    if name.startswith("gh_"):
+        return "github"
+    return "combined"
+
+
+def _group_tables(
+    tables: list[dict[str, str]],
+) -> list[dict[str, Any]]:
+    """Group tables into sidebar sections."""
+    combined = [t for t in tables if _classify_table(t["name"]) == "combined"]
+    canvas = [t for t in tables if _classify_table(t["name"]) == "canvas"]
+    github = [t for t in tables if _classify_table(t["name"]) == "github"]
+    groups: list[dict[str, Any]] = []
+    if combined:
+        groups.append({"label": "Combined Data", "items": combined})
+    if canvas:
+        groups.append({"label": "Canvas LMS", "items": canvas})
+    if github:
+        groups.append({"label": "GitHub Classroom", "items": github})
+    return groups
+
+
 # ---------------------------------------------------------------------------
-# Cell update + pending change tracking (reused from viewer/__init__.py)
+# Cell update + pending change tracking
 # ---------------------------------------------------------------------------
 
 
@@ -236,7 +299,10 @@ def _track_change(
             if not table_changes:
                 del pending[table]
     else:
-        row_changes[column] = {"baseline": old_value, "current": new_value}
+        row_changes[column] = {
+            "baseline": old_value,
+            "current": new_value,
+        }
 
 
 def _pending_count(pending: _PendingChanges) -> int:
@@ -245,8 +311,22 @@ def _pending_count(pending: _PendingChanges) -> int:
 
 
 # ---------------------------------------------------------------------------
-# NiceGUI app
+# Column definitions
 # ---------------------------------------------------------------------------
+
+
+def _get_display_columns(table: str, all_cols: list[str]) -> list[str]:
+    """Get visible columns in display order for a table."""
+    hidden = _HIDDEN_COLUMNS.get(table, [])
+    visible = [c for c in all_cols if c not in hidden]
+
+    ordering = _COLUMN_ORDERING.get(table)
+    if not ordering:
+        return visible
+
+    ordered = [c for c in ordering if c in visible]
+    remaining = [c for c in visible if c not in ordering]
+    return [*ordered, *remaining]
 
 
 def _build_column_defs(
@@ -256,14 +336,18 @@ def _build_column_defs(
     query = _ENRICHED_QUERIES.get(table, f"SELECT * FROM {table}")
     result = conn.execute(query)
     col_names = [desc[0] for desc in result.description]
-    col_types = [str(desc[1]) for desc in result.description]
+    col_types = {str(desc[0]): str(desc[1]) for desc in result.description}
+
+    display_cols = _get_display_columns(table, col_names)
+    hidden_cols = _HIDDEN_COLUMNS.get(table, [])
 
     editable = _is_editable(conn, table)
     pk_cols = _get_primary_keys(conn, table) if editable else []
     pushable_cols = _CANVAS_PUSHABLE.get(table, set())
 
     defs: list[dict[str, Any]] = []
-    for name, dtype in zip(col_names, col_types, strict=True):
+    for name in display_cols:
+        dtype = col_types.get(name, "VARCHAR")
         col_def: dict[str, Any] = {
             "headerName": name,
             "field": name,
@@ -273,27 +357,199 @@ def _build_column_defs(
             "floatingFilter": True,
         }
 
-        # Type-specific filters
+        # Type-specific filters and editors
         if "INT" in dtype or "DOUBLE" in dtype or "FLOAT" in dtype:
             col_def["filter"] = "agNumberColumnFilter"
         elif "BOOL" in dtype:
             col_def["filter"] = "agTextColumnFilter"
+            if editable and name not in pk_cols:
+                col_def["cellEditor"] = "agCheckboxCellEditor"
         elif "TIMESTAMP" in dtype or "DATE" in dtype:
             col_def["filter"] = "agDateColumnFilter"
         else:
             col_def["filter"] = "agTextColumnFilter"
 
+        # PK columns: bold, dimmed, not editable
+        if name in pk_cols:
+            col_def["headerName"] = f"{name} (PK)"
+            col_def["cellStyle"] = {
+                "fontWeight": "bold",
+                "opacity": "0.6",
+            }
+
         # Editability: only non-PK columns on editable tables
         if editable and name not in pk_cols:
             col_def["editable"] = True
 
-        # Highlight pushable columns
+        # Highlight pushable columns with subtle blue tint
         if name in pushable_cols:
             col_def["cellStyle"] = {"backgroundColor": "rgba(59, 130, 246, 0.08)"}
 
         defs.append(col_def)
 
+    # Add hidden columns at the end (for data integrity)
+    for name in hidden_cols:
+        if name in col_names:
+            defs.append({"field": name, "hide": True})
+
     return defs
+
+
+def _row_id_js(pk_cols: list[str]) -> str:
+    """Generate a JS expression for AG Grid getRowId."""
+    if not pk_cols:
+        return "String(params.data.__rowIndex || Math.random())"
+    if len(pk_cols) == 1:
+        return f"String(params.data['{pk_cols[0]}'])"
+    parts = " + '::' + ".join(f"String(params.data['{col}'])" for col in pk_cols)
+    return parts
+
+
+# ---------------------------------------------------------------------------
+# CSS
+# ---------------------------------------------------------------------------
+
+_CUSTOM_CSS = """
+/* Sidebar styling */
+.sidebar {
+    width: 14rem;
+    min-width: 14rem;
+    background: var(--q-dark-page, #1d1d1d);
+    border-right: 1px solid rgba(255, 255, 255, 0.1);
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+}
+.sidebar-header {
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+.sidebar-title {
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    opacity: 0.6;
+    text-transform: uppercase;
+}
+.sidebar-nav {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0.5rem 0;
+}
+.sidebar-group-label {
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    opacity: 0.5;
+    text-transform: uppercase;
+    padding: 0.75rem 1rem 0.25rem 1rem;
+}
+.sidebar-item {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 0.35rem 1rem;
+    font-size: 0.75rem;
+    font-family: 'SF Mono', 'Fira Code', 'Consolas',
+        ui-monospace, monospace;
+    color: rgba(255, 255, 255, 0.7);
+    cursor: pointer;
+    border: none;
+    background: transparent;
+    border-radius: 0;
+    transition: background 0.15s;
+}
+.sidebar-item:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.95);
+}
+.sidebar-item.active {
+    background: rgba(59, 130, 246, 0.2);
+    color: white;
+    font-weight: 600;
+}
+/* Toolbar */
+.toolbar {
+    padding: 0.5rem 1rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    min-height: 2.75rem;
+    background: var(--q-dark-page, #1d1d1d);
+}
+.toolbar-label {
+    font-size: 0.875rem;
+    font-weight: 600;
+}
+.toolbar-badge {
+    font-size: 0.65rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 9999px;
+    font-weight: 600;
+}
+.badge-editable {
+    background: rgba(34, 197, 94, 0.15);
+    color: #4ade80;
+}
+.badge-readonly {
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.5);
+}
+.toolbar-meta {
+    font-size: 0.75rem;
+    opacity: 0.5;
+}
+.toolbar-right {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+.search-input {
+    font-size: 0.75rem;
+    padding: 0.25rem 0.5rem;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 0.25rem;
+    background: transparent;
+    color: inherit;
+    width: 12rem;
+    outline: none;
+}
+.search-input:focus {
+    border-color: rgba(59, 130, 246, 0.5);
+}
+.search-input::placeholder {
+    opacity: 0.4;
+}
+/* Main layout */
+.app-layout {
+    display: flex;
+    height: 100vh;
+    width: 100vw;
+    overflow: hidden;
+}
+.main-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+.grid-container {
+    flex: 1;
+    overflow: hidden;
+    padding: 0;
+}
+"""
+
+
+# ---------------------------------------------------------------------------
+# NiceGUI app
+# ---------------------------------------------------------------------------
 
 
 def start_nicegui_server(port: int = 0) -> None:
@@ -305,61 +561,79 @@ def start_nicegui_server(port: int = 0) -> None:
     db_reset()
     conn = duckdb.connect(db_path())
     tables = _get_tables(conn)
+    groups = _group_tables(tables)
     pending: _PendingChanges = {}
-
-    # Store grids by table name for refreshing
-    grids: dict[str, ui.aggrid] = {}
 
     @ui.page("/")
     def index() -> None:  # pyright: ignore[reportUnusedFunction]
-        # --- Header ---
-        with ui.header().classes("items-center justify-between bg-base-300"):
-            ui.label("cass viewer").classes("text-xl font-bold")
-            pending_badge = ui.badge("0 pending").props("outline")
-            pending_badge.classes("text-sm")
+        ui.add_head_html(f"<style>{_CUSTOM_CSS}</style>")
 
-        def update_badge() -> None:
+        # State containers for this page — typed as Any to allow
+        # NiceGUI element refs alongside None initial values.
+        grid_container: dict[str, Any] = {"ref": None}
+        current_table: dict[str, str] = {
+            "name": tables[0]["name"] if tables else "",
+        }
+        sidebar_buttons: dict[str, ui.element] = {}
+        pending_label: dict[str, Any] = {"ref": None}
+        table_label: dict[str, Any] = {"ref": None}
+        badge_el: dict[str, Any] = {"ref": None}
+        meta_label: dict[str, Any] = {"ref": None}
+        search_ref: dict[str, Any] = {"ref": None}
+
+        def update_pending_display() -> None:
             count = _pending_count(pending)
-            pending_badge.text = f"{count} pending"
-            if count > 0:
-                pending_badge.props("color=warning")
-            else:
-                pending_badge.props(remove="color=warning").props("outline")
+            el = pending_label["ref"]
+            if el is not None:
+                el.text = f"{count} pending" if count > 0 else ""
 
-        # --- Table tabs ---
-        with ui.tabs().classes("w-full") as tabs:
-            for t in tables:
-                label = t["name"]
-                if t["name"] in _READ_ONLY_TABLES:
-                    label += " (read-only)"
-                ui.tab(t["name"], label=label)
+        def load_table(table_name: str) -> None:
+            """Load a table into the grid area."""
+            old = current_table["name"]
+            current_table["name"] = table_name
 
-        with ui.tab_panels(tabs, value=tables[0]["name"] if tables else None).classes(
-            "w-full flex-grow"
-        ):
-            for t in tables:
-                table_name = t["name"]
-                with ui.tab_panel(table_name).classes("p-2"):
-                    row_data = _get_table_rows(conn, table_name)
-                    col_defs = _build_column_defs(conn, table_name)
-                    editable = _is_editable(conn, table_name)
-                    pk_cols = _get_primary_keys(conn, table_name) if editable else []
+            # Update sidebar active states
+            if old in sidebar_buttons:
+                sidebar_buttons[old].classes(remove="active", add="")
+            if table_name in sidebar_buttons:
+                sidebar_buttons[table_name].classes(add="active")
 
-                    # Info bar
-                    with ui.row().classes("items-center gap-4 mb-2"):
-                        ui.label(f"{len(row_data)} rows").classes("text-sm opacity-70")
-                        if editable:
-                            pushable = _CANVAS_PUSHABLE.get(table_name, set())
-                            if pushable:
-                                ui.badge("Canvas-pushable", color="blue").props(
-                                    "outline"
-                                )
-                            else:
-                                ui.badge("editable", color="green").props("outline")
-                        else:
-                            ui.badge("read-only", color="grey").props("outline")
+            # Update toolbar
+            editable = _is_editable(conn, table_name)
+            tl = table_label["ref"]
+            if tl is not None:
+                tl.text = table_name
 
-                    # AG Grid
+            be = badge_el["ref"]
+            if be is not None:
+                if editable:
+                    be.text = "EDITABLE"
+                    be.classes(
+                        remove="badge-readonly",
+                        add="badge-editable",
+                    )
+                else:
+                    be.text = "READ-ONLY"
+                    be.classes(
+                        remove="badge-editable",
+                        add="badge-readonly",
+                    )
+
+            # Build grid
+            row_data = _get_table_rows(conn, table_name)
+            col_defs = _build_column_defs(conn, table_name)
+            pk_cols = _get_primary_keys(conn, table_name) if editable else []
+
+            ml = meta_label["ref"]
+            if ml is not None:
+                n_visible = sum(1 for c in col_defs if not c.get("hide"))
+                ml.text = f"{len(row_data)} rows \u00b7 {n_visible} columns"
+
+            # Clear and rebuild grid container
+            container = grid_container["ref"]
+            if container is not None:
+                container.clear()
+                with container:
                     grid = (
                         ui.aggrid(
                             {
@@ -371,76 +645,165 @@ def start_nicegui_server(port: int = 0) -> None:
                                     "minWidth": 80,
                                 },
                                 "animateRows": True,
-                                "rowSelection": {"mode": "multiRow"},
                                 "enableCellTextSelection": True,
-                                ":getRowId": f"(params) => {_row_id_js(pk_cols)}",
+                                ":getRowId": (f"(params) => {_row_id_js(pk_cols)}"),
                             },
                             theme="quartz",
                         )
                         .classes("w-full")
-                        .style("height: calc(100vh - 160px)")
+                        .style("height: calc(100vh - 3rem)")
                     )
 
-                    grids[table_name] = grid
-
                     if editable:
-                        # Capture table_name and pk_cols in closure
-                        _tn = table_name
-                        _pkc = pk_cols
+                        _attach_edit_handler(
+                            grid,
+                            conn,
+                            table_name,
+                            pk_cols,
+                            pending,
+                            update_pending_display,
+                        )
 
-                        def make_handler(tn: str, pkc: list[str]) -> Any:
-                            def on_cell_changed(e: Any) -> None:
-                                data = e.args
-                                col_field = data["colDef"]["field"]
-                                new_value = data["value"]
-                                row = data["data"]
+            # Clear search
+            sr = search_ref["ref"]
+            if sr is not None:
+                sr.value = ""
 
-                                pk = {col: row[col] for col in pkc}
-                                result = _update_cell(
-                                    conn, tn, pk, col_field, new_value
+        # --- Layout ---
+        with ui.element("div").classes("app-layout"):
+            # --- Sidebar ---
+            with ui.element("div").classes("sidebar"):
+                with ui.element("div").classes("sidebar-header"):
+                    ui.element("span").classes("sidebar-title").props(
+                        'innerHTML="CASS"'
+                    )
+
+                with ui.element("div").classes("sidebar-nav"):
+                    for group in groups:
+                        ui.element("div").classes("sidebar-group-label").props(
+                            f'innerHTML="{group["label"]}"'
+                        )
+                        for t in group["items"]:
+                            tn = t["name"]
+                            btn = (
+                                ui.element("button")
+                                .classes("sidebar-item")
+                                .props(f'innerHTML="{tn}"')
+                                .on(
+                                    "click",
+                                    lambda _e, n=tn: load_table(n),
                                 )
+                            )
+                            sidebar_buttons[tn] = btn
+                            if tn == current_table["name"]:
+                                btn.classes(add="active")
 
-                                if result["ok"]:
-                                    _track_change(
-                                        pending,
-                                        tn,
-                                        pk,
-                                        col_field,
-                                        result["old_value"],
-                                        new_value,
-                                    )
-                                    update_badge()
-                                    ui.notify(
-                                        f"Updated {col_field}",
-                                        type="positive",
-                                        position="bottom-right",
-                                        close_button=True,
-                                    )
-                                else:
-                                    ui.notify(
-                                        f"Error: {result.get('error', 'unknown')}",
-                                        type="negative",
-                                    )
+            # --- Main content ---
+            with ui.element("div").classes("main-content"):
+                # Toolbar
+                with ui.element("div").classes("toolbar"):
+                    tl = ui.label("").classes("toolbar-label")
+                    table_label["ref"] = tl
+                    be = ui.label("").classes("toolbar-badge badge-readonly")
+                    badge_el["ref"] = be
+                    ml = ui.label("").classes("toolbar-meta")
+                    meta_label["ref"] = ml
 
-                            return on_cell_changed
+                    with ui.element("div").classes("toolbar-right"):
+                        si = (
+                            ui.input(
+                                placeholder="Search rows...",
+                            )
+                            .classes("search-input")
+                            .props("dense outlined")
+                        )
+                        search_ref["ref"] = si
+                        si.on(
+                            "update:model-value",
+                            lambda e: _apply_search(
+                                grid_container,
+                                e.args,  # pyright: ignore[reportUnknownMemberType]
+                            ),
+                        )
 
-                        grid.on("cellValueChanged", make_handler(_tn, _pkc))
+                        pl = ui.label("").classes("toolbar-meta")
+                        pending_label["ref"] = pl
+
+                # Grid area
+                gc = ui.element("div").classes("grid-container")
+                grid_container["ref"] = gc
+
+        # Load initial table
+        if tables:
+            load_table(tables[0]["name"])
 
     ui.run(  # pyright: ignore[reportUnknownMemberType]
         title="cass viewer",
         port=port if port > 0 else None,
-        dark=None,  # auto dark mode
+        dark=True,
         reload=False,
         show=True,
         favicon="📊",
     )
 
 
-def _row_id_js(pk_cols: list[str]) -> str:
-    """Generate a JS expression for AG Grid getRowId based on PK columns."""
-    if not pk_cols:
-        return "String(params.data.__rowIndex || Math.random())"
-    if len(pk_cols) == 1:
-        return f"String(params.data['{pk_cols[0]}'])"
-    parts = " + '::' + ".join(f"String(params.data['{col}'])" for col in pk_cols)
-    return parts
+def _apply_search(grid_container: dict[str, Any], search_text: object) -> None:
+    """Apply quick filter to the AG Grid in the container."""
+    container = grid_container.get("ref")
+    if container is None:
+        return
+    text = str(search_text) if search_text else ""
+    escaped = json.dumps(text)
+    for child in container:  # pyright: ignore[reportUnknownVariableType]
+        if isinstance(child, ui.aggrid):
+            child.run_grid_method(  # pyright: ignore[reportUnknownMemberType]
+                "setGridOption", "quickFilterText", text
+            )
+            child.run_grid_method(  # pyright: ignore[reportUnknownMemberType]
+                "setQuickFilter", escaped
+            )
+            break
+
+
+def _attach_edit_handler(
+    grid: ui.aggrid,
+    conn: duckdb.DuckDBPyConnection,
+    table_name: str,
+    pk_cols: list[str],
+    pending: _PendingChanges,
+    update_pending_display: Any,
+) -> None:
+    """Attach cellValueChanged handler to an AG Grid."""
+
+    def on_cell_changed(e: Any) -> None:
+        data = e.args
+        col_field = data["colDef"]["field"]
+        new_value = data["value"]
+        row = data["data"]
+
+        pk = {col: row[col] for col in pk_cols}
+        result = _update_cell(conn, table_name, pk, col_field, new_value)
+
+        if result["ok"]:
+            _track_change(
+                pending,
+                table_name,
+                pk,
+                col_field,
+                result["old_value"],
+                new_value,
+            )
+            update_pending_display()
+            ui.notify(
+                f"Updated {col_field}",
+                type="positive",
+                position="bottom-right",
+                close_button=True,
+            )
+        else:
+            ui.notify(
+                f"Error: {result.get('error', 'unknown')}",
+                type="negative",
+            )
+
+    grid.on("cellValueChanged", on_cell_changed)
