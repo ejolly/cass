@@ -8,6 +8,7 @@ from cass.models import (
     GHCommit,
     GHContentItem,
     GHProfile,
+    GHRosterEntry,
 )
 
 
@@ -91,6 +92,33 @@ def test_convert_gh_profile_null_email():
     data = {"login": "bob-gh", "name": "Bob", "email": None}
     result = msgspec.convert(data, GHProfile)
     assert result.email is None
+
+
+def test_convert_roster_entry():
+    data = {
+        "assignment_name": "wk01-lab",
+        "assignment_url": "https://classroom.github.com/classrooms/123/assignments/wk01-lab",
+        "starter_code_url": "https://api.github.com/repos/org/starter",
+        "github_username": "alice-gh",
+        "roster_identifier": "Alice Smith",
+        "student_repository_name": "wk01-lab-alice-gh",
+        "student_repository_url": "https://github.com/org/wk01-lab-alice-gh",
+        "submission_timestamp": "2025-01-07 23:12:11 UTC",
+        "points_awarded": "100",
+        "points_available": "100",
+    }
+    result = msgspec.convert(data, GHRosterEntry)
+    assert result.github_username == "alice-gh"
+    assert result.roster_identifier == "Alice Smith"
+    assert result.student_repository_name == "wk01-lab-alice-gh"
+    assert result.points_awarded == "100"
+
+
+def test_convert_roster_entry_minimal():
+    data = {"github_username": "bob-gh"}
+    result = msgspec.convert(data, GHRosterEntry)
+    assert result.github_username == "bob-gh"
+    assert result.roster_identifier == ""
 
 
 def test_convert_ignores_extra_fields():

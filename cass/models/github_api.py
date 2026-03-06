@@ -64,6 +64,18 @@ class GHCommit(msgspec.Struct):
     commit: GHCommitInfo = msgspec.field(default_factory=GHCommitInfo)
 
 
+class GHRosterEntry(msgspec.Struct):
+    """Entry from the /assignments/{id}/grades endpoint (roster name + GH username)."""
+
+    github_username: str
+    roster_identifier: str = ""
+    student_repository_name: str = ""
+    student_repository_url: str = ""
+    submission_timestamp: str = ""
+    points_awarded: str = ""
+    points_available: str = ""
+
+
 class GHContentItem(msgspec.Struct):
     type: str = ""
     name: str = ""
