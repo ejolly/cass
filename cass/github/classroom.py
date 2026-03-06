@@ -14,9 +14,9 @@ from datetime import datetime
 import msgspec
 
 from . import gh
-from .config import get_config
-from .github_client import GitHubClient
-from .models import (
+from ..config import get_config
+from .client import GitHubClient
+from ..models import (
     GHAcceptedAssignment,
     GHAssignment,
     GHCommit,

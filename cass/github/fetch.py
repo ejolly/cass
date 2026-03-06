@@ -12,9 +12,9 @@ from rich.console import Console
 import msgspec
 
 from .classroom import build_repo_map
-from .config import get_config
+from ..config import get_config
 from .gh import api_cached
-from .models import Assignment, GHContentItem, Student
+from ..models import Assignment, GHContentItem, Student
 
 console = Console()
 

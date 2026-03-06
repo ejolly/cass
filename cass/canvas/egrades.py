@@ -15,7 +15,7 @@ import csv
 import logging
 from pathlib import Path
 
-from .models import CanvasGradingSchemeEntry
+from ..models import CanvasGradingSchemeEntry
 
 _log = logging.getLogger(__name__)
 
@@ -87,8 +87,8 @@ def generate_egrades(
     Raises:
         RuntimeError: If no grading standard is configured or no students found.
     """
-    from .canvas_api import CanvasClient
-    from .db import get_db
+    from .client import CanvasClient
+    from ..db import get_db
 
     path = Path(output)
 

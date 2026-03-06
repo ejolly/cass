@@ -19,7 +19,7 @@ from rich.console import Console
 from ..db import db_path, reset as db_reset
 
 if TYPE_CHECKING:
-    from ..canvas_api import CanvasClient
+    from ..canvas.client import CanvasClient
 
 console = Console()
 
@@ -472,7 +472,7 @@ def _canvas_preview(
     pending: dict,
 ) -> dict[str, object]:
     """Compare pending changes against live Canvas state (dry-run)."""
-    from ..canvas_api import CanvasClient
+    from ..canvas.client import CanvasClient
 
     assignment_changes = pending.get("canvas_assignments", {})
     grade_changes = pending.get("canvas_grades", {})
@@ -602,7 +602,7 @@ def _canvas_apply(
     pending: dict,
 ) -> dict[str, object]:
     """Push pending changes to Canvas and clear them on success."""
-    from ..canvas_api import CanvasClient
+    from ..canvas.client import CanvasClient
 
     assignment_changes = pending.get("canvas_assignments", {})
     grade_changes = pending.get("canvas_grades", {})
