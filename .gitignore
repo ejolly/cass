@@ -15,3 +15,5 @@ cass.duckdb.wal
 cass.toml
 docs/api/
 backups/
+cass/viewer/elm/elm-stuff/
+cass/viewer/elm/elm.js

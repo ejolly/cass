@@ -55,6 +55,7 @@ def server(viewer_conn):
     ViewerHandler.conn = viewer_conn
     ViewerHandler.valid_tables = _get_table_names(viewer_conn)
     ViewerHandler.pending_changes = {}
+    ViewerHandler.use_elm = False
 
     srv = HTTPServer(("127.0.0.1", 0), ViewerHandler)
     port = srv.server_address[1]

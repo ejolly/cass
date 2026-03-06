@@ -318,13 +318,13 @@ Team: **Ejolly** (EJO). Issues are prefixed `EJO-NNN`.
 
 | Issue | Title | Priority | Status |
 |-------|-------|----------|--------|
-| EJO-328 | eGrades CSV export with grading scheme letter grade conversion | High | Backlog |
 | EJO-321 | User-friendly CLI commands for common data operations | High | Backlog |
 
 ### Completed issues
 
 | Issue | Title | Priority | Status |
 |-------|-------|----------|--------|
+| EJO-328 | eGrades CSV export with grading scheme letter grade conversion | High | Done |
 | EJO-327 | Grade posting policy: detect post_manually and post via GraphQL | High | Done |
 | EJO-326 | Bulk grade push via Canvas update_grades endpoint | Urgent | Done |
 | EJO-319 | Refactor data models: human-readable, self-documenting API + domain types | Urgent | Done |

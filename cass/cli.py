@@ -1073,6 +1073,7 @@ def import_csv(
 @app.command()
 def view(
     port: int = typer.Option(0, "--port", help="Port number (0 = auto-select)"),
+    elm: bool = typer.Option(False, "--elm", help="Use the Elm frontend"),
 ) -> None:
     """Open the database in a browser-based viewer."""
     from . import db
@@ -1086,7 +1087,7 @@ def view(
             )
             raise typer.Exit(code=1)
 
-    start_server(port=port)
+    start_server(port=port, elm=elm)
 
 
 @db_app.callback()

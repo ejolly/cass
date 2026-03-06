@@ -638,6 +638,7 @@ class ViewerHandler(BaseHTTPRequestHandler):
     conn: duckdb.DuckDBPyConnection
     valid_tables: set[str]
     pending_changes: dict
+    use_elm: bool
 
     def log_message(self, format: str, *args: object) -> None:  # noqa: A002
         """Suppress default stderr logging."""
@@ -665,11 +666,26 @@ class ViewerHandler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         return self.rfile.read(length)
 
+    def _send_js(self, content: bytes) -> None:
+        self.send_response(200)
+        self.send_header("Content-Type", "application/javascript; charset=utf-8")
+        self.send_header("Content-Length", str(len(content)))
+        self.end_headers()
+        self.wfile.write(content)
+
     def do_GET(self) -> None:  # noqa: N802
         """Handle GET requests."""
         if self.path == "/":
-            html = files("cass.viewer").joinpath("index.html").read_bytes()
+            if self.use_elm:
+                html = files("cass.viewer").joinpath("index_elm.html").read_bytes()
+            else:
+                html = files("cass.viewer").joinpath("index.html").read_bytes()
             self._send_html(html)
+            return
+
+        if self.path == "/elm.js" and self.use_elm:
+            js = files("cass.viewer").joinpath("elm.js").read_bytes()
+            self._send_js(js)
             return
 
         if self.path == "/api/pending":
@@ -776,11 +792,12 @@ class ViewerHandler(BaseHTTPRequestHandler):
 # ---------------------------------------------------------------------------
 
 
-def start_server(port: int = 0) -> None:
+def start_server(port: int = 0, *, elm: bool = False) -> None:
     """Start the viewer server, open the browser, block until Ctrl+C.
 
     Args:
         port: Port number to bind to. 0 = auto-select an available port.
+        elm: Use the Elm frontend instead of the default AG Grid frontend.
     """
     db_file = db_path()
 
@@ -793,6 +810,7 @@ def start_server(port: int = 0) -> None:
     ViewerHandler.conn = conn
     ViewerHandler.valid_tables = valid_tables
     ViewerHandler.pending_changes = {}
+    ViewerHandler.use_elm = elm
 
     server = HTTPServer(("127.0.0.1", port), ViewerHandler)
     actual_port = server.server_address[1]
