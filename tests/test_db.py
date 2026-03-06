@@ -1,6 +1,7 @@
 """Tests for cass.db — DuckDB CRUD round-trips with schema v6."""
 
 from cass import db
+from cass.config import Config
 from cass.models import (
     Assignment,
     CanvasGrade,
@@ -251,3 +252,27 @@ def test_canvas_grades_roundtrip(db_conn):
     assert by_aid[0].posted_grade == "8/10"
     assert by_aid[0].score == 8.0
     assert by_aid[1].posted_grade == "-"
+
+
+# --- db_path / is_remote ---
+
+
+def test_db_path_local(tmp_path, monkeypatch):
+    """db_path returns a local file path when no MotherDuck configured."""
+    cfg = Config(root=tmp_path, canvas_base_url="https://c.edu", canvas_course_id=1)
+    monkeypatch.setattr("cass.db.get_config", lambda: cfg)
+    assert db.db_path() == str(tmp_path / "cass.duckdb")
+    assert db.is_remote() is False
+
+
+def test_db_path_motherduck(tmp_path, monkeypatch):
+    """db_path returns md: connection string when MotherDuck configured."""
+    cfg = Config(
+        root=tmp_path,
+        canvas_base_url="https://c.edu",
+        canvas_course_id=1,
+        motherduck_db="my_db",
+    )
+    monkeypatch.setattr("cass.db.get_config", lambda: cfg)
+    assert db.db_path() == "md:my_db"
+    assert db.is_remote() is True

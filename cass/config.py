@@ -44,6 +44,7 @@ class Config:
     canvas_course_id: int = 0
     canvas_modules: list[CanvasModuleSpec] = field(default_factory=list)
     canvas_assignments: list[CanvasAssignmentSpec] = field(default_factory=list)
+    motherduck_db: str = ""
 
     @property
     def has_classroom(self) -> bool:
@@ -52,6 +53,10 @@ class Config:
     @property
     def has_canvas(self) -> bool:
         return bool(self.canvas_base_url and self.canvas_course_id)
+
+    @property
+    def has_motherduck(self) -> bool:
+        return bool(self.motherduck_db)
 
 
 _config: Config | None = None
@@ -124,6 +129,10 @@ def _load_config() -> Config:
         if "name" in a
     ]
 
+    # Parse [database] section
+    database = raw.get("database", {})
+    motherduck_db = database.get("motherduck", "")
+
     return Config(
         root=root,
         classroom_id=cc.get("id", 0),
@@ -132,6 +141,7 @@ def _load_config() -> Config:
         canvas_course_id=canvas.get("course_id", 0),
         canvas_modules=module_specs,
         canvas_assignments=assignment_specs,
+        motherduck_db=motherduck_db,
     )
 
 
@@ -270,6 +280,19 @@ def check_prerequisites() -> list[Check]:
         )
     else:
         checks.append(Check("canvas", True, "not configured (optional)"))
+
+    # MotherDuck checks (only if configured)
+    if cfg.has_motherduck:
+        has_md_token = bool(os.environ.get("MOTHERDUCK_TOKEN"))
+        checks.append(Check("motherduck", True, f"database = {cfg.motherduck_db}"))
+        checks.append(
+            Check(
+                "token",
+                has_md_token,
+                "found" if has_md_token else "not found — set $MOTHERDUCK_TOKEN",
+                indent=1,
+            )
+        )
 
     # Roster
     try:

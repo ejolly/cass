@@ -145,3 +145,50 @@ def test_load_no_declarations(tmp_path, monkeypatch):
     cfg = _load_config()
     assert cfg.canvas_modules == []
     assert cfg.canvas_assignments == []
+
+
+# --- MotherDuck ---
+
+
+def test_has_motherduck(tmp_path):
+    cfg = Config(root=tmp_path, canvas_base_url="https://c.edu", canvas_course_id=1)
+    assert cfg.has_motherduck is False
+
+    cfg = Config(
+        root=tmp_path,
+        canvas_base_url="https://c.edu",
+        canvas_course_id=1,
+        motherduck_db="cass",
+    )
+    assert cfg.has_motherduck is True
+
+
+def test_load_motherduck(tmp_path, monkeypatch):
+    """Parse [database] motherduck from cass.toml."""
+    toml = tmp_path / "cass.toml"
+    toml.write_text(
+        '[canvas]\nbase_url = "https://canvas.example.com"\ncourse_id = 1\n\n'
+        '[database]\nmotherduck = "my_cass_db"\n'
+    )
+    monkeypatch.chdir(tmp_path)
+    reset_config()
+    from cass.config import _load_config
+
+    cfg = _load_config()
+    assert cfg.motherduck_db == "my_cass_db"
+    assert cfg.has_motherduck is True
+
+
+def test_load_no_database_section(tmp_path, monkeypatch):
+    """Config without [database] defaults to local."""
+    toml = tmp_path / "cass.toml"
+    toml.write_text(
+        '[canvas]\nbase_url = "https://canvas.example.com"\ncourse_id = 1\n'
+    )
+    monkeypatch.chdir(tmp_path)
+    reset_config()
+    from cass.config import _load_config
+
+    cfg = _load_config()
+    assert cfg.motherduck_db == ""
+    assert cfg.has_motherduck is False

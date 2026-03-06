@@ -32,7 +32,16 @@ _conn: duckdb.DuckDBPyConnection | None = None
 
 
 def db_path() -> str:
-    return str(get_config().root / DB_FILENAME)
+    """Return the DuckDB connection string — local path or ``md:<name>``."""
+    cfg = get_config()
+    if cfg.has_motherduck:
+        return f"md:{cfg.motherduck_db}"
+    return str(cfg.root / DB_FILENAME)
+
+
+def is_remote() -> bool:
+    """True when the database is hosted on MotherDuck (not a local file)."""
+    return get_config().has_motherduck
 
 
 def get_db() -> duckdb.DuckDBPyConnection:
