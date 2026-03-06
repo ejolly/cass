@@ -128,10 +128,17 @@ def _status() -> None:
     else:
         console.print("  Canvas: [dim]not configured[/dim]")
 
-    db_file = Path(db.db_path())
-    if db_file.exists():
-        size_kb = db_file.stat().st_size / 1024
-        console.print(f"\n  Database: {db_file.name} ({size_kb:.0f} KB)")
+    if db.is_remote():
+        console.print(f"\n  Database: [bold]{db.db_path()}[/bold] (MotherDuck)")
+    else:
+        db_file = Path(db.db_path())
+        if db_file.exists():
+            size_kb = db_file.stat().st_size / 1024
+            console.print(f"\n  Database: {db_file.name} ({size_kb:.0f} KB)")
+        else:
+            console.print("\n  Database: [dim]not created yet[/dim]")
+
+    if db.is_remote() or Path(db.db_path()).exists():
         cache_kb = cache.cache_size_kb()
         if cache_kb > 0:
             console.print(
@@ -148,8 +155,6 @@ def _status() -> None:
         assignments = db.load_assignments()
         if assignments:
             console.print(f"    Assignments: {len(assignments)}")
-    else:
-        console.print("\n  Database: [dim]not yet created[/dim]")
 
     console.print()
 
@@ -632,8 +637,14 @@ def fetch(
 def drop(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
 ) -> None:
-    """Delete the local database (cass.duckdb)."""
+    """Delete the local database (cass.duckdb). Not supported for MotherDuck."""
     from . import db
+
+    if db.is_remote():
+        console.print(
+            "[yellow]Database is on MotherDuck — use the MotherDuck UI to manage it.[/yellow]"
+        )
+        raise typer.Exit(code=1)
 
     db_file = Path(db.db_path())
     if not db_file.exists():
@@ -679,9 +690,10 @@ def backup(
     from datetime import datetime
 
     from . import db
+    from .config import get_config
 
-    db_file = Path(db.db_path())
-    backups_dir = db_file.parent / "backups"
+    project_root = get_config().root
+    backups_dir = project_root / "backups"
 
     if list_backups:
         if not backups_dir.exists():
@@ -696,25 +708,38 @@ def backup(
             console.print(f"  {f.name}  [dim]({size_kb:.0f} KB)[/dim]")
         return
 
-    if not db_file.exists():
-        console.print(
-            "[yellow]No database to back up. Run [bold]cass pull[/bold] first.[/yellow]"
-        )
-        raise typer.Exit(code=1)
-
-    backups_dir.mkdir(exist_ok=True)
-    _ensure_backups_gitignored(db_file.parent)
-
     stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     suffix = f"_{tag}" if tag else ""
     dest = backups_dir / f"cass_{stamp}{suffix}.duckdb"
 
-    db.reset()
-    shutil.copy2(str(db_file), str(dest))
+    if db.is_remote():
+        # Snapshot MotherDuck to a local file via hybrid attach
+        backups_dir.mkdir(exist_ok=True)
+        _ensure_backups_gitignored(project_root)
+        conn = db.get_db()
+        conn.execute(f"ATTACH '{dest}' AS _backup")
+        for (name,) in conn.execute(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_schema = 'main'"
+        ).fetchall():
+            conn.execute(f"CREATE TABLE _backup.{name} AS SELECT * FROM main.{name}")
+        conn.execute("DETACH _backup")
+    else:
+        db_file = Path(db.db_path())
+        if not db_file.exists():
+            console.print(
+                "[yellow]No database to back up. Run [bold]cass pull[/bold] first.[/yellow]"
+            )
+            raise typer.Exit(code=1)
+
+        backups_dir.mkdir(exist_ok=True)
+        _ensure_backups_gitignored(project_root)
+        db.reset()
+        shutil.copy2(str(db_file), str(dest))
 
     size_kb = dest.stat().st_size / 1024
     console.print(
-        f"[green]Backed up → {dest.relative_to(db_file.parent)} ({size_kb:.0f} KB)[/green]"
+        f"[green]Backed up → {dest.relative_to(project_root)} ({size_kb:.0f} KB)[/green]"
     )
 
 
@@ -764,20 +789,40 @@ def restore(
         f"  Students: {counts['students']}, Assignments: {counts['assignments']}"
     )
 
-    db_file = Path(db.db_path())
-    if db_file.exists():
-        cur_kb = db_file.stat().st_size / 1024
-        console.print(f"  Current DB: {db_file.name} ({cur_kb:.0f} KB)")
+    target = db.db_path()
+    if db.is_remote():
+        console.print(f"  Current DB: [bold]{target}[/bold] (MotherDuck)")
     else:
-        console.print("  Current DB: [dim]none[/dim]")
+        db_file = Path(target)
+        if db_file.exists():
+            cur_kb = db_file.stat().st_size / 1024
+            console.print(f"  Current DB: {db_file.name} ({cur_kb:.0f} KB)")
+        else:
+            console.print("  Current DB: [dim]none[/dim]")
 
     if not yes:
         if not typer.confirm("\nReplace current database with this backup?"):
             raise typer.Abort()
 
-    db.reset()
-    shutil.copy2(str(src), str(db_file))
-    console.print(f"[green]Restored {src.name} → {db_file.name}[/green]")
+    if db.is_remote():
+        # Restore into MotherDuck via hybrid attach
+        conn = db.get_db()
+        conn.execute(f"ATTACH '{src}' AS _restore (READ_ONLY)")
+        # Drop and recreate each table from the backup
+        for (name,) in conn.execute(
+            "SELECT table_name FROM _restore.information_schema.tables "
+            "WHERE table_schema = 'main'"
+        ).fetchall():
+            conn.execute(f"DROP TABLE IF EXISTS main.{name}")
+            conn.execute(
+                f"CREATE TABLE main.{name} AS SELECT * FROM _restore.main.{name}"
+            )
+        conn.execute("DETACH _restore")
+        console.print(f"[green]Restored {src.name} → {target}[/green]")
+    else:
+        db.reset()
+        shutil.copy2(str(src), str(Path(target)))
+        console.print(f"[green]Restored {src.name} → {Path(target).name}[/green]")
 
 
 # ---------------------------------------------------------------------------
@@ -979,12 +1024,13 @@ def view(
     from . import db
     from .viewer import start_server
 
-    db_file = Path(db.db_path())
-    if not db_file.exists():
-        console.print(
-            "[yellow]No database yet. Run [bold]cass pull[/bold] first.[/yellow]"
-        )
-        raise typer.Exit(code=1)
+    if not db.is_remote():
+        db_file = Path(db.db_path())
+        if not db_file.exists():
+            console.print(
+                "[yellow]No database yet. Run [bold]cass pull[/bold] first.[/yellow]"
+            )
+            raise typer.Exit(code=1)
 
     start_server(port=port)
 
