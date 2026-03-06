@@ -266,8 +266,6 @@ def build_column_defs(
 
     editable = is_editable(conn, table)
     pk_cols = get_primary_keys(conn, table) if editable else []
-    pushable_cols = CANVAS_PUSHABLE.get(table, set())
-
     defs: list[dict[str, Any]] = []
     for name in display_cols:
         dtype = col_types.get(name, "VARCHAR")
@@ -308,10 +306,6 @@ def build_column_defs(
         # Editability: only non-PK columns on editable tables
         if editable and name not in pk_cols:
             col_def["editable"] = True
-
-        # Highlight pushable columns with subtle blue tint
-        if name in pushable_cols:
-            col_def["cellStyle"] = {"backgroundColor": "rgba(59, 130, 246, 0.08)"}
 
         defs.append(col_def)
 
@@ -354,8 +348,7 @@ def build_gradebook_view(
 
     # Fetch students ordered by sortable_name
     students = conn.execute(
-        "SELECT canvas_id, name, sortable_name FROM canvas_students "
-        "ORDER BY sortable_name"
+        "SELECT canvas_id, sortable_name FROM canvas_students ORDER BY sortable_name"
     ).fetchall()
 
     # Fetch all grades into a lookup: (user_id, assignment_id) -> posted_grade
@@ -420,7 +413,7 @@ def build_gradebook_view(
 
     # Build row data: one row per student
     row_data: list[dict[str, Any]] = []
-    for s_id, s_name, _sortable in students:
+    for s_id, s_name in students:
         row: dict[str, Any] = {
             "_student_name": s_name,
             "_canvas_user_id": int(s_id),

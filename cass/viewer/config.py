@@ -10,7 +10,7 @@ from typing import Any
 # Constants
 # ---------------------------------------------------------------------------
 
-EXCLUDED_TABLES = {"meta"}
+EXCLUDED_TABLES = {"meta", "canvas_students"}
 
 READ_ONLY_TABLES = {
     "canvas_submissions",
@@ -32,12 +32,7 @@ ENRICHED_QUERIES: dict[str, str] = {
         SELECT
             cs.canvas_user_id,
             cs.canvas_assignment_id,
-            CASE WHEN st.sortable_name LIKE '%,%'
-                THEN trim(split_part(st.sortable_name, ',', 1))
-                ELSE st.sortable_name END AS last_name,
-            CASE WHEN st.sortable_name LIKE '%,%'
-                THEN trim(split_part(st.sortable_name, ',', 2))
-                ELSE '' END AS first_name,
+            st.sortable_name AS student,
             ca.name AS assignment_name,
             ca.assignment_group,
             cs.submitted_at,
@@ -51,12 +46,7 @@ ENRICHED_QUERIES: dict[str, str] = {
     """,
     "canvas_students": """
         SELECT
-            CASE WHEN cs.sortable_name LIKE '%,%'
-                THEN trim(split_part(cs.sortable_name, ',', 1))
-                ELSE cs.sortable_name END AS last_name,
-            CASE WHEN cs.sortable_name LIKE '%,%'
-                THEN trim(split_part(cs.sortable_name, ',', 2))
-                ELSE '' END AS first_name,
+            cs.sortable_name AS student,
             cs.email,
             cs.canvas_id
         FROM canvas_students cs
@@ -77,7 +67,7 @@ ENRICHED_QUERIES: dict[str, str] = {
         SELECT
             cg.canvas_user_id,
             cg.canvas_assignment_id,
-            st.name AS student_name,
+            st.sortable_name AS student,
             ca.name AS assignment_name,
             ca.assignment_group,
             cg.score,
@@ -100,8 +90,7 @@ HIDDEN_COLUMNS: dict[str, list[str]] = {
 
 COLUMN_ORDERING: dict[str, list[str]] = {
     "canvas_students": [
-        "last_name",
-        "first_name",
+        "student",
         "email",
     ],
     "canvas_assignments": [
@@ -112,8 +101,7 @@ COLUMN_ORDERING: dict[str, list[str]] = {
         "published",
     ],
     "canvas_submissions": [
-        "last_name",
-        "first_name",
+        "student",
         "assignment_name",
         "assignment_group",
         "submitted_at",
@@ -121,7 +109,7 @@ COLUMN_ORDERING: dict[str, list[str]] = {
         "workflow_state",
     ],
     "canvas_grades": [
-        "student_name",
+        "student",
         "assignment_name",
         "assignment_group",
         "score",
@@ -133,8 +121,7 @@ COLUMN_ORDERING: dict[str, list[str]] = {
 # Human-friendly column header names
 COLUMN_DISPLAY_NAMES: dict[str, dict[str, str]] = {
     "canvas_students": {
-        "last_name": "Last Name",
-        "first_name": "First Name",
+        "student": "Student",
         "email": "Email",
         "canvas_id": "Canvas ID",
     },
@@ -146,8 +133,7 @@ COLUMN_DISPLAY_NAMES: dict[str, dict[str, str]] = {
         "published": "Published",
     },
     "canvas_submissions": {
-        "last_name": "Last Name",
-        "first_name": "First Name",
+        "student": "Student",
         "assignment_name": "Assignment",
         "assignment_group": "Group",
         "submitted_at": "Submitted",
@@ -182,7 +168,11 @@ _DISPLAY_NAMES: dict[str, str] = {
 
 # Desired display order within each group
 _GROUP_ORDER: dict[str, list[str]] = {
-    "canvas": ["canvas_students", "canvas_assignments", "canvas_submissions"],
+    "canvas": [
+        "canvas_grades",
+        "canvas_assignments",
+        "canvas_submissions",
+    ],
     "github": ["gh_students", "gh_assignments", "gh_submissions", "gh_grades"],
     "combined": ["students", "assignments"],
 }
@@ -195,8 +185,6 @@ def display_name(table: str) -> str:
 
 def classify_table(name: str) -> str:
     """Classify a table into a sidebar group."""
-    if name == "canvas_grades":
-        return "gradebook"
     if name.startswith("canvas_"):
         return "canvas"
     if name.startswith("gh_"):
@@ -214,13 +202,10 @@ def group_tables(
     tables: list[dict[str, str]],
 ) -> list[dict[str, Any]]:
     """Group tables into sidebar sections."""
-    gradebook = [t for t in tables if classify_table(t["name"]) == "gradebook"]
     canvas = [t for t in tables if classify_table(t["name"]) == "canvas"]
     github = [t for t in tables if classify_table(t["name"]) == "github"]
     combined = [t for t in tables if classify_table(t["name"]) == "combined"]
     groups: list[dict[str, Any]] = []
-    if gradebook:
-        groups.append({"label": "Gradebook", "items": gradebook, "style": "gradebook"})
     if canvas:
         groups.append(
             {
