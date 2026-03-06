@@ -270,6 +270,52 @@
       background: var(--accent-light);
     }
 
+    /* ── Push to Canvas button ────────────────────────── */
+
+    #push-btn {
+      display: none;
+    }
+
+    #push-btn.has-changes {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 12px;
+      padding: 5px 10px;
+      border: 1px solid var(--accent);
+      border-radius: 6px;
+      background: var(--accent-light);
+      color: var(--accent);
+      cursor: pointer;
+      font-weight: 500;
+      transition: background 0.15s, color 0.15s;
+      white-space: nowrap;
+    }
+
+    #push-btn.has-changes:hover {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .push-count {
+      font-size: 10px;
+      background: var(--accent);
+      color: #fff;
+      border-radius: 50%;
+      min-width: 18px;
+      height: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 600;
+      padding: 0 4px;
+    }
+
+    #push-btn.has-changes:hover .push-count {
+      background: #fff;
+      color: var(--accent);
+    }
+
     #status {
       font-size: 12px;
       transition: opacity 0.3s;
@@ -277,6 +323,22 @@
 
     #status.success { color: var(--success); }
     #status.error { color: var(--error); }
+
+    #status.sync-success {
+      color: var(--success);
+      font-weight: 500;
+      padding: 3px 8px;
+      background: rgba(22, 163, 74, 0.1);
+      border-radius: 4px;
+    }
+
+    #status.sync-error {
+      color: var(--error);
+      font-weight: 500;
+      padding: 3px 8px;
+      background: rgba(220, 38, 38, 0.1);
+      border-radius: 4px;
+    }
 
     #grid-container {
       flex: 1;
@@ -315,6 +377,138 @@
       background: var(--sidebar-bg);
       font-family: inherit;
     }
+
+    /* ── Modal ────────────────────────────────────────── */
+
+    .modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.5);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+    }
+
+    .modal {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      width: 640px;
+      max-width: 90vw;
+      max-height: 80vh;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    }
+
+    .modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+      font-weight: 600;
+      font-size: 14px;
+    }
+
+    .modal-close {
+      background: none;
+      border: none;
+      color: var(--text-dim);
+      cursor: pointer;
+      padding: 4px 8px;
+      font-size: 18px;
+      line-height: 1;
+      border-radius: 4px;
+      transition: background 0.15s, color 0.15s;
+    }
+
+    .modal-close:hover {
+      background: var(--sidebar-active);
+      color: var(--text);
+    }
+
+    .modal-body {
+      padding: 16px 20px;
+      overflow-y: auto;
+      flex: 1;
+    }
+
+    .modal-footer {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      padding: 12px 20px;
+      border-top: 1px solid var(--border);
+    }
+
+    .modal-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    .modal-table th {
+      text-align: left;
+      padding: 6px 10px;
+      border-bottom: 2px solid var(--border);
+      color: var(--text-dim);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .modal-table td {
+      padding: 6px 10px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .modal-table tr.conflict td {
+      background: rgba(220, 38, 38, 0.08);
+    }
+
+    .conflict-warning {
+      margin-top: 12px;
+      padding: 10px 14px;
+      background: rgba(220, 38, 38, 0.08);
+      border: 1px solid rgba(220, 38, 38, 0.25);
+      border-radius: 6px;
+      font-size: 12px;
+      color: var(--error);
+    }
+
+    .btn-primary {
+      font-size: 12px;
+      padding: 6px 14px;
+      border: none;
+      border-radius: 6px;
+      background: var(--accent);
+      color: #fff;
+      cursor: pointer;
+      font-weight: 500;
+      transition: opacity 0.15s;
+    }
+
+    .btn-primary:hover { opacity: 0.9; }
+    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .btn-secondary {
+      font-size: 12px;
+      padding: 6px 14px;
+      border: 1px solid var(--input-border);
+      border-radius: 6px;
+      background: var(--input-bg);
+      color: var(--text);
+      cursor: pointer;
+      transition: border-color 0.15s;
+    }
+
+    .btn-secondary:hover { border-color: var(--accent); }
   </style>
 </head>
 <body>
@@ -342,6 +536,9 @@
       <div class="toolbar-right">
         <input id="search-box" type="text" placeholder="Search rows..." disabled>
         <button type="button" class="toolbar-btn" id="export-btn" disabled title="Download as CSV">Export CSV</button>
+        <button type="button" id="push-btn" title="Review and push changes to Canvas">
+          Push to Canvas <span class="push-count" id="push-count">0</span>
+        </button>
         <span id="status"></span>
       </div>
     </div>
@@ -350,6 +547,18 @@
         <div>Select a table from the sidebar</div>
         <div class="hint">Use <kbd>Ctrl</kbd>+<kbd>K</kbd> to search within a table</div>
       </div>
+    </div>
+  </div>
+
+  <!-- Preview / confirm modal -->
+  <div class="modal-overlay" id="modal-overlay">
+    <div class="modal">
+      <div class="modal-header">
+        <span id="modal-title">Push to Canvas</span>
+        <button type="button" class="modal-close" id="modal-close">&times;</button>
+      </div>
+      <div class="modal-body" id="modal-body"></div>
+      <div class="modal-footer" id="modal-footer"></div>
     </div>
   </div>
 
@@ -470,11 +679,53 @@
         searchBox.focus();
         searchBox.select();
       }
-      // Escape to blur search
-      if (e.key === "Escape" && document.activeElement === searchBox) {
-        searchBox.blur();
+      // Escape: blur search or close modal
+      if (e.key === "Escape") {
+        if (document.getElementById("modal-overlay").style.display === "flex") {
+          closeModal();
+        } else if (document.activeElement === searchBox) {
+          searchBox.blur();
+        }
       }
     });
+
+    // ── Column & row overrides ──────────────────────────────
+
+    const COLUMN_OVERRIDES = {
+      canvas_assignments: {
+        hide: ["canvas_id"],
+        order: ["assignment_group", "name", "points_possible", "due_at", "published"],
+      },
+    };
+
+    function applyColumnOverrides(table, defs) {
+      const cfg = COLUMN_OVERRIDES[table];
+      if (!cfg) return defs;
+
+      if (cfg.hide) {
+        defs = defs.filter(d => !cfg.hide.includes(d.field));
+      }
+      if (cfg.order) {
+        const byField = Object.fromEntries(defs.map(d => [d.field, d]));
+        const ordered = [];
+        for (const f of cfg.order) {
+          if (byField[f]) { ordered.push(byField[f]); delete byField[f]; }
+        }
+        // Append any remaining columns not in the order list
+        for (const d of defs) {
+          if (byField[d.field]) ordered.push(d);
+        }
+        return ordered;
+      }
+      return defs;
+    }
+
+    function getRowStyle(params) {
+      if (currentTable === "canvas_assignments" && params.data.published === false) {
+        return { opacity: "0.45" };
+      }
+      return undefined;
+    }
 
     // ── Grid ──────────────────────────────────────────────
 
@@ -532,7 +783,7 @@
 
       setStatus("");
 
-      const columnDefs = tableData.columns.map((col, i) => {
+      let columnDefs = tableData.columns.map((col, i) => {
         const isPK = schema.primary_keys.includes(col);
         const colType = tableData.types[i];
         const def = {
@@ -568,6 +819,9 @@
         return def;
       });
 
+      // Table-specific column customization
+      columnDefs = applyColumnOverrides(name, columnDefs);
+
       const rowData = tableData.rows.map(row => {
         const obj = {};
         tableData.columns.forEach((col, i) => { obj[col] = row[i]; });
@@ -593,6 +847,7 @@
         animateRows: false,
         singleClickEdit: false,
         stopEditingWhenCellsLoseFocus: true,
+        getRowStyle: getRowStyle,
         onCellValueChanged: handleCellEdit,
         onFirstDataRendered: (params) => {
           params.api.autoSizeAllColumns();
@@ -630,6 +885,10 @@
         if (result.ok) {
           setStatus("Saved", "success");
           flashCell(event);
+          // Update push button if there are pending Canvas changes
+          if (result.pending_count !== undefined) {
+            updatePushButton(result.pending_count);
+          }
         } else {
           setStatus(result.error || "Update failed", "error");
           flashCell(event);
@@ -670,22 +929,183 @@
 
     document.getElementById("export-btn").addEventListener("click", exportCSV);
 
+    // ── Push to Canvas ────────────────────────────────────
+
+    function updatePushButton(count) {
+      const btn = document.getElementById("push-btn");
+      const countEl = document.getElementById("push-count");
+      if (count > 0) {
+        btn.classList.add("has-changes");
+        countEl.textContent = count;
+      } else {
+        btn.classList.remove("has-changes");
+      }
+    }
+
+    document.getElementById("push-btn").addEventListener("click", showPreview);
+
+    async function loadPendingCount() {
+      try {
+        const res = await fetch("/api/pending");
+        const data = await res.json();
+        updatePushButton(data.count);
+      } catch (e) {
+        // Canvas may not be configured — ignore
+      }
+    }
+
+    async function showPreview() {
+      const overlay = document.getElementById("modal-overlay");
+      const body = document.getElementById("modal-body");
+      const footer = document.getElementById("modal-footer");
+
+      body.innerHTML = '<div style="text-align:center;color:var(--text-dim);padding:20px">Comparing with Canvas...</div>';
+      footer.innerHTML = '';
+      overlay.style.display = "flex";
+
+      try {
+        const res = await fetch("/api/canvas/preview", { method: "POST" });
+        const data = await res.json();
+
+        if (!data.ok) {
+          body.innerHTML = `<div style="color:var(--error);padding:8px">${data.error}</div>`;
+          footer.innerHTML = '<button type="button" class="btn-secondary" onclick="closeModal()">Close</button>';
+          return;
+        }
+
+        if (data.changes.length === 0) {
+          body.innerHTML = '<div style="color:var(--text-dim);padding:20px;text-align:center">No pending changes</div>';
+          footer.innerHTML = '<button type="button" class="btn-secondary" onclick="closeModal()">Close</button>';
+          return;
+        }
+
+        let html = '<table class="modal-table"><thead><tr>';
+        html += '<th>Assignment</th><th>Field</th><th>On Canvas</th><th>New value</th>';
+        html += '</tr></thead><tbody>';
+
+        for (const ch of data.changes) {
+          if (ch.error) {
+            html += `<tr class="conflict"><td colspan="4" style="color:var(--error)">${esc(ch.name)}: ${esc(ch.error)}</td></tr>`;
+            continue;
+          }
+          const cls = ch.conflict ? ' class="conflict"' : '';
+          const icon = ch.conflict ? ' <span title="Canvas value differs from baseline">⚠</span>' : '';
+          html += `<tr${cls}>`;
+          html += `<td>${esc(ch.name)}</td>`;
+          html += `<td>${esc(ch.column)}${icon}</td>`;
+          html += `<td>${fmtVal(ch.live)}</td>`;
+          html += `<td><strong>${fmtVal(ch.current)}</strong></td>`;
+          html += '</tr>';
+        }
+        html += '</tbody></table>';
+
+        if (data.has_conflicts) {
+          html += '<div class="conflict-warning">Some Canvas values differ from when you last pulled. Pushing will overwrite the current Canvas values.</div>';
+        }
+
+        body.innerHTML = html;
+
+        const pushable = data.changes.filter(c => !c.error).length;
+        footer.innerHTML = `
+          <button type="button" class="btn-secondary" onclick="closeModal()">Cancel</button>
+          <button type="button" class="btn-primary" id="apply-btn" onclick="applyChanges()" ${data.has_errors && pushable === 0 ? 'disabled' : ''}>
+            Push ${pushable} change${pushable !== 1 ? 's' : ''}
+          </button>
+        `;
+      } catch (err) {
+        body.innerHTML = `<div style="color:var(--error);padding:8px">Failed to preview: ${err.message}</div>`;
+        footer.innerHTML = '<button type="button" class="btn-secondary" onclick="closeModal()">Close</button>';
+      }
+    }
+
+    // biome-ignore lint/correctness/noUnusedVariables: called via onclick in dynamic HTML
+    async function applyChanges() {
+      const btn = document.getElementById("apply-btn");
+      if (btn) { btn.disabled = true; btn.textContent = "Pushing..."; }
+
+      try {
+        const res = await fetch("/api/canvas/apply", { method: "POST" });
+        const data = await res.json();
+
+        if (data.ok) {
+          closeModal();
+          updatePushButton(0);
+          setStatus("Pushed to Canvas", "sync-success", 6000);
+          if (currentTable) selectTable(currentTable);
+        } else {
+          // Partial failure — show results in modal
+          const body = document.getElementById("modal-body");
+          const succeeded = data.results.filter(r => r.ok).length;
+          const failed = data.results.filter(r => !r.ok).length;
+          let html = `<div style="margin-bottom:12px"><strong>${succeeded} pushed, ${failed} failed:</strong></div>`;
+          for (const r of data.results) {
+            if (r.ok) {
+              html += `<div style="color:var(--success);padding:2px 0">&#10003; Assignment ${r.canvas_id}</div>`;
+            } else {
+              html += `<div style="color:var(--error);padding:2px 0">&#10007; Assignment ${r.canvas_id}: ${esc(r.error)}</div>`;
+            }
+          }
+          body.innerHTML = html;
+          const footer = document.getElementById("modal-footer");
+          footer.innerHTML = '<button type="button" class="btn-secondary" onclick="closeModal()">Close</button>';
+          // Refresh pending count and show toolbar status
+          const pRes = await fetch("/api/pending");
+          const pData = await pRes.json();
+          updatePushButton(pData.count);
+          setStatus(`${failed} push failed`, "sync-error", 8000);
+        }
+      } catch (err) {
+        const body = document.getElementById("modal-body");
+        body.innerHTML = `<div style="color:var(--error);padding:8px">Push failed: ${err.message}</div>`;
+        const footer = document.getElementById("modal-footer");
+        footer.innerHTML = '<button type="button" class="btn-secondary" onclick="closeModal()">Close</button>';
+        setStatus("Push failed", "sync-error", 8000);
+      }
+    }
+
+    // ── Modal helpers ─────────────────────────────────────
+
+    function closeModal() {
+      document.getElementById("modal-overlay").style.display = "none";
+    }
+
+    document.getElementById("modal-close").addEventListener("click", closeModal);
+    document.getElementById("modal-overlay").addEventListener("click", (e) => {
+      if (e.target === e.currentTarget) closeModal();
+    });
+
+    function esc(str) {
+      if (str == null) return '';
+      const d = document.createElement("div");
+      d.textContent = String(str);
+      return d.innerHTML;
+    }
+
+    function fmtVal(val) {
+      if (val === null || val === undefined) return '<span style="color:var(--text-faint)">null</span>';
+      if (typeof val === 'boolean') return val ? 'Yes' : 'No';
+      const s = String(val);
+      return s.length > 40 ? `${esc(s.substring(0, 40))}...` : esc(s);
+    }
+
     // ── Status bar ────────────────────────────────────────
 
-    function setStatus(message, type) {
+    function setStatus(message, type, duration) {
       const el = document.getElementById("status");
       el.textContent = message;
       el.className = type || "";
+      el.style.opacity = "1";
       if (message) {
         setTimeout(() => {
           if (el.textContent === message) {
             el.style.opacity = "0";
             setTimeout(() => {
               el.textContent = "";
+              el.className = "";
               el.style.opacity = "1";
             }, 300);
           }
-        }, 3000);
+        }, duration || 3000);
       }
     }
 
@@ -701,6 +1121,8 @@
       document.getElementById("empty-state").innerHTML =
         `Failed to load tables: ${err.message}`;
     });
+
+    loadPendingCount();
   </script>
 </body>
 </html>

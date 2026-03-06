@@ -42,10 +42,18 @@ def fetch_students(course_id: int) -> list[CanvasStudent]:
         return c.list_students()
 
 
-def fetch_canvas_assignments(course_id: int) -> list:
-    """Fetch all assignments from Canvas (returns CanvasAssignment API types)."""
+def fetch_canvas_assignments(course_id: int) -> tuple[list, dict[int, str]]:
+    """Fetch all assignments and assignment group names from Canvas.
+
+    Returns:
+        Tuple of (assignments, group_names) where group_names maps
+        assignment_group_id to group name.
+    """
     with CanvasClient(course_id=course_id) as c:
-        return c.list_assignments()
+        assignments = c.list_assignments()
+        groups = c.list_assignment_groups()
+        group_names = {g.id: g.name for g in groups}
+        return assignments, group_names
 
 
 def fetch_canvas_submissions(

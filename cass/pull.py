@@ -117,8 +117,10 @@ async def pull_assignments(
     """Fetch assignments from Canvas and/or GitHub Classroom, merge to master table."""
     # Step 1: Canvas assignments (always present)
     console.print("[bold]Pulling assignments from Canvas...[/bold]")
-    canvas_assignments = canvas_mod.fetch_canvas_assignments(cfg.canvas_course_id)
-    db.save_canvas_assignments(canvas_assignments)
+    canvas_assignments, group_names = canvas_mod.fetch_canvas_assignments(
+        cfg.canvas_course_id
+    )
+    db.save_canvas_assignments(canvas_assignments, group_names=group_names)
     console.print(f"  Found {len(canvas_assignments)} Canvas assignments")
 
     # Step 2: GitHub assignments (if configured)
