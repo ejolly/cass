@@ -11,6 +11,7 @@ If you've used Tailwind, think of this as your `tailwind.config.js` theme —
 colors, spacing, and typography defined once and referenced everywhere.
 The difference: these are type-checked Elm values, not string class names.
 No `bg-blue-500` typos that silently fail.
+
 -}
 
 import Element exposing (Color, rgb255)
@@ -21,6 +22,7 @@ import Element.Font as Font
 
 Like a Tailwind `colors` config but as a typed record — you can't
 reference a color that doesn't exist.
+
 -}
 type alias Palette =
     { bg : Color
@@ -75,6 +77,7 @@ palette =
 
 Like Tailwind's `font-mono` utility, but as an Elm value you pass
 to `Font.family`.
+
 -}
 mono : List Font.Font
 mono =

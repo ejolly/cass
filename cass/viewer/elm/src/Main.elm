@@ -16,6 +16,7 @@ and ALL effects are returned as `Cmd` values from `update`. Nothing
 happens behind your back — every state transition is an explicit
 `case` branch. This makes debugging trivial: log any `Msg` and you
 can replay the entire app history.
+
 -}
 
 import Api
@@ -57,6 +58,7 @@ This is the heart of TEA. Each Msg variant maps to exactly one branch.
 In Svelte, these would be scattered across on:click handlers, store
 subscribers, and fetch callbacks. Here, they're all in one place —
 easy to read top-to-bottom and reason about.
+
 -}
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =

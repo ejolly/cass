@@ -60,7 +60,8 @@ sequence = [
     { cmd = "ruff format cass/ tests/" },
     { cmd = "ruff check cass/ tests/" },
     { cmd = "ty check" },
-    { shell = "npx --yes @biomejs/biome check --files-ignore-unknown=true cass/viewer/index.html cass/viewer/index_elm.html" },
+    { shell = "npx --yes @biomejs/biome check --files-ignore-unknown=true cass/viewer/index.html cass/viewer/index_classic.html" },
+    { cmd = "elm-format --validate cass/viewer/elm/src/" },
 ]
 
 [tool.poe.tasks.test]
@@ -76,8 +77,9 @@ help = "Live-preview API docs"
 cmd = "pdoc cass/ --docformat google"
 
 [tool.poe.tasks.elm-build]
-help = "Build the Elm viewer frontend"
+help = "Build the Elm viewer frontend (format + compile)"
 sequence = [
+    { cmd = "elm-format --yes src/", cwd = "cass/viewer/elm" },
     { cmd = "elm make src/Main.elm --optimize --output=elm.js", cwd = "cass/viewer/elm" },
     { cmd = "cp cass/viewer/elm/elm.js cass/viewer/elm.js" },
 ]
