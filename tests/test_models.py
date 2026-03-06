@@ -12,12 +12,12 @@ from cass.models import (
 )
 from cass.models.grading import format_lateness
 
-
 # --- compute_gh_grade ---
 
 
 @pytest.mark.parametrize(
-    "submitted, late, lateness_seconds, commits_after_deadline, expected_grade, expected_numeric",
+    "submitted, late, lateness_seconds, commits_after_deadline, "
+    "expected_grade, expected_numeric",
     [
         # not submitted
         (False, False, 0, 0, "0", 0.0),

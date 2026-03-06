@@ -104,7 +104,8 @@ def _load_config() -> Config:
 
     if not has_cc and not has_cv:
         raise SystemExit(
-            f"Invalid config: {path} must have at least a [classroom] or [canvas] section."
+            f"Invalid config: {path} must have at least a "
+            "[classroom] or [canvas] section."
         )
 
     # Parse [[canvas.modules]] and [[canvas.assignments]] if present

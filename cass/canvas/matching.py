@@ -12,7 +12,6 @@ __docformat__ = "google"
 import re
 from datetime import datetime
 
-from .client import CanvasClient, get_token, save_token
 from ..models import (
     CanvasAssignment,
     CanvasStudent,
@@ -20,18 +19,19 @@ from ..models import (
     GHStudentInfo,
     MatchResult,
 )
+from .client import CanvasClient, get_token, save_token
 
 # Re-export for backwards compatibility (used by cli.py init)
 __all__ = [
-    "get_token",
-    "save_token",
-    "fetch_students",
-    "fetch_students_with_sections",
     "fetch_canvas_assignments",
     "fetch_canvas_submissions",
-    "push_grade",
-    "match_students",
+    "fetch_students",
+    "fetch_students_with_sections",
     "find_candidates",
+    "get_token",
+    "match_students",
+    "push_grade",
+    "save_token",
 ]
 
 
@@ -126,9 +126,7 @@ def fetch_canvas_submissions(
         submitted_at = None
         if r.submitted_at:
             try:
-                submitted_at = datetime.fromisoformat(
-                    r.submitted_at.replace("Z", "+00:00")
-                )
+                submitted_at = datetime.fromisoformat(r.submitted_at)
             except ValueError:
                 pass
 

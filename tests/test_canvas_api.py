@@ -19,7 +19,6 @@ from cass.models.canvas_api import (
     CanvasUser,
 )
 
-
 # --- Model decoding tests ---
 
 
@@ -431,7 +430,10 @@ class TestCanvasClient:
         transport.add(
             json_data=[{"id": 1, "name": "M1", "position": 1}],
             headers={
-                "link": '<https://canvas.example.com/api/v1/courses/1/modules?page=2&per_page=100>; rel="next"'
+                "link": (
+                    "<https://canvas.example.com/api/v1/courses/1"
+                    '/modules?page=2&per_page=100>; rel="next"'
+                )
             },
         )
         # Page 2 with no next link
@@ -443,7 +445,7 @@ class TestCanvasClient:
         assert len(transport.requests) == 2
 
     def test_context_manager(self, mock_client):
-        client, transport = mock_client
+        client, _transport = mock_client
         with client:
             assert not client._http.is_closed
         assert client._http.is_closed

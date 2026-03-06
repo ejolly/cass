@@ -85,7 +85,8 @@ async def pull_students(
             # Interactive resolution for remaining unmatched
             if result.unmatched_gh and result.unmatched_canvas:
                 console.print(
-                    f"\n  [yellow]{len(result.unmatched_gh)} unmatched GitHub student(s)[/yellow]"
+                    f"\n  [yellow]{len(result.unmatched_gh)} "
+                    "unmatched GitHub student(s)[/yellow]"
                 )
                 unmatched_canvas = list(result.unmatched_canvas)
                 for gh_s in result.unmatched_gh:
@@ -149,18 +150,18 @@ async def pull_assignments(
     existing_master = {a.slug: a for a in db.load_assignments()}
 
     # Build canvas assignment lookup by slug
-    from .canvas.matching import slugify as _slugify
+    from .canvas.matching import slugify
 
     canvas_by_slug: dict[str, CanvasAssignment] = {}
     for ca in canvas_assignments:
-        canvas_by_slug[_slugify(ca.name)] = ca
+        canvas_by_slug[slugify(ca.name)] = ca
 
     master: list[Assignment] = []
 
     # Start from Canvas assignments as the base
     used_gh_slugs: set[str] = set()
     for ca in canvas_assignments:
-        slug = _slugify(ca.name)
+        slug = slugify(ca.name)
 
         # Check if there's an existing mapping to preserve
         if slug in existing_master:
@@ -182,7 +183,7 @@ async def pull_assignments(
         deadline = None
         if ca.due_at:
             try:
-                deadline = datetime.fromisoformat(ca.due_at.replace("Z", "+00:00"))
+                deadline = datetime.fromisoformat(ca.due_at)
             except ValueError:
                 pass
 
@@ -205,9 +206,7 @@ async def pull_assignments(
             deadline = None
             if ga.deadline:
                 try:
-                    deadline = datetime.fromisoformat(
-                        ga.deadline.replace("Z", "+00:00")
-                    )
+                    deadline = datetime.fromisoformat(ga.deadline)
                 except ValueError:
                     pass
             master.append(

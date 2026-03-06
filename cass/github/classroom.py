@@ -14,9 +14,7 @@ from typing import TypedDict
 
 import msgspec
 
-from . import gh
 from ..config import get_config
-from .client import GitHubClient
 from ..models import (
     GHAcceptedAssignment,
     GHAssignment,
@@ -26,6 +24,8 @@ from ..models import (
     GHSubmission,
     Student,
 )
+from . import gh
+from .client import GitHubClient
 
 
 class _RepoInfo(TypedDict):
@@ -191,7 +191,7 @@ async def fetch_submissions(
                     late = True
                     date_str = after[0].commit.committer.date
                     if date_str:
-                        dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+                        dt = datetime.fromisoformat(date_str)
                         delta = dt - assignment_deadline
                         lateness_seconds = max(0, int(delta.total_seconds()))
         else:

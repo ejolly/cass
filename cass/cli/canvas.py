@@ -55,9 +55,9 @@ def _require_canvas() -> None:
 
 
 def _client() -> CanvasClient:
-    from ..canvas.client import CanvasClient as _CanvasClient
+    from ..canvas.client import CanvasClient
 
-    return _CanvasClient()
+    return CanvasClient()
 
 
 # ---------------------------------------------------------------------------
@@ -585,8 +585,9 @@ def files(
     save: str = typer.Option("", "--save", help="Save output as markdown file"),
 ) -> None:
     """Show course files as a tree."""
-    from . import report
     from rich.tree import Tree
+
+    from . import report
 
     _require_canvas()
     with _client() as c:
@@ -832,7 +833,8 @@ def sync(
 
     if not cfg.canvas_modules and not cfg.canvas_assignments:
         console.print(
-            "[yellow]No [[canvas.modules]] or [[canvas.assignments]] in cass.toml.[/yellow]"
+            "[yellow]No [[canvas.modules]] or "
+            "[[canvas.assignments]] in cass.toml.[/yellow]"
         )
         return
 

@@ -36,7 +36,7 @@ def score_to_letter(pct: float | None, scheme: list[CanvasGradingSchemeEntry]) -
     this letter."
 
     Args:
-        pct: Percentage score (0–100), or None for missing.
+        pct: Percentage score (0-100), or None for missing.
         scheme: Grading scheme entries (will be sorted internally).
 
     Returns:
@@ -87,8 +87,8 @@ def generate_egrades(
     Raises:
         RuntimeError: If no grading standard is configured or no students found.
     """
-    from .client import CanvasClient
     from ..db import get_db
+    from .client import CanvasClient
 
     path = Path(output)
 

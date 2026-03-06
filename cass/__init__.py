@@ -1,7 +1,8 @@
 """cass — Classroom Assignment Grading CLI.
 
-A CLI toolkit for grading assignments with **GitHub Classroom**, **Canvas LMS**, or both.
-Data is stored in a per-project DuckDB database (`cass.duckdb`).
+A CLI toolkit for grading assignments with **GitHub Classroom**,
+**Canvas LMS**, or both.  Data is stored in a per-project DuckDB
+database (`cass.duckdb`).
 
 Install: `uv tool install cass` or `uvx cass`.
 

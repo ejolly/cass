@@ -79,9 +79,7 @@ class GitHubClient:
                 if m := _LINK_NEXT_RE.search(link):
                     next_url = m.group(1)
                     base = str(self._client.base_url)
-                    url = (
-                        next_url[len(base) :] if next_url.startswith(base) else next_url
-                    )
+                    url = next_url.removeprefix(base)
             return results
 
     async def get_cached(
