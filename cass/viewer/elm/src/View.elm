@@ -57,7 +57,7 @@ view : Model -> Html.Html Msg
 view model =
     let
         p =
-            Theme.palette
+            Theme.paletteFor model.darkMode
     in
     layout
         [ width fill
@@ -1057,20 +1057,36 @@ The grid library needs its dimensions at init time (like AG Grid's
 `domLayout` or `containerStyle` props in the JS world).
 
 -}
-initGrid : List String -> List String -> String -> List String -> List Row -> Grid.Model Row
-initGrid colNames colTypes tableName primaryKeys rows =
+initGrid : List String -> List String -> String -> List String -> List Row -> Model -> Grid.Model Row
+initGrid colNames colTypes tableName primaryKeys rows model =
     let
         columns =
-            buildGridColumns colNames colTypes tableName primaryKeys
+            buildGridColumns colNames colTypes tableName primaryKeys gridWidth
+
+        -- Subtract sidebar width from viewport
+        sidebarW =
+            if model.sidebarCollapsed then
+                0
+
+            else
+                Theme.sidebarWidth
+
+        gridWidth =
+            model.windowWidth - sidebarW
+
+        -- containerHeight is the grid BODY height (excludes header).
+        -- Available = viewport - toolbar(44px) - grid header(36px)
+        gridHeight =
+            model.windowHeight - 44 - 36
 
         gridConfig : Grid.Config Row
         gridConfig =
             { canSelectRows = False
             , columns = columns
-            , containerHeight = 800
-            , containerWidth = 1200
+            , containerHeight = gridHeight
+            , containerWidth = gridWidth
             , hasFilters = True
-            , headerHeight = 60
+            , headerHeight = 36
             , lineHeight = 32
             , rowClass =
                 \item ->
@@ -1089,8 +1105,8 @@ initGrid colNames colTypes tableName primaryKeys rows =
     Grid.init gridConfig rows
 
 
-buildGridColumns : List String -> List String -> String -> List String -> List (ColumnConfig Row)
-buildGridColumns colNames colTypes tableName primaryKeys =
+buildGridColumns : List String -> List String -> String -> List String -> Int -> List (ColumnConfig Row)
+buildGridColumns colNames colTypes tableName primaryKeys containerWidth =
     let
         displayedCols =
             getDisplayedColumns tableName colNames
@@ -1098,13 +1114,32 @@ buildGridColumns colNames colTypes tableName primaryKeys =
         colTypeMap =
             List.map2 Tuple.pair colNames colTypes
                 |> Dict.fromList
+
+        -- Compute base widths first, then scale to fill container
+        baseWidths =
+            List.map
+                (\colName ->
+                    let
+                        colType =
+                            Dict.get colName colTypeMap |> Maybe.withDefault "VARCHAR"
+                    in
+                    ( colName, estimateWidth colName colType )
+                )
+                displayedCols
+
+        totalBase =
+            List.foldl (\( _, w ) acc -> acc + w) 0 baseWidths
+
+        scale =
+            if totalBase > 0 && containerWidth > totalBase then
+                toFloat containerWidth / toFloat totalBase
+
+            else
+                1.0
     in
     List.map
-        (\colName ->
+        (\( colName, baseW ) ->
             let
-                colType =
-                    Dict.get colName colTypeMap |> Maybe.withDefault "VARCHAR"
-
                 isPK =
                     List.member colName primaryKeys
 
@@ -1115,8 +1150,11 @@ buildGridColumns colNames colTypes tableName primaryKeys =
                     else
                         colName
 
+                colType =
+                    Dict.get colName colTypeMap |> Maybe.withDefault "VARCHAR"
+
                 w =
-                    estimateWidth colName colType
+                    round (toFloat baseW * scale)
             in
             Grid.stringColumnConfig
                 { id = colName
@@ -1127,7 +1165,7 @@ buildGridColumns colNames colTypes tableName primaryKeys =
                 , width = w
                 }
         )
-        displayedCols
+        baseWidths
 
 
 estimateWidth : String -> String -> Int
