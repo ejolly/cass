@@ -52,6 +52,30 @@ course_id = 72335
 
 For Canvas, provide your API token via a `canvas-token.txt` file in the project root or the `CANVAS_TOKEN` environment variable.
 
+## Configuration (advanced)
+
+Declare Canvas modules and assignments in `cass.toml` for declarative sync:
+
+```toml
+[[canvas.modules]]
+name = "Week 1"
+published = false
+
+[[canvas.modules]]
+name = "Week 2"
+published = true
+
+[[canvas.assignments]]
+name = "HW1"
+points = 10
+submission_types = ["online_url"]
+due_at = "2026-01-20T23:59:59-08:00"
+published = true
+group = "Homework"
+```
+
+Run `cass canvas sync --dry-run` to preview changes, then `cass canvas sync --apply` to push to Canvas.
+
 ## Commands
 
 ### Pull data
@@ -94,6 +118,30 @@ cass grades push --post       # actually push grades
 ```bash
 cass fetch hw-01              # download student files for an assignment
 cass fetch all --force        # re-download everything
+```
+
+### Canvas management
+
+```bash
+cass canvas                   # course overview with resource counts
+cass canvas people            # enrolled students
+cass canvas modules           # list modules
+cass canvas modules 123       # module detail with items
+cass canvas modules create "Week 3"  # create a module
+cass canvas modules publish 123      # publish a module
+cass canvas modules add-item 123 --page "Welcome"  # add item to module
+cass canvas assignments              # list assignments
+cass canvas assignments 456          # assignment detail
+cass canvas assignments groups       # assignment groups
+cass canvas assignments create "HW2" --points 10
+cass canvas quizzes                  # list quizzes
+cass canvas files                    # file tree
+cass canvas upload ./file.pdf        # upload a file
+cass canvas announcements            # list announcements
+cass canvas announce "Title" "Body"  # post announcement
+cass canvas tabs                     # list navigation tabs
+cass canvas sync --dry-run           # preview config-as-data sync
+cass canvas sync --apply             # apply config-as-data sync
 ```
 
 ### Database tools
@@ -157,10 +205,12 @@ When both `[classroom]` and `[canvas]` are configured, `cass pull` will:
 | Module | Purpose |
 |--------|---------|
 | `cli.py` | Typer CLI — all commands, flags, and output |
-| `config.py` | Config discovery (`cass.toml`), prerequisite checks |
+| `cli_canvas.py` | `cass canvas` subcommands — browse and modify Canvas course content |
+| `config.py` | Config discovery (`cass.toml`), prerequisite checks, config-as-data specs |
 | `pull.py` | Orchestrates the students → assignments → submissions → grades pipeline |
 | `classroom.py` | GitHub Classroom API — async with parallel per-student fetching |
-| `canvas.py` | Canvas LMS API — httpx client, roster matching, grade sync |
+| `canvas.py` | Canvas business logic — roster matching, name normalization, grade sync |
+| `canvas_api.py` | Canvas HTTP client — typed `CanvasClient`, retry transport, token management |
 | `github_client.py` | Async httpx GitHub API client with caching and concurrency control |
 | `gh.py` | Subprocess wrapper for `gh api` (used by fetch.py) |
 | `db.py` | DuckDB database — schema, CRUD, cache, raw queries |

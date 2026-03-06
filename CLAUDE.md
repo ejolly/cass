@@ -35,6 +35,19 @@ base_url = "https://canvas.ucsd.edu"
 course_id = 72335
 
 # Both sections = combined mode (GH + Canvas matching, grade sync)
+
+# Optional: declare modules/assignments for config-as-data sync
+[[canvas.modules]]
+name = "Week 1"
+published = true
+
+[[canvas.assignments]]
+name = "HW1"
+points = 10
+submission_types = ["online_url"]
+due_at = "2026-01-20T23:59:59-08:00"
+published = true
+group = "Homework"
 ```
 
 ---
@@ -71,6 +84,23 @@ cass export grades --csv grades.csv       # export table to CSV
 cass export students --md roster.md       # export table to markdown
 cass import grades.csv                    # import CSV into DB (auto-detects table)
 cass import data.csv --table students     # import with explicit table target
+cass canvas                               # course overview with resource counts
+cass canvas people                        # enrolled students
+cass canvas modules                       # list modules (with items)
+cass canvas modules create "Week 3"       # create a module
+cass canvas modules publish 123           # publish/unpublish/delete a module
+cass canvas modules add-item 123 --page "Welcome"  # add item to module
+cass canvas assignments                   # list assignments
+cass canvas assignments groups            # assignment groups
+cass canvas assignments create "HW2" --points 10
+cass canvas quizzes                       # list/create/publish/delete quizzes
+cass canvas files                         # file tree
+cass canvas upload ./file.pdf             # upload a file
+cass canvas announcements                 # list announcements
+cass canvas announce "Title" "Body"       # post announcement
+cass canvas tabs                          # list navigation tabs
+cass canvas sync --dry-run                # preview config-as-data sync
+cass canvas sync --apply                  # apply config-as-data sync
 ```
 
 ### Common flags on view commands
@@ -94,12 +124,14 @@ Python package (`cass/`) with Typer CLI, DuckDB storage, msgspec models, and Ric
 | `cass/models/` | msgspec.Struct types split into domain.py, github_api.py, canvas_api.py, grading.py |
 | `cass/config.py` | Config discovery (finds `cass.toml`), `has_classroom`/`has_canvas` properties |
 | `cass/cli.py` | Typer app (status, init, students, assignments, submissions, grades, fetch, query, db, export, import) |
+| `cass/cli_canvas.py` | `cass canvas` subcommands: browse and modify Canvas course content |
 | `cass/github_client.py` | Async httpx GitHub API client with caching and concurrency control |
 | `cass/pull.py` | Pull orchestration: students, assignments, submissions, grades, fetch phases |
 | `cass/db.py` | DuckDB database: schema, CRUD for all models, cache, raw query |
 | `cass/gh.py` | Subprocess wrapper for `gh api` with inline cache |
 | `cass/classroom.py` | GH Classroom API: typed response structs, assignments, submissions, student discovery |
-| `cass/canvas.py` | Canvas LMS: httpx client, assignments, submissions, student matching, grade push |
+| `cass/canvas.py` | Canvas business logic: roster matching, name normalization, grade sync |
+| `cass/canvas_api.py` | Canvas HTTP client: typed `CanvasClient`, retry transport, token management |
 | `cass/fetch.py` | Download student files from repos |
 | `cass/report.py` | Rich tables, CSV, markdown output formatting |
 
@@ -138,7 +170,9 @@ Prefer `duckdb` CLI over Python for quick inspection, ad-hoc queries, and data c
 3. `cass students/assignments/submissions/grades` → read from DB, display as Rich tables
 4. `cass grades push` → sync grades to Canvas
 5. `cass fetch` → download student files from GitHub repos
-6. `cass query` → direct DuckDB access for custom analysis
+6. `cass canvas` → browse and modify Canvas course content (modules, assignments, quizzes, files, etc.)
+7. `cass canvas sync` → reconcile `cass.toml` declarations with Canvas (config-as-data)
+8. `cass query` → direct DuckDB access for custom analysis
 
 ---
 
@@ -223,7 +257,7 @@ Every `.py` file follows this order:
 
 ### CLI patterns
 - **Lazy imports** inside command functions to keep startup fast
-- Typer sub-apps for grouped commands (`grades_app`, `db_app`)
+- Typer sub-apps for grouped commands (`grades_app`, `db_app`, `canvas_app` with nested `modules_app`, `assignments_app`, `quizzes_app`)
 - Rich markup for console output: `[bold]`, `[red]`, `[green]`, `[dim]`, `[yellow]`
 - `--where` flags include inline examples in help text
 
@@ -261,24 +295,17 @@ Both must pass clean.
 Project: **cass** — [linear.app/ejolly/project/cass-bd5285c72a0c](https://linear.app/ejolly/project/cass-bd5285c72a0c)
 Team: **Ejolly** (EJO). Issues are prefixed `EJO-NNN`.
 
-### Active issues
+### Completed issues
 
-| Issue | Title | Priority | Dependencies |
-|-------|-------|----------|------------|
+| Issue | Title | Priority | Status |
+|-------|-------|----------|--------|
 | EJO-319 | Refactor data models: human-readable, self-documenting API + domain types | Urgent | Done |
 | EJO-320 | Data storage & collaboration: single .db as git-shared source of truth | Urgent | Done |
-| EJO-321 | User-friendly CLI commands for common data operations | High | Blocked by 319, 320 |
+| EJO-321 | User-friendly CLI commands for common data operations | High | Done |
 | EJO-322 | Canvas API compliance: User-Agent, rate limiting, 429 retry | High | Done |
 | EJO-323 | Documentation: README, CLI help, Google-style docstrings, pdoc | Medium | Done |
 | EJO-324 | Recommend Dataflare as interactive DB viewer/editor + CLI launcher | Low | Done |
-
-Execution order:
-```
-EJO-319 (models) ──→ EJO-320 (storage) ──→ EJO-321 (CLI commands)
-                                        ──→ EJO-323 (docs)
-EJO-322 (Canvas API) — anytime, independent
-EJO-324 (Dataflare)  — anytime, independent (small standalone PR)
-```
+| EJO-325 | Canvas API layer: typed client, CLI subcommands, config-as-data | High | Done |
 
 ### Linear CLI essentials
 
