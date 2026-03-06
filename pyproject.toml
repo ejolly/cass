@@ -54,11 +54,12 @@ packages = ["cass"]
 cass = "cass.cli:app"
 
 [tool.poe.tasks.lint]
-help = "Format, lint, and type check"
+help = "Format, lint, and type check (Python + viewer)"
 sequence = [
     { cmd = "ruff format cass/ tests/" },
     { cmd = "ruff check cass/ tests/" },
     { cmd = "ty check" },
+    { shell = "npx --yes @biomejs/biome check cass/viewer/" },
 ]
 
 [tool.poe.tasks.test]

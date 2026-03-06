@@ -14,7 +14,7 @@ from cass.viewer import ViewerHandler, _get_schema, _get_table_names, _get_table
 
 @pytest.fixture
 def viewer_conn():
-    """In-memory DuckDB with test tables and a view."""
+    """In-memory DuckDB with test tables (including one without a PK)."""
     conn = duckdb.connect(":memory:")
     conn.execute(
         "CREATE TABLE students ("
@@ -32,7 +32,7 @@ def viewer_conn():
         ")"
     )
     conn.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)")
-    conn.execute("CREATE VIEW v_grades AS SELECT canvas_id, name FROM students")
+    conn.execute("CREATE TABLE logs (message TEXT, ts DOUBLE)")
     conn.execute(
         "INSERT INTO students VALUES (100, 'Alice Smith', 'alice@test.edu', false)"
     )
@@ -87,14 +87,14 @@ def test_get_tables_excludes_meta(viewer_conn):
     assert "meta" not in names
     assert "students" in names
     assert "assignments" in names
-    assert "v_grades" in names
+    assert "logs" in names
 
 
 def test_get_tables_types(viewer_conn):
     tables = _get_tables(viewer_conn)
     by_name = {t["name"]: t["type"] for t in tables}
     assert by_name["students"] == "table"
-    assert by_name["v_grades"] == "view"
+    assert by_name["logs"] == "table"
 
 
 def test_get_table_names(viewer_conn):
@@ -114,8 +114,9 @@ def test_get_schema_table(viewer_conn):
     assert "name" in col_names
 
 
-def test_get_schema_view(viewer_conn):
-    schema = _get_schema(viewer_conn, "v_grades")
+def test_get_schema_no_pk(viewer_conn):
+    """Tables without a primary key are not editable."""
+    schema = _get_schema(viewer_conn, "logs")
     assert schema["editable"] is False
     assert schema["primary_keys"] == []
 
@@ -171,13 +172,14 @@ def test_update_cell(server):
     assert alice_row[data["columns"].index("name")] == "Alice B. Smith"
 
 
-def test_update_rejects_views(server):
+def test_update_rejects_no_pk_table(server):
+    """Tables without primary keys reject edits."""
     status, result = _post(
         server,
-        "/api/update/v_grades",
+        "/api/update/logs",
         {
-            "pk": {"canvas_id": 100},
-            "column": "name",
+            "pk": {},
+            "column": "message",
             "value": "test",
         },
     )

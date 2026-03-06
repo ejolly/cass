@@ -401,7 +401,7 @@ def submissions(
     ),
     csv_out: str = typer.Option("", "--csv", help="Export as CSV file"),
 ) -> None:
-    """View submission status via the unified v_submissions view."""
+    """View submission status from source tables."""
     from . import db, report
 
     conn = db.get_db()
@@ -413,9 +413,21 @@ def submissions(
     where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
     result = conn.sql(
-        f"SELECT student, assignment, source, submitted, late, "
-        f"lateness_seconds, repo_name, commits_after_deadline, score, workflow_state "
-        f"FROM v_submissions {where_clause} ORDER BY assignment, student"
+        f"SELECT * FROM ("
+        f"  SELECT s.name AS student, a.slug AS assignment, 'github' AS source,"
+        f"    gs.submitted, gs.late, gs.lateness_seconds,"
+        f"    gs.repo_name, gs.commits_after_deadline, gs.commit_count"
+        f"  FROM gh_submissions gs"
+        f"  JOIN students s ON s.github_username = gs.github_username"
+        f"  JOIN assignments a ON a.gh_assignment_slug = gs.assignment_slug"
+        f"  UNION ALL"
+        f"  SELECT s.name AS student, a.slug AS assignment, 'canvas' AS source,"
+        f"    cs.submitted, cs.late, cs.lateness_seconds,"
+        f"    '' AS repo_name, 0 AS commits_after_deadline, 0 AS commit_count"
+        f"  FROM canvas_submissions cs"
+        f"  JOIN students s ON s.canvas_id = cs.canvas_user_id"
+        f"  JOIN assignments a ON a.canvas_assignment_id = cs.canvas_assignment_id"
+        f") sub {where_clause} ORDER BY assignment, student"
     )
 
     if csv_out:
@@ -449,7 +461,11 @@ def grades_callback(
     conn = db.get_db()
     try:
         rows = conn.execute(
-            "SELECT student, assignment, display_grade FROM v_grades"
+            "SELECT s.name AS student, a.slug AS assignment,"
+            "  cg.posted_grade AS display_grade"
+            " FROM canvas_grades cg"
+            " JOIN students s ON s.canvas_id = cg.canvas_user_id"
+            " JOIN assignments a ON a.canvas_assignment_id = cg.canvas_assignment_id"
         ).fetchall()
     except Exception:
         console.print("[yellow]No grades. Run [bold]cass pull[/bold] first.[/yellow]")
@@ -785,7 +801,7 @@ def _run_repl() -> None:
     if shutil.which("duckdb"):
         console.print(f"[bold]cass DuckDB REPL[/bold] — {db_file}")
         console.print(f"Tables: {tables}")
-        console.print("Views: v_submissions, v_grades")
+
         console.print("Type .quit to exit\n")
         subprocess.run(["duckdb", db_file])
         return
