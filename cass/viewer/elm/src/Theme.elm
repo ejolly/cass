@@ -2,6 +2,7 @@ module Theme exposing
     ( Palette
     , mono
     , palette
+    , paletteFor
     , sidebarWidth
     )
 
@@ -47,7 +48,18 @@ type alias Palette =
     }
 
 
-{-| Default palette matching the original viewer CSS variables.
+{-| Select palette based on dark mode preference.
+-}
+paletteFor : Bool -> Palette
+paletteFor darkMode =
+    if darkMode then
+        darkPalette
+
+    else
+        palette
+
+
+{-| Light palette matching the original viewer CSS variables.
 -}
 palette : Palette
 palette =
@@ -70,6 +82,32 @@ palette =
     , white = rgb255 255 255 255
     , editableBg = rgb255 220 252 231
     , editableText = rgb255 22 101 52
+    }
+
+
+{-| Dark palette matching the classic viewer's dark CSS variables.
+-}
+darkPalette : Palette
+darkPalette =
+    { bg = rgb255 26 26 26
+    , sidebarBg = rgb255 34 34 34
+    , sidebarActive = rgb255 51 51 51
+    , sidebarHover = rgb255 42 42 42
+    , text = rgb255 229 229 229
+    , textDim = rgb255 119 119 119
+    , textFaint = rgb255 85 85 85
+    , border = rgb255 51 51 51
+    , accent = rgb255 96 165 250
+    , accentLight = rgb255 30 58 95
+    , success = rgb255 74 222 128
+    , error = rgb255 248 113 113
+    , inputBg = rgb255 42 42 42
+    , inputBorder = rgb255 68 68 68
+    , badgeBg = rgb255 55 65 81
+    , badgeText = rgb255 156 163 175
+    , white = rgb255 255 255 255
+    , editableBg = rgb255 20 83 45
+    , editableText = rgb255 134 239 172
     }
 
 

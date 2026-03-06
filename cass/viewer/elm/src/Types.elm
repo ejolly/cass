@@ -2,6 +2,7 @@ module Types exposing
     ( CanvasChange
     , ColumnSchema
     , EditState
+    , Flags
     , ModalState(..)
     , Model
     , Msg(..)
@@ -201,6 +202,15 @@ type ModalState
     | ModalError String
 
 
+{-| Flags passed from JavaScript at init time.
+-}
+type alias Flags =
+    { darkMode : Bool
+    , width : Int
+    , height : Int
+    }
+
+
 type alias Model =
     { tables : List TableInfo
     , selectedTable : Maybe String
@@ -217,6 +227,9 @@ type alias Model =
     , filteredRowCount : Int
     , editing : Maybe EditState
     , modal : ModalState
+    , darkMode : Bool
+    , windowWidth : Int
+    , windowHeight : Int
     }
 
 

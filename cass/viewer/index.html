@@ -20,6 +20,8 @@
      * with no CSS needed.
      */
 
+    /* ── Light mode grid overrides ─────────────── */
+
     /* Header bar */
     #_header_-_container_ {
       background-color: #f0f0f0 !important;
@@ -46,19 +48,9 @@
       fill: #888 !important;
     }
 
-    /* Filter inputs */
-    #_header_-_container_ input {
-      background-color: #fff !important;
-      color: #1a1a1a !important;
-      border: 1px solid #ccc !important;
-      border-radius: 3px;
-      padding: 2px 4px;
-      font-size: 12px;
-    }
-
-    #_header_-_container_ input:focus {
-      border-color: #2563eb !important;
-      outline: none;
+    /* Hide per-column filter inputs (grid library always renders them) */
+    [data-testid^="filter-"] {
+      display: none !important;
     }
 
     /* Data cells */
@@ -86,13 +78,62 @@
     .unpublished-row {
       opacity: 0.45;
     }
+
+    /* ── Dark mode grid overrides ──────────────── */
+
+    @media (prefers-color-scheme: dark) {
+      #_header_-_container_ {
+        background-color: #222 !important;
+        border-bottom: 1px solid #333;
+      }
+
+      #_header_-_container_ > div {
+        background-image: none !important;
+        background-color: #222 !important;
+        border-color: #333 !important;
+        color: #e5e5e5 !important;
+      }
+
+      #_header_-_container_ span {
+        color: #e5e5e5 !important;
+      }
+
+      #_header_-_container_ svg {
+        fill: #777 !important;
+      }
+
+      [data-testid="row"] > div {
+        border-color: #333 !important;
+        color: #e5e5e5;
+      }
+
+      [data-testid="row"]:nth-child(even) {
+        background-color: #222;
+      }
+
+      [data-testid^="dragHandle-"] div div {
+        background-color: #555 !important;
+      }
+
+      [data-testid^="dragHandle-"] ~ div div {
+        background-color: #555 !important;
+      }
+    }
   </style>
 </head>
 <body>
   <div id="elm-app"></div>
   <script src="/elm.js"></script>
   <script>
-    var app = Elm.Main.init({ node: document.getElementById("elm-app") });
+    var isDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    var app = Elm.Main.init({
+      node: document.getElementById("elm-app"),
+      flags: {
+        darkMode: isDark,
+        width: window.innerWidth,
+        height: window.innerHeight
+      }
+    });
 
     // Port: CSV file download
     app.ports.downloadCsv.subscribe((data) => {

@@ -52,7 +52,7 @@ Port-compatible: uses a plain JS object (decoded as Json.Decode.Value).
 port cellClicked : (D.Value -> msg) -> Sub msg
 
 
-main : Program () Model Msg
+main : Program Flags Model Msg
 main =
     Browser.element
         { init = init
@@ -67,8 +67,8 @@ subscriptions _ =
     cellClicked CellClickedRaw
 
 
-init : () -> ( Model, Cmd Msg )
-init _ =
+init : Flags -> ( Model, Cmd Msg )
+init flags =
     ( { tables = []
       , selectedTable = Nothing
       , schema = Nothing
@@ -84,6 +84,9 @@ init _ =
       , filteredRowCount = 0
       , editing = Nothing
       , modal = ModalClosed
+      , darkMode = flags.darkMode
+      , windowWidth = flags.width
+      , windowHeight = flags.height
       }
     , Cmd.batch [ Api.fetchTables, Api.fetchPending ]
     )
@@ -142,7 +145,7 @@ update msg model =
                             Api.parseRows tableData
 
                         gridModel =
-                            View.initGrid tableData.columns tableData.types name schema.primaryKeys rows
+                            View.initGrid tableData.columns tableData.types name schema.primaryKeys rows model
                     in
                     ( { model
                         | selectedTable = Just name
@@ -191,7 +194,7 @@ update msg model =
                 newGridModel =
                     case model.selectedTable of
                         Just tableName ->
-                            Just (View.initGrid model.columnNames model.columnTypes tableName primaryKeys filtered)
+                            Just (View.initGrid model.columnNames model.columnTypes tableName primaryKeys filtered model)
 
                         Nothing ->
                             model.gridModel
