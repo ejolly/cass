@@ -1,151 +1,197 @@
 <script lang="ts">
-  import {
-    type ColumnDef,
-    type SortingState,
-    getCoreRowModel,
-    getSortedRowModel,
-  } from "@tanstack/table-core";
-  import { createSvelteTable, FlexRender } from "$lib/components/ui/data-table/index.js";
-  import * as Table from "$lib/components/ui/table/index.js";
-  import { app } from "$lib/state.svelte.js";
+  import { app, setStatus } from "$lib/state.svelte.js";
   import { classifyTable, type Row } from "$lib/types.js";
-  import { getDisplayedColumns, estimateColumnWidth } from "$lib/columns.js";
-  import { cn } from "$lib/utils.js";
+  import { getDisplayedColumns } from "$lib/columns.js";
+  import * as api from "$lib/api.js";
 
-  let sorting = $state<SortingState>([]);
+  let sortCol = $state<string | null>(null);
+  let sortDir = $state<"asc" | "desc">("asc");
 
   const displayedCols = $derived(
     app.selectedTable
       ? getDisplayedColumns(app.selectedTable, app.columnNames)
-      : app.columnNames
+      : app.columnNames,
   );
 
-  /** Build a map from column name to its DuckDB type. */
-  const colTypeMap = $derived(
-    Object.fromEntries(
-      app.columnNames.map((name, i) => [name, app.columnTypes[i] ?? "VARCHAR"])
-    )
-  );
-
-  /** TanStack column definitions, built from current table metadata. */
-  const columns: ColumnDef<Row>[] = $derived(
-    displayedCols.map((colName) => {
-      const isPK = app.schema?.primary_keys.includes(colName) ?? false;
-      return {
-        accessorFn: (row: Row) => row[colName] ?? "",
-        id: colName,
-        header: isPK ? `${colName} (PK)` : colName,
-        meta: { colType: colTypeMap[colName] ?? "VARCHAR" },
-      } satisfies ColumnDef<Row>;
-    })
-  );
-
-  const table = createSvelteTable({
-    get data() { return app.rows; },
-    get columns() { return columns; },
-    getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    onSortingChange: (updater) => {
-      sorting = typeof updater === "function" ? updater(sorting) : updater;
-    },
-    state: {
-      get sorting() { return sorting; },
-    },
-  });
-
-  /** Check if the current table + schema allows editing. */
   const effectiveEditable = $derived(
     app.schema?.editable && app.selectedTable
       ? classifyTable(app.selectedTable) !== "combined"
-      : false
+      : false,
   );
 
-  /** Handle cell double-click for editing. */
-  function handleCellDblClick(colName: string, row: Row) {
-    if (!effectiveEditable || !app.schema) return;
+  const sortedRows = $derived.by(() => {
+    if (!sortCol) return app.rows;
+    const col = sortCol;
+    const dir = sortDir;
+    return [...app.rows].sort((a, b) => {
+      const av = a[col] ?? "";
+      const bv = b[col] ?? "";
+      const cmp = av.localeCompare(bv, undefined, { numeric: true });
+      return dir === "asc" ? cmp : -cmp;
+    });
+  });
 
-    const realCols = app.schema.columns.map((c) => c.name);
-    const isPK = app.schema.primary_keys.includes(colName);
-    const isRealCol = realCols.includes(colName);
+  function toggleSort(col: string) {
+    if (sortCol === col) {
+      sortDir = sortDir === "asc" ? "desc" : "asc";
+    } else {
+      sortCol = col;
+      sortDir = "asc";
+    }
+  }
 
-    if (isPK || !isRealCol) return;
+  function isPK(col: string): boolean {
+    return app.schema?.primary_keys.includes(col) ?? false;
+  }
 
-    // Build PK values from the row
+  function isEditableCell(col: string): boolean {
+    if (!effectiveEditable || !app.schema) return false;
+    if (isPK(col)) return false;
+    return app.schema.columns.some((c) => c.name === col);
+  }
+
+  function cellKey(row: Row, col: string): string {
+    if (!app.schema) return "";
     const pk: Record<string, string> = {};
     for (const pkCol of app.schema.primary_keys) {
       pk[pkCol] = row[pkCol] ?? "";
     }
+    return JSON.stringify(pk) + "::" + col;
+  }
 
+  function editingKey(): string | null {
+    if (!app.editing) return null;
+    return JSON.stringify(app.editing.pk) + "::" + app.editing.column;
+  }
+
+  function startEdit(row: Row, col: string) {
+    if (!isEditableCell(col) || !app.schema) return;
+    const pk: Record<string, string> = {};
+    for (const pkCol of app.schema.primary_keys) {
+      pk[pkCol] = row[pkCol] ?? "";
+    }
     app.editing = {
-      column: colName,
-      value: row[colName] ?? "",
-      originalValue: row[colName] ?? "",
+      column: col,
+      value: row[col] ?? "",
+      originalValue: row[col] ?? "",
       pk,
     };
   }
 
-  /** Is this row an unpublished assignment? (dim it) */
+  async function commitEdit() {
+    const ed = app.editing;
+    if (!ed || !app.selectedTable) return;
+    if (ed.value === ed.originalValue) {
+      app.editing = null;
+      return;
+    }
+    const table = app.selectedTable;
+    app.editing = null;
+
+    try {
+      const result = await api.updateCell(table, ed.pk, ed.column, ed.value);
+      if (result.ok) {
+        if (result.pending_count !== undefined) app.pendingCount = result.pending_count;
+        setStatus("Saved", "success");
+        // Refresh table data
+        const { schema, data } = await api.fetchSchemaAndData(table);
+        app.schema = schema;
+        app.columnNames = data.columns;
+        app.columnTypes = data.types;
+        const rows = api.parseRows(data);
+        app.allRows = rows;
+        app.rows = app.searchText
+          ? rows.filter((r) => api.matchesSearch(app.searchText, r))
+          : rows;
+      } else {
+        setStatus(result.error ?? "Update failed", "error");
+      }
+    } catch {
+      setStatus("Network error", "error");
+    }
+  }
+
+  function handleEditKeydown(e: KeyboardEvent) {
+    if (e.key === "Enter") commitEdit();
+    if (e.key === "Escape") app.editing = null;
+  }
+
   function isUnpublished(row: Row): boolean {
     return app.selectedTable === "canvas_assignments" && row["published"] === "No";
+  }
+
+  /** Svelte action: focus and select input on mount. */
+  function autofocus(node: HTMLInputElement) {
+    node.focus();
+    node.select();
   }
 </script>
 
 {#if app.error}
-  <div class="flex flex-1 items-center justify-center text-destructive">
-    {app.error}
-  </div>
+  <div class="flex flex-1 items-center justify-center text-error">{app.error}</div>
 {:else if !app.selectedTable}
-  <div class="flex flex-1 flex-col items-center justify-center gap-2">
-    <p class="text-sm text-muted-foreground">Select a table from the sidebar</p>
-    <p class="text-xs text-muted-foreground/60">Use &#8984;K to search within a table</p>
+  <div class="flex flex-1 flex-col items-center justify-center gap-2 opacity-50">
+    <p class="text-sm">Select a table from the sidebar</p>
+    <p class="text-xs">
+      Use <kbd class="kbd kbd-xs">{navigator.platform?.includes("Mac") ? "⌘" : "Ctrl"}</kbd>+<kbd class="kbd kbd-xs">K</kbd> to search
+    </p>
   </div>
 {:else}
   <div class="flex-1 overflow-auto">
-    <Table.Root>
-      <Table.Header class="sticky top-0 z-10 bg-muted">
-        {#each table.getHeaderGroups() as headerGroup (headerGroup.id)}
-          <Table.Row>
-            {#each headerGroup.headers as header (header.id)}
-              <Table.Head
-                class={cn(
-                  "cursor-pointer select-none whitespace-nowrap px-2.5 py-1.5 text-xs font-semibold",
-                  header.column.getIsSorted() && "text-primary"
-                )}
-                style="min-width: {estimateColumnWidth(header.id, colTypeMap[header.id] ?? 'VARCHAR')}px"
-                onclick={header.column.getToggleSortingHandler()}
+    <table class="table table-xs table-pin-rows">
+      <thead>
+        <tr>
+          {#each displayedCols as col}
+            <th
+              class="cursor-pointer select-none whitespace-nowrap"
+              onclick={() => toggleSort(col)}
+            >
+              {isPK(col) ? `${col} (PK)` : col}
+              {#if sortCol === col}
+                <span class="ml-0.5">{sortDir === "asc" ? "\u25B2" : "\u25BC"}</span>
+              {/if}
+            </th>
+          {/each}
+        </tr>
+      </thead>
+      <tbody>
+        {#each sortedRows as row}
+          <tr class:opacity-45={isUnpublished(row)}>
+            {#each displayedCols as col}
+              {@const editing = editingKey() === cellKey(row, col)}
+              <td
+                class="whitespace-nowrap"
+                class:cursor-pointer={isEditableCell(col)}
+                class:font-medium={isPK(col)}
+                class:opacity-60={isPK(col)}
+                onclick={() => { if (!editing) startEdit(row, col); }}
               >
-                <FlexRender content={header.column.columnDef.header} context={header.getContext()} />
-                {#if header.column.getIsSorted() === "asc"} &#9650;
-                {:else if header.column.getIsSorted() === "desc"} &#9660;
+                {#if editing}
+                  <input
+                    type="text"
+                    class="input input-xs input-bordered w-full min-w-16"
+                    value={app.editing?.value ?? ""}
+                    oninput={(e: Event) => {
+                      if (app.editing) app.editing.value = (e.target as HTMLInputElement).value;
+                    }}
+                    onkeydown={handleEditKeydown}
+                    onblur={() => commitEdit()}
+                    use:autofocus
+                  />
+                {:else}
+                  {row[col] ?? ""}
                 {/if}
-              </Table.Head>
+              </td>
             {/each}
-          </Table.Row>
-        {/each}
-      </Table.Header>
-      <Table.Body>
-        {#each table.getRowModel().rows as row (row.id)}
-          <Table.Row class={cn(isUnpublished(row.original) && "opacity-45")}>
-            {#each row.getVisibleCells() as cell (cell.id)}
-              <Table.Cell
-                class={cn(
-                  "whitespace-nowrap px-2.5 py-1 text-[13px]",
-                  effectiveEditable && "cursor-pointer"
-                )}
-                ondblclick={() => handleCellDblClick(cell.column.id, row.original)}
-              >
-                <FlexRender content={cell.column.columnDef.cell} context={cell.getContext()} />
-              </Table.Cell>
-            {/each}
-          </Table.Row>
+          </tr>
         {:else}
-          <Table.Row>
-            <Table.Cell colspan={columns.length} class="h-24 text-center text-muted-foreground">
+          <tr>
+            <td colspan={displayedCols.length} class="py-8 text-center opacity-50">
               No results.
-            </Table.Cell>
-          </Table.Row>
+            </td>
+          </tr>
         {/each}
-      </Table.Body>
-    </Table.Root>
+      </tbody>
+    </table>
   </div>
 {/if}
