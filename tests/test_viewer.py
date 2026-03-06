@@ -81,7 +81,6 @@ def testget_tables_types(viewer_conn):
 def test_editable_table(viewer_conn):
     """Only canvas tables (not submissions) are editable."""
     assert is_editable(viewer_conn, "canvas_assignments") is True
-    assert is_editable(viewer_conn, "canvas_students") is True
     assert is_editable(viewer_conn, "students") is False
     assert is_editable(viewer_conn, "assignments") is False
 

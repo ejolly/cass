@@ -130,13 +130,6 @@ _CUSTOM_CSS = """
     background: rgba(34, 197, 94, 0.15);
     color: #4ade80;
 }
-.sidebar-gradebook {
-    font-size: 0.85rem;
-    font-weight: 700;
-    padding: 0.5rem 1rem;
-    color: rgba(255, 255, 255, 0.9);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-}
 /* Toolbar */
 .toolbar {
     padding: 0.5rem 1rem;
@@ -332,9 +325,12 @@ def start_nicegui_server(port: int = 0) -> None:
 
         # State containers for this page
         grid_container: dict[str, Any] = {"ref": None}
-        current_table: dict[str, str] = {
-            "name": tables[0]["name"] if tables else "",
-        }
+        # Default to gradebook if available, otherwise first table
+        default_table = next(
+            (t["name"] for t in tables if t["name"] == "canvas_grades"),
+            tables[0]["name"] if tables else "",
+        )
+        current_table: dict[str, str] = {"name": default_table}
         sidebar_buttons: dict[str, ui.element] = {}
         pending_label: dict[str, Any] = {"ref": None}
         table_label: dict[str, Any] = {"ref": None}
@@ -444,15 +440,6 @@ def start_nicegui_server(port: int = 0) -> None:
                     else:
                         grid_options[":getRowId"] = f"(params) => {row_id_js(pk_cols)}"
 
-                    # Dim unpublished rows in canvas_assignments
-                    if table_name == "canvas_assignments":
-                        grid_options[":getRowStyle"] = (
-                            "(params) => {"
-                            "  if (params.data && params.data.published === false)"
-                            "    return { opacity: '0.45' };"
-                            "}"
-                        )
-
                     grid = (
                         ui.aggrid(grid_options, theme="quartz")
                         .classes("w-full")
@@ -521,19 +508,28 @@ def start_nicegui_server(port: int = 0) -> None:
 
                 with ui.element("div").classes("sidebar-nav"):
                     for group in groups:
-                        is_gradebook = group.get("style") == "gradebook"
-                        if is_gradebook:
-                            t = group["items"][0]
+                        ui.element("div").classes("sidebar-group-label").props(
+                            f'innerHTML="{group["label"]}"'
+                        )
+                        for t in group["items"]:
                             tn = t["name"]
                             dn = display_name(tn)
-                            pill = (
-                                "<span class='sidebar-pill"
-                                " sidebar-pill-editable'>"
-                                "editable</span>"
-                            )
+                            editable_item = is_editable(conn, tn)
+                            if editable_item:
+                                pill = (
+                                    "<span class='sidebar-pill"
+                                    " sidebar-pill-editable'>"
+                                    "editable</span>"
+                                )
+                            else:
+                                pill = (
+                                    "<span class='sidebar-pill"
+                                    " sidebar-pill-viewonly'>"
+                                    "view-only</span>"
+                                )
                             btn = (
                                 ui.element("button")
-                                .classes("sidebar-item sidebar-gradebook")
+                                .classes("sidebar-item")
                                 .props(f'innerHTML="{dn}{pill}"')
                                 .on(
                                     "click",
@@ -543,38 +539,6 @@ def start_nicegui_server(port: int = 0) -> None:
                             sidebar_buttons[tn] = btn
                             if tn == current_table["name"]:
                                 btn.classes(add="active")
-                        else:
-                            ui.element("div").classes("sidebar-group-label").props(
-                                f'innerHTML="{group["label"]}"'
-                            )
-                            for t in group["items"]:
-                                tn = t["name"]
-                                dn = display_name(tn)
-                                editable_item = is_editable(conn, tn)
-                                if editable_item:
-                                    pill = (
-                                        "<span class='sidebar-pill"
-                                        " sidebar-pill-editable'>"
-                                        "editable</span>"
-                                    )
-                                else:
-                                    pill = (
-                                        "<span class='sidebar-pill"
-                                        " sidebar-pill-viewonly'>"
-                                        "view-only</span>"
-                                    )
-                                btn = (
-                                    ui.element("button")
-                                    .classes("sidebar-item")
-                                    .props(f'innerHTML="{dn}{pill}"')
-                                    .on(
-                                        "click",
-                                        lambda _e, n=tn: load_table(n),
-                                    )
-                                )
-                                sidebar_buttons[tn] = btn
-                                if tn == current_table["name"]:
-                                    btn.classes(add="active")
 
             # --- Main content ---
             with ui.element("div").classes("main-content"):
@@ -687,7 +651,7 @@ def start_nicegui_server(port: int = 0) -> None:
 
         # Load initial table
         if tables:
-            load_table(tables[0]["name"])
+            load_table(default_table)
 
     ui.run(  # pyright: ignore[reportUnknownMemberType]
         title="cass viewer",
