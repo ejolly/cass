@@ -141,7 +141,56 @@ CLI commands query source tables with inline JOINs (no views — removed in v6 a
 
 ---
 
-## Coding Style
+## Elm Coding Style
+
+### Architecture (TEA)
+- **One flat `Msg` type** in Types.elm. Only nest for third-party stateful components (e.g., `GridMsg (Grid.Msg Row)`). Do NOT nest to "organize" messages — use comment separators instead.
+- **One big `update` function** in Main.elm. Extract helpers as named functions with type signatures when a branch exceeds ~10 lines, but keep them in Main — don't create mini-TEA modules for UI sections.
+- **View functions are just functions**, not components. `viewSidebar`, `viewModal`, etc. live in View.elm with comment section headers (`-- SIDEBAR`, `-- MODAL`). No component lifecycle, no separate Model/update per UI section.
+- **Ports in Main** (currently 2). Only move to a dedicated `Ports.elm` if count exceeds 5.
+- **Types.elm breaks circular imports** between Main, View, and Api. Acceptable at current scale (~270 lines). Extract a type to its own module only when it accumulates multiple associated functions (e.g., `TableSource` + `classifyTable` + future helpers).
+
+### Type design
+- **Custom types over booleans/strings** for fixed sets of values: `StatusLevel`, `TableSource`, `ModalState`. The compiler enforces exhaustive matching — no silent typos.
+- **Make impossible states impossible**: model correlated state as a single custom type with variants carrying only relevant data (see `ModalState`). Never use `Bool` + `Maybe` pairs for state that has more than 2 meaningful configurations.
+- **Unwrap Maybe/Result early**: parent view functions should unwrap and pass concrete values to children. Sub-views should not receive `Maybe` values they must redundantly pattern-match.
+- **Type annotations on every top-level function**. No exceptions.
+
+### Module conventions
+- **Explicit `exposing` lists** on module declarations (never `exposing (..)`). Documents the public API.
+- **`import Types exposing (..)`** in Main.elm is the one accepted exception — Types is consumed by every module.
+- All other imports use qualified access or selective `exposing` of specific names.
+- **Module split heuristic**: don't split preemptively. 400–1000 lines is normal; push to comment-section-headers before splitting. Split only when code has distinct responsibilities that change independently.
+
+### elm-ui patterns
+- **`spacing` on parent, not children** — elm-ui has no margin concept. Spacing is always set on the container.
+- **`paragraph` for wrapping text** — `el`, `row`, `column` do NOT wrap text. Only `paragraph` does.
+- **`Region.*` for accessibility**: `Region.navigation` on sidebar, `Region.mainContent` on main area, `Region.heading N` for headings, `Region.announce` for status messages.
+- **`layoutWith` + `focusStyle`** to reset default focus outline, then apply custom `focused` styles per element.
+- **Palette as first argument** to view helpers: `viewFoo : Palette -> ... -> Element Msg`.
+- **`Element.html`** only for leaf-node third-party widgets (e.g., Grid.view). Never for layout containers.
+- **`htmlAttribute`** is an escape hatch — comment why each use is needed.
+
+### Theme module (Theme.elm)
+- Spacing scale on 4px base unit (`sp1 = 4`, `sp2 = 8`, ...) — never use bare integer literals for spacing/padding.
+- Font sizes as named constants (`textXs`, `textSm`, `textBase`).
+- Typed `Palette` record with light/dark variants — compiler enforces completeness when adding new colors.
+- All color references go through the palette — no inline `rgb255` in view code.
+
+### Decoders (Api.elm)
+- Use `D.mapN` with constructor functions for combining fields. For 4+ fields, prefer pipeline style (consider `elm-json-decode-pipeline`).
+- `D.oneOf` for fields with optional or varying types.
+- `resolveJson` helper for `Http.task` resolver pattern.
+
+### What NOT to do in the Elm viewer
+- Do NOT create component modules with their own Model/update for UI sections (sidebar, modal, toolbar).
+- Do NOT use opaque types for app-internal types at this scale — the single-consumer overhead is not worth it.
+- Do NOT use `Element.Lazy` without benchmarking — the comparison overhead can exceed the rendering cost for simple elements.
+- Do NOT use `_` wildcard matching in case expressions that should be exhaustive (defeats the compiler's safety guarantees).
+
+---
+
+## Python Coding Style
 
 ### Module structure
 1. Module docstring (always present)
@@ -149,7 +198,7 @@ CLI commands query source tables with inline JOINs (no views — removed in v6 a
 3. `__docformat__ = "google"`
 4. Stdlib → third-party → relative imports
 
-### Conventions
+### Python conventions
 - Google-style docstrings (`Args:`, `Returns:`, `Raises:`) on all public functions
 - `msgspec.Struct` for all data models; one-line class docstring
 - All function signatures have return types; `X | None` not `Optional[X]`; lowercase generics
@@ -198,6 +247,7 @@ Project: **cass** — Team: **Ejolly** (EJO)
 | Issue | Title | Priority | Status |
 |-------|-------|----------|--------|
 | EJO-321 | User-friendly CLI commands for common data operations | High | Backlog |
+| EJO-334 | Elm viewer: standardize around best practices | Medium | Backlog |
 
 ```bash
 linear list-issues --project "cass"
