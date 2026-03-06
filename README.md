@@ -177,7 +177,7 @@ cass view --classic           # legacy AG Grid viewer
 
 ## Browser viewer
 
-`cass view` opens an Elm-powered spreadsheet UI for browsing and editing the database.
+`cass view` opens a Svelte-powered spreadsheet UI for browsing and editing the database.
 
 - **Browse**: sidebar navigation by table group (Combined / Canvas / GitHub), sortable columns, search (Ctrl+K)
 - **Edit**: double-click cells to edit, changes tracked as pending until pushed
@@ -305,10 +305,10 @@ Use `--no-cache` or `--ttl 0` for immediate expiry. Run `cass db clean` to clear
 
 ```bash
 uv sync                       # install all dependencies
-uv run poe lint               # format + lint + type check (ruff, ty, basedpyright, biome, elm-format)
+uv run poe lint               # format + lint + type check (ruff, ty, basedpyright, biome, svelte-check)
 uv run poe test               # run test suite
-uv run poe elm-build          # compile Elm frontend
-uv run poe install            # install as global CLI tool
+uv run poe ui-build           # build Svelte frontend
+uv run poe install            # build frontend + install as global CLI tool
 uv run poe docs               # generate API docs to docs/api/
 ```
 

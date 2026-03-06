@@ -826,7 +826,7 @@ def start_server(port: int = 0, *, classic: bool = False) -> None:
 
     Args:
         port: Port number to bind to. 0 = auto-select an available port.
-        classic: Use the classic AG Grid frontend instead of the default Elm frontend.
+        classic: Use the classic AG Grid frontend instead of the Svelte frontend.
     """
     db_file = db_path()
 
