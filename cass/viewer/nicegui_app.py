@@ -19,6 +19,8 @@ from .config import (
     display_name,
     group_tables,
 )
+from .create_assignment_modal import open_create_assignment_modal
+from .delete_assignment_modal import open_delete_assignment_modal
 from .grid import (
     apply_search,
     attach_date_autocommit,
@@ -389,10 +391,33 @@ def _render_viewer() -> None:
                     ui.label(group["label"]).classes(
                         "text-[0.7rem] font-bold tracking-wider opacity-50 uppercase"
                     )
+                    if group["label"] == "Canvas LMS":
+                        ui.space()
+                        ui.button(
+                            icon="add",
+                            on_click=lambda: open_create_assignment_modal(
+                                conn, grid_container, current_table, load_table
+                            ),
+                        ).props("flat dense round size=xs color=grey-6").tooltip(
+                            "Create assignment"
+                        )
+                        ui.button(
+                            icon="delete",
+                            on_click=lambda: open_delete_assignment_modal(
+                                conn,
+                                pending,
+                                update_pending_display,
+                                grid_container,
+                                current_table,
+                                load_table,
+                            ),
+                        ).props("flat dense round size=xs color=grey-6").tooltip(
+                            "Delete assignment"
+                        )
                     if group["label"] == "GitHub Classroom" and has_classroom:
                         ui.space()
                         ui.button(
-                            "Clone Repos",
+                            "Pull Repos",
                             icon="download",
                             on_click=open_pull_gh_modal,
                         ).props("flat dense no-caps size=xs color=grey-6").classes(

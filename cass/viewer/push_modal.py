@@ -13,6 +13,7 @@ from . import canvas_apply, canvas_preview
 from .config import PendingChanges
 from .grid import (
     clear_pending_cells,
+    find_grid,
     notify,
     reload_current_grid,
 )
@@ -226,6 +227,10 @@ def open_push_modal(
                         grid_container,
                         current_table["name"],
                     )
+                    # Force re-evaluate cellClassRules after clearing pending set
+                    grid = find_grid(grid_container)
+                    if grid is not None:
+                        grid.run_grid_method("refreshCells", {"force": True})  # pyright: ignore[reportUnknownMemberType]
                 else:
                     state["phase"] = "results"
                     render_results(
