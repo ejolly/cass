@@ -219,6 +219,10 @@ def test_pull_all_async_canvas_only(tmp_path, monkeypatch, db_conn):
 
     with (
         patch(
+            "cass.pull.matching_mod.fetch_course_name",
+            return_value="Test Course 101",
+        ),
+        patch(
             "cass.pull.matching_mod.fetch_students_with_sections",
             return_value=(mock_students, {}),
         ),
@@ -269,6 +273,10 @@ def test_pull_all_async_no_callback(tmp_path, monkeypatch, db_conn):
 
     with (
         patch(
+            "cass.pull.matching_mod.fetch_course_name",
+            return_value="Test Course 101",
+        ),
+        patch(
             "cass.pull.matching_mod.fetch_students_with_sections",
             return_value=([], {}),
         ),
@@ -299,6 +307,10 @@ def test_pull_all_async_with_github(tmp_path, monkeypatch, db_conn):
     mock_gh_client = AsyncMock()
 
     with (
+        patch(
+            "cass.pull.matching_mod.fetch_course_name",
+            return_value="Test Course 101",
+        ),
         patch(
             "cass.pull.matching_mod.fetch_students_with_sections",
             return_value=(mock_students, {}),
@@ -352,6 +364,10 @@ def test_pull_all_async_github_client_closed_on_error(
     mock_gh_client = AsyncMock()
 
     with (
+        patch(
+            "cass.pull.matching_mod.fetch_course_name",
+            return_value="Test Course 101",
+        ),
         patch(
             "cass.pull.matching_mod.fetch_students_with_sections",
             return_value=(mock_students, {}),

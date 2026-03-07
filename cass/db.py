@@ -252,6 +252,27 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Meta helpers
+# ---------------------------------------------------------------------------
+
+
+def save_meta(key: str, value: str) -> None:
+    """Store a key-value pair in the meta table."""
+    conn = get_db()
+    conn.execute(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+        [key, value],
+    )
+
+
+def get_meta(key: str, conn: duckdb.DuckDBPyConnection | None = None) -> str | None:
+    """Retrieve a value from the meta table, or None if not found."""
+    c = conn or get_db()
+    row = c.execute("SELECT value FROM meta WHERE key = ?", [key]).fetchone()
+    return row[0] if row else None  # pyright: ignore[reportIndexIssue]
+
+
+# ---------------------------------------------------------------------------
 # GH Students (source)
 # ---------------------------------------------------------------------------
 
