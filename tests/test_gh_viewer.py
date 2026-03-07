@@ -128,8 +128,8 @@ class TestViewerConfig:
     def test_gh_submissions_readonly(self):
         assert "gh_submissions" in READ_ONLY_TABLES
 
-    def test_gh_students_readonly(self):
-        assert "gh_students" in READ_ONLY_TABLES
+    def test_gh_students_editable(self, db_conn):
+        assert is_editable(db_conn, "gh_students") is True
 
     def test_gh_students_display_name_is_roster(self):
         assert display_name("gh_students") == "Roster"

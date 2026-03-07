@@ -24,7 +24,6 @@ DEV_TABLES = {"_canvas_assignments_synced", "_canvas_grades_synced"}
 READ_ONLY_TABLES = {
     "canvas_submissions",
     "gh_submissions",
-    "gh_students",
     "gh_assignments",
     "gh_grades",
     "assignments",
@@ -89,6 +88,7 @@ ENRICHED_QUERIES: dict[str, str] = {
     """,
     "gh_students": """
         SELECT
+            gs.excluded,
             COALESCE(s.name, gs.name) AS student,
             gs.github_username,
             COALESCE(s.email, gs.email) AS email,
@@ -134,6 +134,7 @@ ENRICHED_QUERIES: dict[str, str] = {
         LEFT JOIN gh_students gst
             ON gs.github_username = gst.github_username
         LEFT JOIN gh_assignments ga ON gs.assignment_slug = ga.slug
+        WHERE COALESCE(gst.excluded, false) = false
         ORDER BY gs.last_commit_at DESC, gs.github_username
     """,
 }
@@ -182,6 +183,7 @@ COLUMN_ORDERING: dict[str, list[str]] = {
         "updated_at",
     ],
     "gh_students": [
+        "excluded",
         "student",
         "github_username",
         "email",
@@ -230,6 +232,7 @@ COLUMN_DISPLAY_NAMES: dict[str, dict[str, str]] = {
         "workflow_state": "State",
     },
     "gh_students": {
+        "excluded": "Hide",
         "student": "Student",
         "github_username": "GitHub Username",
         "email": "Email",
