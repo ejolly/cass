@@ -19,7 +19,12 @@ EXCLUDED_TABLES = {
 }
 
 # Internal tables shown only in the dev section
-DEV_TABLES = {"_canvas_assignments_synced", "_canvas_grades_synced"}
+DEV_TABLES = {
+    "_canvas_assignments_synced",
+    "_canvas_grades_synced",
+    "students",
+    "assignments",
+}
 
 READ_ONLY_TABLES = {
     "canvas_submissions",
@@ -290,7 +295,6 @@ _GROUP_ORDER: dict[str, list[str]] = {
         "canvas_submissions",
     ],
     "github": ["gh_assignments", "gh_submissions", "gh_students"],
-    "combined": ["students", "assignments"],
 }
 
 
@@ -305,7 +309,7 @@ def classify_table(name: str) -> str:
         return "canvas"
     if name.startswith("gh_"):
         return "github"
-    return "combined"
+    return "other"
 
 
 def _sort_group(items: list[dict[str, str]], order: list[str]) -> list[dict[str, str]]:
@@ -320,7 +324,6 @@ def group_tables(
     """Group tables into sidebar sections."""
     canvas = [t for t in tables if classify_table(t["name"]) == "canvas"]
     github = [t for t in tables if classify_table(t["name"]) == "github"]
-    combined = [t for t in tables if classify_table(t["name"]) == "combined"]
     groups: list[dict[str, Any]] = []
     if canvas:
         groups.append(
@@ -334,13 +337,6 @@ def group_tables(
             {
                 "label": "GitHub Classroom",
                 "items": _sort_group(github, _GROUP_ORDER["github"]),
-            }
-        )
-    if combined:
-        groups.append(
-            {
-                "label": "Combined",
-                "items": _sort_group(combined, _GROUP_ORDER["combined"]),
             }
         )
     return groups
