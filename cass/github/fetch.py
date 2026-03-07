@@ -9,6 +9,7 @@ from __future__ import annotations
 
 __docformat__ = "google"
 
+import asyncio
 import re
 import subprocess
 from collections.abc import Callable
@@ -177,7 +178,7 @@ async def pull_gh(
             repo_url = f"https://github.com/{cfg.org}/{repo_short}.git"
 
             try:
-                status = _clone_or_pull(repo_url, dest)
+                status = await asyncio.to_thread(_clone_or_pull, repo_url, dest)
                 counts[status.replace("-", "_")] += 1
                 if status != "up-to-date":
                     _report(f"  {student.display_name}: {status}")
