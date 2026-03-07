@@ -66,15 +66,11 @@ class Sidebar:
 
                 p.push_btn = ui.button(
                     "Push to Canvas",
-                    on_click=lambda: p.open_push_modal(),
+                    on_click=lambda: p.push_modal.open(),
                 ).props("dense no-caps size=xs color=primary")
                 p.push_btn.set_visibility(False)
 
     def _build_nav_groups(self) -> None:
-        from ..create_assignment_modal import open_create_assignment_modal
-        from ..delete_assignment_modal import open_delete_assignment_modal
-        from ..pull_gh_modal import open_pull_gh_modal
-
         p = self.page
 
         # Detect classroom config
@@ -94,25 +90,13 @@ class Sidebar:
                         ui.space()
                         ui.button(
                             icon="add",
-                            on_click=lambda: open_create_assignment_modal(
-                                p.conn,
-                                {"ref": p.grid_container},
-                                {"name": p.current_table},
-                                p.load_table,
-                            ),
+                            on_click=lambda: p.create_modal.open(),
                         ).props("flat dense round size=xs color=grey-6").tooltip(
                             "Create assignment"
                         )
                         ui.button(
                             icon="delete",
-                            on_click=lambda: open_delete_assignment_modal(
-                                p.conn,
-                                p.pending,
-                                p.update_pending_display,
-                                {"ref": p.grid_container},
-                                {"name": p.current_table},
-                                p.load_table,
-                            ),
+                            on_click=lambda: p.delete_modal.open(),
                         ).props("flat dense round size=xs color=grey-6").tooltip(
                             "Delete assignment"
                         )
@@ -121,7 +105,7 @@ class Sidebar:
                         ui.button(
                             "Pull Repos",
                             icon="download",
-                            on_click=open_pull_gh_modal,
+                            on_click=lambda: p.pull_gh_modal.open(),
                         ).props("flat dense no-caps size=xs color=grey-6").classes(
                             "v-pull-repos-btn"
                         )

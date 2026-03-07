@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 import duckdb
 import pytest
 
-from cass.viewer.delete_assignment_modal import (
+from cass.viewer.actions import (
     delete_assignment_from_canvas,
     delete_local_assignment,
     list_assignments_for_select,
