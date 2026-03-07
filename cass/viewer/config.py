@@ -130,6 +130,10 @@ ENRICHED_QUERIES: dict[str, str] = {
         SELECT
             gs.github_username,
             gs.assignment_slug,
+            CASE WHEN gs.last_commit_at != ''
+                THEN strftime(
+                    gs.last_commit_at::TIMESTAMP, '%b %-d, %Y %-I:%M %p')
+                ELSE '' END AS last_commit_at,
             COALESCE(
                 cs.sortable_name,
                 CASE WHEN gst.name LIKE '% %'
@@ -141,16 +145,13 @@ ENRICHED_QUERIES: dict[str, str] = {
                 gs.github_username
             ) AS student,
             ga.title AS assignment_name,
-            gs.submitted,
             gs.commit_count,
-            gs.commits_after_deadline,
-            gs.late,
-            'https://github.com/' || gs.repo_name AS repo_url,
             CASE WHEN gs.last_commit_sha != ''
                 THEN 'https://github.com/' || gs.repo_name
                     || '/commit/' || gs.last_commit_sha
                 ELSE '' END AS commit_url,
-            gs.last_commit_at,
+            gs.late,
+            'https://github.com/' || gs.repo_name AS repo_url,
             gs.last_commit_sha
         FROM gh_submissions gs
         LEFT JOIN students s ON gs.github_username = s.github_username
@@ -221,15 +222,13 @@ COLUMN_ORDERING: dict[str, list[str]] = {
         "passing_count",
     ],
     "gh_submissions": [
+        "last_commit_at",
         "student",
         "assignment_name",
-        "submitted",
         "commit_count",
-        "commits_after_deadline",
         "late",
-        "repo_url",
         "commit_url",
-        "last_commit_at",
+        "repo_url",
     ],
 }
 
@@ -270,15 +269,13 @@ COLUMN_DISPLAY_NAMES: dict[str, dict[str, str]] = {
         "passing_count": "Passing",
     },
     "gh_submissions": {
+        "last_commit_at": "Last Commit",
         "student": "Student",
         "assignment_name": "Assignment",
-        "submitted": "Submitted",
         "commit_count": "Commits",
-        "commits_after_deadline": "Late Commits",
         "late": "Late",
+        "commit_url": "Link",
         "repo_url": "Repo",
-        "commit_url": "Latest Commit",
-        "last_commit_at": "Last Commit",
     },
 }
 
