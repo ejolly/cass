@@ -247,7 +247,7 @@ async def test_editable_badges(user: User, ui_conn: duckdb.DuckDBPyConnection) -
 async def test_grouped_sidebar(user: User, ui_conn: duckdb.DuckDBPyConnection) -> None:
     """Tables are grouped by prefix in the sidebar."""
     tables = get_tables(ui_conn)
-    groups = group_tables(tables)
+    groups = group_tables(tables, has_classroom=True)
 
     @ui.page("/test-groups")
     def page() -> None:
