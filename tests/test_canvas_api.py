@@ -9,12 +9,16 @@ from cass.models.canvas_api import (
     CanvasAssignment,
     CanvasAssignmentGroup,
     CanvasCourse,
+    CanvasEnrollment,
     CanvasFile,
     CanvasFolder,
     CanvasModule,
     CanvasModuleItem,
     CanvasProgress,
     CanvasQuiz,
+    CanvasSection,
+    CanvasStudent,
+    CanvasSubmissionResponse,
     CanvasTab,
     CanvasUser,
 )
@@ -42,6 +46,66 @@ class TestModels:
         assert c.name == "Intro to Psych"
         assert c.total_students == 42
 
+    def test_canvas_student(self):
+        data = {
+            "id": 247302,
+            "name": "Alice Smith",
+            "sortable_name": "Smith, Alice",
+            "email": "alice@ucsd.edu",
+            "sis_user_id": "A12345678",
+            "login_id": "asmith",
+            "short_name": "Alice",
+            "created_at": "2025-05-07T10:57:45-07:00",
+        }
+        s = msgspec.convert(data, CanvasStudent, strict=False)
+        assert s.id == 247302
+        assert s.sortable_name == "Smith, Alice"
+        assert s.sis_user_id == "A12345678"
+
+    def test_canvas_enrollment_with_nested_grades(self):
+        """Enrollment scores live inside a nested 'grades' dict, not top-level."""
+        data = {
+            "id": 10,
+            "user_id": 247302,
+            "type": "StudentEnrollment",
+            "enrollment_state": "active",
+            "role": "StudentEnrollment",
+            "course_section_id": 123,
+            "grades": {
+                "html_url": "https://canvas.example.com/courses/1/grades/247302",
+                "current_score": 87.5,
+                "final_score": 85.0,
+                "current_grade": "B",
+                "final_grade": "B",
+                "unposted_current_score": 90.0,
+                "unposted_final_score": 88.0,
+            },
+            "course_id": 1,
+            "sis_user_id": "A12345678",
+            "html_url": "https://canvas.example.com/courses/1/users/247302",
+        }
+        enr = msgspec.convert(data, CanvasEnrollment, strict=False)
+        assert enr.user_id == 247302
+        assert enr.grades.final_score == 85.0
+        assert enr.grades.current_score == 87.5
+        assert enr.grades.final_grade == "B"
+        assert enr.grades.current_grade == "B"
+        # Properties used by egrades.py
+        assert enr.computed_final_score == 85.0
+        assert enr.computed_current_score == 87.5
+
+    def test_canvas_enrollment_without_grades(self):
+        """Enrollment without include[]=total_scores has no grades dict."""
+        data = {
+            "id": 10,
+            "user_id": 1,
+            "type": "StudentEnrollment",
+            "enrollment_state": "active",
+        }
+        enr = msgspec.convert(data, CanvasEnrollment, strict=False)
+        assert enr.computed_final_score is None
+        assert enr.computed_current_score is None
+
     def test_canvas_user_with_enrollments(self):
         data = {
             "id": 1,
@@ -55,6 +119,10 @@ class TestModels:
                     "type": "StudentEnrollment",
                     "enrollment_state": "active",
                     "role": "StudentEnrollment",
+                    "grades": {
+                        "current_score": 92.0,
+                        "final_score": 90.0,
+                    },
                 }
             ],
         }
@@ -62,6 +130,19 @@ class TestModels:
         assert u.name == "Alice Smith"
         assert len(u.enrollments) == 1
         assert u.enrollments[0].role == "StudentEnrollment"
+        assert u.enrollments[0].computed_final_score == 90.0
+
+    def test_canvas_section(self):
+        data = {
+            "id": 456,
+            "name": "Section A",
+            "sis_section_id": "32146",
+            "course_id": 1,
+            "created_at": "2025-12-17T10:45:13Z",
+        }
+        s = msgspec.convert(data, CanvasSection, strict=False)
+        assert s.name == "Section A"
+        assert s.sis_section_id == "32146"
 
     def test_canvas_module(self):
         data = {
@@ -178,6 +259,47 @@ class TestModels:
         }
         a = msgspec.convert(data, CanvasAnnouncement, strict=False)
         assert a.user_name == "Dr. Smith"
+
+    def test_canvas_submission_response(self):
+        """CanvasSubmissionResponse with all fields from real API."""
+        data = {
+            "id": 93010250,
+            "user_id": 257791,
+            "assignment_id": 1089019,
+            "grade": "10",
+            "score": 10.0,
+            "submitted_at": None,
+            "late": False,
+            "missing": False,
+            "seconds_late": 0.0,
+            "workflow_state": "graded",
+            "entered_grade": "10",
+            "entered_score": 10.0,
+            "excused": False,
+            "graded_at": "2026-02-04T20:58:11Z",
+            "posted_at": "2026-02-04T20:58:11Z",
+        }
+        s = msgspec.convert(data, CanvasSubmissionResponse, strict=False)
+        assert s.user_id == 257791
+        assert s.grade == "10"
+        assert s.score == 10.0
+        assert s.workflow_state == "graded"
+        assert s.late is False
+
+    def test_canvas_submission_response_ungraded(self):
+        """Ungraded submission has null grade and score."""
+        data = {
+            "id": 93010251,
+            "user_id": 257791,
+            "assignment_id": 1089019,
+            "grade": None,
+            "score": None,
+            "workflow_state": "unsubmitted",
+        }
+        s = msgspec.convert(data, CanvasSubmissionResponse, strict=False)
+        assert s.grade is None
+        assert s.score is None
+        assert s.workflow_state == "unsubmitted"
 
     def test_canvas_tab(self):
         data = {
