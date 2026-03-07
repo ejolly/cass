@@ -5,6 +5,8 @@ from __future__ import annotations
 __docformat__ = "google"
 
 import asyncio
+import shutil
+from pathlib import Path
 from typing import Any
 
 from nicegui import ui
@@ -12,6 +14,21 @@ from nicegui import ui
 
 def open_pull_gh_modal() -> None:
     """Open a modal to clone/pull student repos from GitHub Classroom."""
+    from .. import db
+    from ..github.fetch import get_sortable_names, student_dir_name
+
+    # Load GH-linked assignments for the select dropdown
+    all_assignments = db.load_assignments()
+    gh_assignments_all = [a for a in all_assignments if a.gh_assignment_slug]
+    assignment_options: dict[str, str] = {a.slug: a.title for a in gh_assignments_all}
+
+    # Load students with folder-name labels (last-first)
+    all_students = db.load_students()
+    sortable_map = get_sortable_names()
+    student_options: dict[int, str] = {
+        s.canvas_id: student_dir_name(s, sortable_map) for s in all_students
+    }
+
     with ui.dialog() as dialog, ui.card().classes("min-w-[28rem] max-w-[36rem]"):
         dialog.open()
 
@@ -21,33 +38,25 @@ def open_pull_gh_modal() -> None:
         ).classes("text-xs opacity-60 mb-3")
 
         # --- Controls ---
-        with ui.row().classes("w-full gap-4"):
-            limit_students = (
-                ui.number(
-                    "Limit students",
-                    value=0,
-                    min=0,
-                    step=1,
-                )
-                .props("dense outlined")
-                .classes("flex-1")
+        student_select = (
+            ui.select(
+                options=student_options,
+                label="Students",
+                multiple=True,
+                value=list(student_options.keys()),
             )
-            limit_assignments = (
-                ui.number(
-                    "Limit assignments",
-                    value=0,
-                    min=0,
-                    step=1,
-                )
-                .props("dense outlined")
-                .classes("flex-1")
-            )
+            .props("dense outlined use-chips")
+            .classes("w-full")
+        )
 
-        assignment_filter = (
-            ui.input(
-                "Assignment slug filter (optional)",
+        assignment_select = (
+            ui.select(
+                options=assignment_options,
+                label="Assignments",
+                multiple=True,
+                value=list(assignment_options.keys()),
             )
-            .props("dense outlined")
+            .props("dense outlined use-chips")
             .classes("w-full mt-1")
         )
 
@@ -83,7 +92,6 @@ def open_pull_gh_modal() -> None:
             log_area.set_visibility(True)
 
             try:
-                from .. import db
                 from ..config import get_config
                 from ..github import fetch as fetch_mod
                 from ..github.client import GitHubClient
@@ -93,26 +101,20 @@ def open_pull_gh_modal() -> None:
                     _append_log("ERROR: No classroom configured")
                     return
 
-                roster = db.load_students()
-                assignments = db.load_assignments()
-                gh_assignments = [a for a in assignments if a.gh_assignment_slug]
-
-                if not gh_assignments:
-                    _append_log("No GitHub-linked assignments found.")
+                selected_slugs: list[str] = assignment_select.value or []
+                if not selected_slugs:
+                    _append_log("No assignments selected.")
                     return
 
-                # Apply assignment filter
-                slug_filter = (assignment_filter.value or "").strip()
-                if slug_filter:
-                    gh_assignments = [
-                        a for a in gh_assignments if slug_filter in a.slug
-                    ]
-                    if not gh_assignments:
-                        _append_log(f"No assignment matching '{slug_filter}'")
-                        return
+                selected_ids: set[int] = set(student_select.value or [])
+                if not selected_ids:
+                    _append_log("No students selected.")
+                    return
 
-                ls = int(limit_students.value or 0)
-                la = int(limit_assignments.value or 0)
+                gh_assignments = [
+                    a for a in gh_assignments_all if a.slug in selected_slugs
+                ]
+                roster = [s for s in all_students if s.canvas_id in selected_ids]
 
                 _append_log(
                     f"Pulling {len(gh_assignments)} assignment(s), "
@@ -124,8 +126,6 @@ def open_pull_gh_modal() -> None:
                         client,
                         gh_assignments,
                         roster,
-                        limit_students=ls,
-                        limit_assignments=la,
                         on_progress=_append_log,
                     )
 
@@ -148,11 +148,56 @@ def open_pull_gh_modal() -> None:
                         "flat dense no-caps size=sm"
                     )
 
+        async def _run_remove() -> None:
+            if state["running"]:
+                return
+            state["running"] = True
+            action_row.clear()
+            with action_row:
+                ui.button("Removing...", on_click=lambda: None).props(
+                    "color=negative disabled dense no-caps size=sm"
+                )
+
+            log_area.clear()
+            log_area.set_visibility(True)
+
+            try:
+                from ..github.fetch import GH_CLASSROOM_DIR
+
+                gh_dir = Path(GH_CLASSROOM_DIR)
+                if not gh_dir.exists():
+                    _append_log("Nothing to remove — gh-classroom/ not found.")
+                    return
+
+                subdirs = [p for p in gh_dir.iterdir() if p.is_dir()]
+                if not subdirs:
+                    _append_log("gh-classroom/ is already empty.")
+                    return
+
+                for p in subdirs:
+                    shutil.rmtree(p)
+                _append_log(f"Removed {len(subdirs)} folder(s) from gh-classroom/.")
+            except Exception as exc:
+                _append_log(f"ERROR: {exc}")
+            finally:
+                state["running"] = False
+                action_row.clear()
+                with action_row:
+                    ui.button("Close", on_click=dialog.close).props(
+                        "flat dense no-caps size=sm"
+                    )
+
         with action_row:
+            ui.button(
+                "Remove All",
+                icon="delete",
+                on_click=lambda: asyncio.ensure_future(_run_remove()),
+            ).props("flat dense no-caps size=sm color=negative")
+            ui.space()
             ui.button("Cancel", on_click=dialog.close).props(
                 "flat dense no-caps size=sm"
             )
             ui.button(
-                "Start",
+                "Pull",
                 on_click=lambda: asyncio.ensure_future(_run_pull()),
             ).props("color=primary dense no-caps size=sm")

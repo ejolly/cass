@@ -54,7 +54,7 @@ def sanitize_student_dir(sortable_name: str, github_username: str) -> str:
     return name or github_username.lower()
 
 
-def _get_sortable_names() -> dict[int, str]:
+def get_sortable_names() -> dict[int, str]:
     """Load canvas_id → sortable_name from the canvas_students table."""
     from .. import db
 
@@ -65,7 +65,7 @@ def _get_sortable_names() -> dict[int, str]:
     return {r[0]: r[1] for r in rows if r[1]}
 
 
-def _student_dir_name(student: Student, sortable_map: dict[int, str]) -> str:
+def student_dir_name(student: Student, sortable_map: dict[int, str]) -> str:
     """Resolve directory name for a student."""
     sortable = sortable_map.get(student.canvas_id, "")
     return sanitize_student_dir(sortable, student.github_username)
@@ -139,7 +139,7 @@ async def pull_gh(
     """
     cfg = get_config()
     dest_root = cfg.root / GH_CLASSROOM_DIR
-    sortable_map = _get_sortable_names()
+    sortable_map = get_sortable_names()
 
     def _report(msg: str) -> None:
         if on_progress is not None:
@@ -173,7 +173,7 @@ async def pull_gh(
                 counts["skipped"] += 1
                 continue
 
-            dir_name = _student_dir_name(student, sortable_map)
+            dir_name = student_dir_name(student, sortable_map)
             dest = dest_root / dir_name / slug
             repo_url = f"https://github.com/{cfg.org}/{repo_short}.git"
 
