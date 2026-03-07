@@ -11,6 +11,7 @@ from __future__ import annotations
 
 __docformat__ = "google"
 
+import re
 import time
 
 import duckdb
@@ -31,6 +32,7 @@ from .models import (
 
 DB_FILENAME = "cass.duckdb"
 _SCHEMA_VERSION = 13
+_SAFE_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 _conn: duckdb.DuckDBPyConnection | None = None
 
@@ -993,6 +995,9 @@ def get_enriched_rows(
     Uses ENRICHED_QUERIES for known tables (with JOINs, computed columns,
     date formatting), falls back to ``SELECT * FROM {table}`` otherwise.
     """
+    if not _SAFE_IDENT_RE.match(table):
+        msg = f"Invalid table name: {table!r}"
+        raise ValueError(msg)
     query = ENRICHED_QUERIES.get(table, f"SELECT * FROM {table}")
     result = conn.execute(query)
     col_names = [desc[0] for desc in result.description]
