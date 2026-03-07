@@ -178,7 +178,7 @@ def test_detect_state_no_config():
     """Returns 'setup' when no config file exists."""
     from cass.viewer.nicegui_app import _detect_state
 
-    with patch("cass.viewer.nicegui_app.config_file_path", return_value=None):
+    with patch("cass.app.config_file_path", return_value=None):
         assert _detect_state() == "setup"
 
 
@@ -189,7 +189,7 @@ def test_detect_state_config_no_db(tmp_path):
     cfg = SimpleNamespace(root=tmp_path)
     with (
         patch(
-            "cass.viewer.nicegui_app.config_file_path",
+            "cass.app.config_file_path",
             return_value=tmp_path / "cass.toml",
         ),
         patch("cass.db.is_remote", return_value=False),
@@ -208,12 +208,12 @@ def test_detect_state_config_and_db(tmp_path):
     cfg = SimpleNamespace(root=tmp_path)
     with (
         patch(
-            "cass.viewer.nicegui_app.config_file_path",
+            "cass.app.config_file_path",
             return_value=tmp_path / "cass.toml",
         ),
         patch("cass.db.is_remote", return_value=False),
         patch("cass.config.get_config", return_value=cfg),
-        patch("cass.viewer.nicegui_app.DB_FILENAME", "cass.duckdb"),
+        patch("cass.app.DB_FILENAME", "cass.duckdb"),
     ):
         assert _detect_state() == "ready"
 
@@ -224,7 +224,7 @@ def test_detect_state_remote_db():
 
     with (
         patch(
-            "cass.viewer.nicegui_app.config_file_path",
+            "cass.app.config_file_path",
             return_value=Path("/some/cass.toml"),
         ),
         patch("cass.db.is_remote", return_value=True),
