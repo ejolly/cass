@@ -16,17 +16,20 @@ import pytest
 from nicegui import ui
 from nicegui.testing import User
 
-from cass.viewer.config import PendingChanges, display_name, group_tables
+from cass.viewer.config import DEV_TABLES, PendingChanges, display_name, group_tables
 from cass.viewer.grid import (
+    _grid_to_markdown,
     attach_edit_handler,
     attach_gradebook_edit_handler,
     build_column_defs,
     build_gradebook_view,
+    find_grid,
     get_primary_keys,
     get_table_rows,
     get_tables,
     is_editable,
     pending_count,
+    reload_current_grid,
     revert_pending,
     row_id_js,
     track_change,
@@ -718,3 +721,175 @@ async def test_gradebook_edit_handler(
     # Pending should track the grade change
     assert pending_count(pending) == 1
     assert "canvas_grades" in pending
+
+
+# ===========================================================================
+# Tier 2C — UI integration tests (User fixture)
+# ===========================================================================
+
+
+# ---------------------------------------------------------------------------
+# find_grid — locates AG Grid inside a container
+# ---------------------------------------------------------------------------
+
+
+async def test_find_grid_in_container(
+    user: User, ui_conn: duckdb.DuckDBPyConnection
+) -> None:
+    """find_grid() returns the AG Grid from a nested container."""
+    grid_container: dict[str, object] = {"ref": None}
+    found_grid: dict[str, object] = {"ref": None}
+
+    @ui.page("/test-find-grid")
+    def page() -> None:
+        container = ui.element("div")
+        grid_container["ref"] = container
+        with container:
+            ui.aggrid(
+                {
+                    "columnDefs": [{"field": "name"}],
+                    "rowData": [{"name": "test"}],
+                }
+            )
+
+        def _check() -> None:
+            found_grid["ref"] = find_grid(grid_container)
+
+        ui.button("Check", on_click=_check).mark("check-btn")
+
+    await user.open("/test-find-grid")
+    user.find(marker="check-btn").click()
+    assert found_grid["ref"] is not None
+    assert isinstance(found_grid["ref"], ui.aggrid)
+
+
+async def test_find_grid_empty_container(
+    user: User, ui_conn: duckdb.DuckDBPyConnection
+) -> None:
+    """find_grid() returns None for an empty container."""
+    grid_container: dict[str, object] = {"ref": None}
+    result: dict[str, object] = {"ref": "sentinel"}
+
+    @ui.page("/test-find-grid-empty")
+    def page() -> None:
+        container = ui.element("div")
+        grid_container["ref"] = container
+        # No grid inside container
+
+        def _check() -> None:
+            result["ref"] = find_grid(grid_container)
+
+        ui.button("Check", on_click=_check).mark("check-btn")
+
+    await user.open("/test-find-grid-empty")
+    user.find(marker="check-btn").click()
+    assert result["ref"] is None
+
+
+async def test_find_grid_none_ref(user: User) -> None:
+    """find_grid() returns None when container ref is None."""
+    result = find_grid({"ref": None})
+    assert result is None
+
+
+# ---------------------------------------------------------------------------
+# reload_current_grid — refreshes grid data from DB
+# ---------------------------------------------------------------------------
+
+
+async def test_reload_current_grid(
+    user: User, ui_conn: duckdb.DuckDBPyConnection
+) -> None:
+    """reload_current_grid() updates grid rowData with fresh DB data."""
+    grid_container: dict[str, object] = {"ref": None}
+    grid_ref: dict[str, ui.aggrid | None] = {"ref": None}
+
+    @ui.page("/test-reload")
+    def page() -> None:
+        container = ui.element("div")
+        grid_container["ref"] = container
+        with container:
+            rows = get_table_rows(ui_conn, "canvas_assignments")
+            col_defs = build_column_defs(ui_conn, "canvas_assignments")
+            g = ui.aggrid({"columnDefs": col_defs, "rowData": rows})
+            grid_ref["ref"] = g
+
+        def _add_and_reload() -> None:
+            ui_conn.execute(
+                "INSERT INTO canvas_assignments VALUES "
+                "(3, 'Homework 3', 30.0, '2026-03-01T23:59', true, '')"
+            )
+            reload_current_grid(ui_conn, grid_container, "canvas_assignments")
+
+        ui.button("Add & Reload", on_click=_add_and_reload).mark("reload-btn")
+
+    await user.open("/test-reload")
+    user.find(marker="reload-btn").click()
+
+    grid = grid_ref["ref"]
+    assert grid is not None
+    assert len(grid.options["rowData"]) == 3
+
+
+# ---------------------------------------------------------------------------
+# export_markdown — triggers download with markdown content
+# ---------------------------------------------------------------------------
+
+
+async def test_export_markdown(user: User, ui_conn: duckdb.DuckDBPyConnection) -> None:
+    """export_markdown() generates correct markdown content."""
+    grid_container: dict[str, object] = {"ref": None}
+    md_content: dict[str, str] = {"ref": ""}
+
+    @ui.page("/test-export-md")
+    def page() -> None:
+        container = ui.element("div")
+        grid_container["ref"] = container
+        with container:
+            ui.aggrid(
+                {
+                    "columnDefs": [
+                        {"field": "name", "headerName": "Name"},
+                        {"field": "score", "headerName": "Score"},
+                    ],
+                    "rowData": [
+                        {"name": "Alice", "score": "95"},
+                        {"name": "Bob", "score": "87"},
+                    ],
+                }
+            )
+
+        def _export() -> None:
+            grid = find_grid(grid_container)
+            if grid:
+                md_content["ref"] = _grid_to_markdown(grid)
+
+        ui.button("Export", on_click=_export).mark("export-btn")
+
+    await user.open("/test-export-md")
+    user.find(marker="export-btn").click()
+
+    md = md_content["ref"]
+    assert "Name" in md
+    assert "Score" in md
+    assert "Alice" in md
+    assert "Bob" in md
+    assert "95" in md
+
+
+# ---------------------------------------------------------------------------
+# Sidebar dev section — dev tables in collapsed expansion
+# ---------------------------------------------------------------------------
+
+
+async def test_dev_tables_config(
+    user: User, ui_conn: duckdb.DuckDBPyConnection
+) -> None:
+    """DEV_TABLES config correctly identifies internal tables."""
+    assert "_canvas_assignments_synced" in DEV_TABLES
+    assert "_canvas_grades_synced" in DEV_TABLES
+    assert "students" in DEV_TABLES
+    assert "assignments" in DEV_TABLES
+    # Regular tables should NOT be dev tables
+    assert "canvas_assignments" not in DEV_TABLES
+    assert "canvas_grades" not in DEV_TABLES
