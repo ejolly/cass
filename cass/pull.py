@@ -29,10 +29,30 @@ from .models import (
     Student,
 )
 
-# Course-specific constants for final project handling
-FINAL_PROJECT_SLUG = "final-project"
-PROPOSAL_FILE = "pdfs/proposal.pdf"
-REPORT_FILE = "pdfs/final-report.pdf"
+
+async def _fetch_gh_submissions(
+    client: GitHubClient,
+    gh_assignments: list[Assignment],
+    students: list[Student],
+    ttl_hours: float,
+    force_refresh: bool,
+    on_status: typing.Callable[[str], None] | None = None,
+) -> list[GHSubmission]:
+    """Fetch GH submissions for all assignments (shared by CLI + viewer)."""
+    all_subs: list[GHSubmission] = []
+    for i, a in enumerate(gh_assignments, 1):
+        if on_status is not None:
+            on_status(f"GitHub ({i}/{len(gh_assignments)}) {a.slug}")
+        subs = await classroom.fetch_submissions(
+            client,
+            a.gh_assignment_slug,
+            a.deadline,
+            students,
+            ttl_hours=ttl_hours,
+            force_refresh=force_refresh,
+        )
+        all_subs.extend(subs)
+    return all_subs
 
 
 async def pull_students(
@@ -255,36 +275,14 @@ async def pull_submissions(
     # GitHub submissions
     gh_assignments = [a for a in assignments if a.gh_assignment_slug]
     if gh_assignments and cfg.has_classroom and client is not None:
-        all_gh_subs: list[GHSubmission] = []
-        for i, a in enumerate(gh_assignments, 1):
-            console.print(
-                f"  Fetching GH submissions... ({i}/{len(gh_assignments)} {a.slug})"
-            )
-            if a.gh_assignment_slug == FINAL_PROJECT_SLUG:
-                for phase_name, file_path in [
-                    ("proposal", PROPOSAL_FILE),
-                    ("report", REPORT_FILE),
-                ]:
-                    subs = await classroom.fetch_file_submissions(
-                        client,
-                        a.gh_assignment_slug,
-                        students,
-                        file_path,
-                        ttl_hours=ttl,
-                        force_refresh=no_cache,
-                    )
-                    for s in subs:
-                        all_gh_subs.append(s.with_assignment_slug(phase_name))
-                continue
-            subs = await classroom.fetch_submissions(
-                client,
-                a.gh_assignment_slug,
-                a.deadline,
-                students,
-                ttl_hours=ttl,
-                force_refresh=no_cache,
-            )
-            all_gh_subs.extend(subs)
+        all_gh_subs = await _fetch_gh_submissions(
+            client,
+            gh_assignments,
+            students,
+            ttl_hours=ttl,
+            force_refresh=no_cache,
+            on_status=lambda msg: console.print(f"  Fetching GH submissions... {msg}"),
+        )
         if all_gh_subs:
             db.save_gh_submissions(all_gh_subs)
             console.print(
@@ -528,37 +526,14 @@ async def pull_all_async(
 
             gh_assignments = [a for a in assignments if a.gh_assignment_slug]
             if gh_assignments and cfg.has_classroom and client is not None:
-                all_gh_subs: list[GHSubmission] = []
-                for i, a in enumerate(gh_assignments, 1):
-                    _report(
-                        "submissions",
-                        f"GitHub ({i}/{len(gh_assignments)}) {a.slug}",
-                    )
-                    if a.gh_assignment_slug == FINAL_PROJECT_SLUG:
-                        for phase_name, file_path in [
-                            ("proposal", PROPOSAL_FILE),
-                            ("report", REPORT_FILE),
-                        ]:
-                            subs = await classroom.fetch_file_submissions(
-                                client,
-                                a.gh_assignment_slug,
-                                students,
-                                file_path,
-                                ttl_hours=6.0,
-                                force_refresh=False,
-                            )
-                            for s in subs:
-                                all_gh_subs.append(s.with_assignment_slug(phase_name))
-                        continue
-                    subs = await classroom.fetch_submissions(
-                        client,
-                        a.gh_assignment_slug,
-                        a.deadline,
-                        students,
-                        ttl_hours=6.0,
-                        force_refresh=False,
-                    )
-                    all_gh_subs.extend(subs)
+                all_gh_subs = await _fetch_gh_submissions(
+                    client,
+                    gh_assignments,
+                    students,
+                    ttl_hours=6.0,
+                    force_refresh=False,
+                    on_status=lambda msg: _report("submissions", msg),
+                )
                 if all_gh_subs:
                     db.save_gh_submissions(all_gh_subs)
                     _report("submissions", f"{len(all_gh_subs)} GitHub submissions")
