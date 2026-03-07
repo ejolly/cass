@@ -314,8 +314,8 @@ def _render_viewer() -> None:
 
     # --- Layout ---
 
-    _SIDEBAR_PCT = 18
-    splitter = ui.splitter(value=_SIDEBAR_PCT, limits=(0, 40)).classes(
+    _SIDEBAR_PCT = 30
+    splitter = ui.splitter(value=_SIDEBAR_PCT, limits=(0, 50)).classes(
         "w-full h-screen"
     )
 
@@ -329,7 +329,51 @@ def _render_viewer() -> None:
             ui.label(course_name).classes("text-sm font-semibold break-words")
             ui.label("cass viewer").classes("text-[0.65rem] opacity-40 tracking-wide")
 
-        # Detect classroom config for Pull GH button
+            # Sync status section
+            with ui.row().classes("w-full items-center gap-2 mt-2"):
+                ui.button(
+                    icon="sync",
+                    on_click=lambda: ui.navigate.to("/pull"),
+                ).props("flat dense round size=xs color=grey-6").tooltip(
+                    "Pull latest data"
+                )
+                badge = ui.badge(
+                    "Synchronized",
+                    color="green",
+                    text_color="white",
+                ).classes("text-[0.6rem] font-semibold")
+                pending_badge["ref"] = badge
+
+            with ui.row().classes("w-full items-center gap-2"):
+                # Revert button (hidden initially)
+                rb = ui.button(
+                    "Revert",
+                    on_click=lambda: revert_pending(
+                        conn,
+                        pending,
+                        update_pending_display,
+                        grid_container,
+                        current_table,
+                    ),
+                ).props("flat dense no-caps size=xs color=red")
+                rb.set_visibility(False)
+                revert_btn["ref"] = rb
+
+                # Push to Canvas button (hidden initially)
+                pb = ui.button(
+                    "Push to Canvas",
+                    on_click=lambda: open_push_modal(
+                        conn,
+                        pending,
+                        update_pending_display,
+                        grid_container,
+                        current_table,
+                    ),
+                ).props("dense no-caps size=xs color=primary")
+                pb.set_visibility(False)
+                push_btn["ref"] = pb
+
+        # Detect classroom config for Clone Repos button
         try:
             from ..config import get_config
 
@@ -348,10 +392,11 @@ def _render_viewer() -> None:
                     if group["label"] == "GitHub Classroom" and has_classroom:
                         ui.space()
                         ui.button(
-                            icon="sync",
+                            "Clone Repos",
+                            icon="download",
                             on_click=open_pull_gh_modal,
-                        ).props("flat dense round size=xs color=grey-6").tooltip(
-                            "Pull repos from GitHub"
+                        ).props("flat dense no-caps size=xs color=grey-6").classes(
+                            "text-[0.6rem]"
                         )
                 # Inject GH gradebook virtual entry at top of GitHub group
                 sidebar_entries: list[tuple[str, str, bool]] = []
@@ -442,44 +487,6 @@ def _render_viewer() -> None:
                     current_table,
                 ),
             ).props("outline dense no-caps size=sm color=grey-5").classes("text-xs")
-
-            ui.space()
-
-            # Status badge
-            badge = ui.badge(
-                "Synchronized",
-                color="green",
-                text_color="white",
-            ).classes("text-[0.65rem] font-semibold")
-            pending_badge["ref"] = badge
-
-            # Revert button (hidden initially)
-            rb = ui.button(
-                "Revert",
-                on_click=lambda: revert_pending(
-                    conn,
-                    pending,
-                    update_pending_display,
-                    grid_container,
-                    current_table,
-                ),
-            ).props("flat dense no-caps size=sm color=red")
-            rb.set_visibility(False)
-            revert_btn["ref"] = rb
-
-            # Push to Canvas button (hidden initially)
-            pb = ui.button(
-                "Push to Canvas",
-                on_click=lambda: open_push_modal(
-                    conn,
-                    pending,
-                    update_pending_display,
-                    grid_container,
-                    current_table,
-                ),
-            ).props("dense no-caps size=sm color=primary")
-            pb.set_visibility(False)
-            push_btn["ref"] = pb
 
         # Toolbar row 2: search
         with ui.row().classes("w-full px-4 py-1 border-b border-white/10 bg-[#1d1d1d]"):
