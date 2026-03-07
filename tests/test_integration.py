@@ -14,18 +14,19 @@ import math
 import pytest
 
 from cass import db
+from cass.db import (
+    get_column_names,
+    get_primary_keys,
+    get_tables,
+    is_editable,
+    update_cell,
+)
+from cass.viewer.actions import pending_count, track_change
 from cass.viewer.grid import (
     build_column_defs,
     build_gh_gradebook_view,
     build_gradebook_view,
-    get_column_names,
-    get_primary_keys,
     get_table_rows,
-    get_tables,
-    is_editable,
-    pending_count,
-    track_change,
-    update_cell,
 )
 
 # ---------------------------------------------------------------------------

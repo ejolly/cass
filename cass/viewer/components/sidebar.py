@@ -8,9 +8,9 @@ from typing import TYPE_CHECKING
 
 from nicegui import ui
 
-from ...db import get_meta
+from ...db import get_meta, is_editable
 from ..config import DEV_TABLES, display_name
-from ..grid import is_editable, revert_pending
+from ..grid import revert_pending
 from ..styles import NAV_ITEM, NAV_ITEM_ACTIVE
 
 if TYPE_CHECKING:

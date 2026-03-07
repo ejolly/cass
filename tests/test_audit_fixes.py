@@ -8,6 +8,7 @@ import duckdb
 import pytest
 
 from cass import db
+from cass.db import update_cell
 from cass.models import (
     CanvasAssignment,
     CanvasStudent,
@@ -17,7 +18,6 @@ from cass.viewer.grid import (
     get_display_columns,
     get_table_rows,
     sanitize,
-    update_cell,
 )
 
 # ===================================================================
@@ -585,7 +585,7 @@ class TestRevertPendingDb:
         }
 
         # Revert using the same DB logic as revert_pending
-        from cass.viewer.grid import get_column_names, get_primary_keys
+        from cass.db import get_column_names, get_primary_keys
 
         for table, rows in pending.items():
             pk_cols = get_primary_keys(db_conn, table)
@@ -615,7 +615,7 @@ class TestRevertPendingDb:
                 ),
             ],
         )
-        from cass.viewer.grid import get_column_names
+        from cass.db import get_column_names
 
         valid_cols = set(get_column_names(db_conn, "canvas_assignments"))
         assert "fake_col" not in valid_cols

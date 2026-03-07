@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from nicegui import ui
 
+from ...db import get_primary_keys, is_editable
 from ..grid import (
     attach_date_autocommit,
     attach_edit_handler,
@@ -15,9 +16,7 @@ from ..grid import (
     build_column_defs,
     build_gh_gradebook_view,
     build_gradebook_view,
-    get_primary_keys,
     get_table_rows,
-    is_editable,
     restore_pending_cells,
     row_id_js,
 )
