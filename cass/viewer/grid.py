@@ -515,11 +515,19 @@ def build_gh_gradebook_view(
         (r[0], r[1]): (r[2], r[3], r[4]) for r in subs_raw
     }
 
-    # Build student list: Canvas name when matched, else gh_students.name
-    # Excludes students marked as hidden in the Roster
+    # Build student list: Canvas sortable_name when matched, else
+    # convert GH "First Last" → "Last, First" for consistent sorting.
+    # Excludes students marked as hidden in the Roster.
     student_rows = conn.execute(
         "SELECT gs.github_username, "
-        "COALESCE(cs.sortable_name, s.name, gs.name) AS display_name "
+        "COALESCE("
+        "  cs.sortable_name, "
+        "  CASE WHEN gs.name LIKE '% %' "
+        "    THEN split_part(gs.name, ' ', -1) "
+        "      || ', ' "
+        "      || regexp_replace(gs.name, '\\s+\\S+$', '') "
+        "    ELSE gs.name END"
+        ") AS display_name "
         "FROM gh_students gs "
         "LEFT JOIN students s ON gs.github_username = s.github_username "
         "LEFT JOIN canvas_students cs ON s.canvas_id = cs.canvas_id "

@@ -94,12 +94,21 @@ ENRICHED_QUERIES: dict[str, str] = {
     "gh_students": """
         SELECT
             gs.excluded,
-            COALESCE(s.name, gs.name) AS student,
+            COALESCE(
+                cs.sortable_name,
+                CASE WHEN gs.name LIKE '% %'
+                    THEN split_part(gs.name, ' ', -1)
+                        || ', '
+                        || regexp_replace(gs.name, '\\s+\\S+$', '')
+                    ELSE gs.name
+                END
+            ) AS student,
             gs.github_username,
             COALESCE(s.email, gs.email) AS email,
             gs.github_id
         FROM gh_students gs
         LEFT JOIN students s ON gs.github_username = s.github_username
+        LEFT JOIN canvas_students cs ON s.canvas_id = cs.canvas_id
         ORDER BY student
     """,
     "gh_assignments": """
@@ -121,7 +130,16 @@ ENRICHED_QUERIES: dict[str, str] = {
         SELECT
             gs.github_username,
             gs.assignment_slug,
-            COALESCE(s.name, gst.name, gs.github_username) AS student,
+            COALESCE(
+                cs.sortable_name,
+                CASE WHEN gst.name LIKE '% %'
+                    THEN split_part(gst.name, ' ', -1)
+                        || ', '
+                        || regexp_replace(gst.name, '\\s+\\S+$', '')
+                    ELSE gst.name
+                END,
+                gs.github_username
+            ) AS student,
             ga.title AS assignment_name,
             gs.submitted,
             gs.commit_count,
@@ -138,6 +156,7 @@ ENRICHED_QUERIES: dict[str, str] = {
         LEFT JOIN students s ON gs.github_username = s.github_username
         LEFT JOIN gh_students gst
             ON gs.github_username = gst.github_username
+        LEFT JOIN canvas_students cs ON s.canvas_id = cs.canvas_id
         LEFT JOIN gh_assignments ga ON gs.assignment_slug = ga.slug
         WHERE COALESCE(gst.excluded, false) = false
         ORDER BY gs.last_commit_at DESC, gs.github_username
