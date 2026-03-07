@@ -144,8 +144,20 @@ class ViewerPage:
         from .components.grid_panel import GridPanel
         from .components.sidebar import Sidebar
         from .components.toolbar import Toolbar
+        from .modals import (
+            CreateAssignmentModal,
+            DeleteAssignmentModal,
+            PullGHModal,
+            PushModal,
+        )
 
         load_styles()
+
+        # Create modal instances (dialog elements, hidden until .open())
+        self.push_modal = PushModal(self)
+        self.create_modal = CreateAssignmentModal(self)
+        self.delete_modal = DeleteAssignmentModal(self)
+        self.pull_gh_modal = PullGHModal(self)
 
         splitter = ui.splitter(value=_SIDEBAR_PCT, limits=(0, 50)).classes(
             "w-full h-screen"
@@ -183,16 +195,4 @@ class ViewerPage:
                     e.event.preventDefault();
                 }
             }""",
-        )
-
-    def open_push_modal(self) -> None:
-        """Open the push-to-Canvas modal."""
-        from .push_modal import open_push_modal
-
-        open_push_modal(
-            self.conn,
-            self.pending,
-            self.update_pending_display,
-            {"ref": self.grid_container},
-            {"name": self.current_table},
         )

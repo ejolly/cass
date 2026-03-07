@@ -206,7 +206,7 @@
     }
 
     /* ================================================================
-     * Push preview HTML (used inside ui.html() in push_modal)
+     * Push preview HTML (used inside ui.html() in PushModal)
      * ============================================================= */
     .v-preview-header {
         @apply text-sm font-semibold mb-1;

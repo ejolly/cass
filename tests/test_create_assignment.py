@@ -12,7 +12,7 @@ import msgspec
 import pytest
 
 from cass.models.canvas_api import CanvasAssignment, CanvasAssignmentGroup
-from cass.viewer.create_assignment_modal import (
+from cass.viewer.actions import (
     create_local_assignment,
     push_new_assignment,
     replace_local_id,

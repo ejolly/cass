@@ -4,7 +4,7 @@ from __future__ import annotations
 
 __docformat__ = "google"
 
-from cass.viewer.push_modal import build_preview_html
+from cass.viewer.actions import build_preview_html
 
 # ---------------------------------------------------------------------------
 # Normal changes
