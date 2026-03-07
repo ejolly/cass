@@ -194,10 +194,23 @@ def _sort_group(items: list[dict[str, str]], order: list[str]) -> list[dict[str,
 
 def group_tables(
     tables: list[dict[str, str]],
+    *,
+    has_classroom: bool | None = None,
 ) -> list[dict[str, Any]]:
-    """Group tables into sidebar sections."""
+    """Group tables into sidebar sections.
+
+    GitHub tables are only shown when the classroom is configured, to avoid
+    displaying empty ``gh_*`` tables in Canvas-only setups.
+    """
+    if has_classroom is None:
+        from ..config import get_config
+
+        try:
+            has_classroom = get_config().has_classroom
+        except SystemExit:
+            has_classroom = False
+
     canvas = [t for t in tables if classify_table(t["name"]) == "canvas"]
-    github = [t for t in tables if classify_table(t["name"]) == "github"]
     groups: list[dict[str, Any]] = []
     if canvas:
         groups.append(
@@ -206,11 +219,13 @@ def group_tables(
                 "items": _sort_group(canvas, _GROUP_ORDER["canvas"]),
             }
         )
-    if github:
-        groups.append(
-            {
-                "label": "GitHub Classroom",
-                "items": _sort_group(github, _GROUP_ORDER["github"]),
-            }
-        )
+    if has_classroom:
+        github = [t for t in tables if classify_table(t["name"]) == "github"]
+        if github:
+            groups.append(
+                {
+                    "label": "GitHub Classroom",
+                    "items": _sort_group(github, _GROUP_ORDER["github"]),
+                }
+            )
     return groups

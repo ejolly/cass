@@ -5,12 +5,29 @@ from __future__ import annotations
 __docformat__ = "google"
 
 import asyncio
+import re
 from pathlib import Path
 from typing import Any
 
 from nicegui import ui
 
 from .styles import load_styles
+
+# Matches Canvas course URLs like https://canvas.ucsd.edu/courses/72335
+_CANVAS_COURSE_URL_RE = re.compile(
+    r"^(https?://[^/]+)/courses/(\d+)",
+)
+
+
+def _parse_canvas_url(raw: str) -> tuple[str, int] | None:
+    """Extract (base_url, course_id) from a Canvas course URL.
+
+    Returns None if the URL doesn't match the expected pattern.
+    """
+    m = _CANVAS_COURSE_URL_RE.match(raw.strip())
+    if not m:
+        return None
+    return m.group(1), int(m.group(2))
 
 
 def setup_wizard_page(on_complete: Any) -> None:
@@ -29,14 +46,9 @@ def setup_wizard_page(on_complete: Any) -> None:
         # --- Canvas (required) ---
         with ui.card().classes("w-full"):
             ui.label("Canvas LMS").classes("v-setup-card-title")
-            ui.label("Required").classes("v-setup-card-subtitle")
-            canvas_url = ui.input(
-                label="Base URL",
-                placeholder="https://canvas.ucsd.edu",
-            ).classes("w-full")
-            canvas_course_id = ui.input(
-                label="Course ID",
-                placeholder="72335",
+            canvas_course_url = ui.input(
+                label="Course URL",
+                placeholder="https://canvas.ucsd.edu/courses/72335",
             ).classes("w-full")
             canvas_token = ui.input(
                 label="API Token",
@@ -45,9 +57,11 @@ def setup_wizard_page(on_complete: Any) -> None:
             ).classes("w-full")
 
         # --- GitHub Classroom (optional) ---
-        with ui.card().classes("w-full"):
-            ui.label("GitHub Classroom").classes("v-setup-card-title")
-            ui.label("Optional").classes("v-setup-card-subtitle")
+        with ui.expansion(
+            "GitHub Classroom",
+            caption="Optional",
+            icon="school",
+        ).classes("w-full v-setup-expansion"):
             gh_classroom_id = ui.input(
                 label="Classroom ID",
                 placeholder="299058",
@@ -66,21 +80,26 @@ def setup_wizard_page(on_complete: Any) -> None:
 
         async def handle_submit() -> None:
             # Validate Canvas fields
-            url = canvas_url.value.strip() if canvas_url.value else ""
-            cid_raw = canvas_course_id.value.strip() if canvas_course_id.value else ""
+            course_url = (
+                canvas_course_url.value.strip() if canvas_course_url.value else ""
+            )
             token = canvas_token.value.strip() if canvas_token.value else ""
 
-            if not url or not cid_raw:
-                status_label.text = "Canvas base URL and course ID are required."
+            if not course_url:
+                status_label.text = "Canvas course URL is required."
                 status_label.classes(replace="text-sm v-text-error")
                 return
 
-            try:
-                cid = int(cid_raw)
-            except ValueError:
-                status_label.text = "Course ID must be a number."
+            parsed = _parse_canvas_url(course_url)
+            if parsed is None:
+                status_label.text = (
+                    "Invalid course URL. "
+                    "Expected format: https://canvas.ucsd.edu/courses/72335"
+                )
                 status_label.classes(replace="text-sm v-text-error")
                 return
+
+            url, cid = parsed
 
             if not token:
                 status_label.text = "Canvas API token is required."
@@ -161,10 +180,10 @@ def pull_progress_page(on_complete: Any) -> None:
             progress.value = (idx + 0.5) / len(STEP_ORDER)
 
         async def run_pull() -> None:
-            from ..config import get_config
-            from ..pull import pull_all_async
-
             try:
+                from ..config import get_config
+                from ..pull import pull_all_async
+
                 cfg = get_config()
                 await pull_all_async(cfg, on_progress=on_progress)
                 progress.value = 1.0
@@ -172,7 +191,7 @@ def pull_progress_page(on_complete: Any) -> None:
                     lbl.classes(replace="text-sm font-mono v-text-success")
                 await asyncio.sleep(0.5)
                 on_complete()
-            except Exception as exc:
+            except BaseException as exc:
                 error_label.text = f"Error: {exc}"
 
         # Start pull on page load

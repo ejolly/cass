@@ -142,7 +142,7 @@ class TestViewerConfig:
             {"name": "gh_assignments", "type": "table"},
             {"name": "gh_submissions", "type": "table"},
         ]
-        groups = group_tables(tables)
+        groups = group_tables(tables, has_classroom=True)
         gh_group = next(g for g in groups if g["label"] == "GitHub Classroom")
         gh_names = [t["name"] for t in gh_group["items"]]
         # gh_gradebook is a virtual entry — it appears via the sidebar,
