@@ -22,7 +22,6 @@ DEV_TABLES = {"_canvas_assignments_synced", "_canvas_grades_synced"}
 
 READ_ONLY_TABLES = {
     "canvas_submissions",
-    "gh_assignments",
     "gh_submissions",
     "gh_students",
     "gh_grades",
@@ -94,6 +93,7 @@ HIDDEN_COLUMNS: dict[str, list[str]] = {
     "canvas_students": ["canvas_id"],
     "canvas_submissions": ["canvas_user_id", "canvas_assignment_id", "due_at"],
     "canvas_grades": ["canvas_user_id", "canvas_assignment_id"],
+    "gh_assignments": ["gh_id"],
 }
 
 COLUMN_ORDERING: dict[str, list[str]] = {
@@ -147,6 +147,17 @@ COLUMN_DISPLAY_NAMES: dict[str, dict[str, str]] = {
         "submitted_at": "Submitted",
         "score": "Score",
         "workflow_state": "State",
+    },
+    "gh_assignments": {
+        "slug": "Slug",
+        "title": "Title",
+        "deadline": "Deadline",
+        "points_possible": "Points",
+        "accepted": "Accepted",
+        "submissions_count": "Submissions",
+        "passing_count": "Passing",
+        "starter_code_repo": "Starter Repo",
+        "submittable_files": "Submittable Files",
     },
 }
 

@@ -341,7 +341,6 @@ def pull(
         False, "--submissions", help="Pull submissions only"
     ),
     do_grades: bool = typer.Option(False, "--grades", help="Pull grades only"),
-    do_fetch: bool = typer.Option(False, "--fetch", help="Also download student files"),
     limit: int = typer.Option(0, "--limit", help="Limit number of students (0 = all)"),
 ) -> None:
     """Fetch from APIs and update the local database."""
@@ -379,14 +378,6 @@ def pull(
 
     if pull_all or do_grades:
         pull_mod.pull_grades(console)
-    if do_fetch:
-        require_classroom()
-
-        async def _fetch() -> None:
-            async with GitHubClient() as c:
-                await pull_mod.pull_fetch(c, console, state.ttl, state.no_cache, limit)
-
-        asyncio.run(_fetch())
 
 
 # ---------------------------------------------------------------------------
@@ -670,17 +661,23 @@ def push(
 
 
 # ---------------------------------------------------------------------------
-# cass fetch SLUG
+# cass pull-gh
 # ---------------------------------------------------------------------------
 
 
 @app.command()
-def fetch(
-    slug: str = typer.Argument(..., help="Assignment slug (or 'all')"),
-    force: bool = typer.Option(False, "--force", help="Re-download existing files"),
-    limit: int = typer.Option(0, "--limit", help="Limit number of students (0 = all)"),
+def pull_gh(
+    assignment: str = typer.Option(
+        "", "--assignment", "-a", help="Specific assignment slug (default: all)"
+    ),
+    limit_students: int = typer.Option(
+        0, "--limit-students", "-s", help="Max students to pull (0 = all)"
+    ),
+    limit_assignments: int = typer.Option(
+        0, "--limit-assignments", "-n", help="Max assignments to pull (0 = all)"
+    ),
 ) -> None:
-    """Download student submission files."""
+    """Clone/pull student repos from GitHub Classroom into gh-classroom/."""
     import asyncio
 
     from .. import db
@@ -688,33 +685,40 @@ def fetch(
     from ..github.client import GitHubClient
 
     require_classroom()
-    students = db.load_students()
+    roster = db.load_students()
     assignments = db.load_assignments()
     gh_assignments = [a for a in assignments if a.gh_assignment_slug]
 
-    if slug == "all":
-        targets = gh_assignments
-    else:
-        targets = [a for a in gh_assignments if slug in a.slug]
+    if not gh_assignments:
+        console.print("[yellow]No GitHub-linked assignments found.[/yellow]")
+        raise typer.Exit(code=1)
+
+    if assignment:
+        targets = [a for a in gh_assignments if assignment in a.slug]
         if not targets:
-            console.print(f"[red]No assignment matching '{slug}'[/red]")
+            console.print(f"[red]No assignment matching '{assignment}'[/red]")
             raise typer.Exit(code=1)
+    else:
+        targets = gh_assignments
 
-    async def _fetch() -> None:
+    async def _pull() -> None:
         async with GitHubClient() as client:
-            for target in targets:
-                console.print(f"\n[bold]{target.gh_assignment_slug}[/bold]")
-                await fetch_mod.fetch_assignment(
-                    client,
-                    target,
-                    students,
-                    force=force,
-                    limit=limit,
-                    ttl_hours=state.ttl,
-                    force_refresh=state.no_cache,
-                )
+            counts = await fetch_mod.pull_gh(
+                client,
+                targets,
+                roster,
+                limit_students=limit_students,
+                limit_assignments=limit_assignments,
+            )
+        console.print(
+            f"\n[green]{counts['cloned']} cloned[/green], "
+            f"[cyan]{counts['updated']} updated[/cyan], "
+            f"[dim]{counts['up_to_date']} up-to-date[/dim], "
+            f"[dim]{counts['skipped']} skipped[/dim], "
+            f"[red]{counts['errors']} errors[/red]"
+        )
 
-    asyncio.run(_fetch())
+    asyncio.run(_pull())
 
 
 # ---------------------------------------------------------------------------

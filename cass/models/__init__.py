@@ -41,6 +41,7 @@ from .github_api import (
     GHContentItem,
     GHRepository,
     GHRosterEntry,
+    GHStarterCodeRepo,
     GHStudent,
     GHStudentInfo,
 )
@@ -82,6 +83,7 @@ __all__ = [
     "GHGrade",
     "GHRepository",
     "GHRosterEntry",
+    "GHStarterCodeRepo",
     "GHStudent",
     "GHStudentInfo",
     "GHSubmission",

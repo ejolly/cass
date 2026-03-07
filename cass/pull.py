@@ -17,7 +17,6 @@ from . import db
 from .canvas import matching as matching_mod
 from .config import Config
 from .github import classroom
-from .github import fetch as fetch_mod
 from .github.client import GitHubClient
 from .models import (
     Assignment,
@@ -647,26 +646,3 @@ def pull_grades_headless() -> None:
         db.save_canvas_grades(canvas_grades)
 
     db.snapshot_canvas_synced()
-
-
-async def pull_fetch(
-    client: GitHubClient,
-    console: Console,
-    ttl: float,
-    no_cache: bool,
-    limit: int,
-) -> None:
-    """Download student files from GitHub repos."""
-    students = db.load_students()
-    assignments = db.load_assignments()
-    gh_assignments = [a for a in assignments if a.gh_assignment_slug]
-    for a in gh_assignments:
-        console.print(f"\n[bold]{a.gh_assignment_slug}[/bold]")
-        await fetch_mod.fetch_assignment(
-            client,
-            a,
-            students,
-            limit=limit,
-            ttl_hours=ttl,
-            force_refresh=no_cache,
-        )
