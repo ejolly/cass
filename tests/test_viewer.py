@@ -71,6 +71,23 @@ def testget_tables_excludes_meta(viewer_conn):
     assert "logs" in names
 
 
+def testget_tables_excludes_synced(viewer_conn):
+    """Synced shadow tables are hidden from the regular table list."""
+    viewer_conn.execute(
+        "CREATE TABLE _canvas_assignments_synced "
+        "(canvas_id INTEGER PRIMARY KEY, name TEXT)"
+    )
+    viewer_conn.execute(
+        "CREATE TABLE _canvas_grades_synced ("
+        "  canvas_user_id INTEGER, canvas_assignment_id INTEGER,"
+        "  posted_grade TEXT, PRIMARY KEY (canvas_user_id, canvas_assignment_id))"
+    )
+    tables = get_tables(viewer_conn)
+    names = [t["name"] for t in tables]
+    assert "_canvas_assignments_synced" not in names
+    assert "_canvas_grades_synced" not in names
+
+
 def testget_tables_types(viewer_conn):
     tables = get_tables(viewer_conn)
     by_name = {t["name"]: t["type"] for t in tables}

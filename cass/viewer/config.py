@@ -10,7 +10,15 @@ from typing import Any
 # Constants
 # ---------------------------------------------------------------------------
 
-EXCLUDED_TABLES = {"meta", "canvas_students"}
+EXCLUDED_TABLES = {
+    "meta",
+    "canvas_students",
+    "_canvas_assignments_synced",
+    "_canvas_grades_synced",
+}
+
+# Internal tables shown only in the dev section
+DEV_TABLES = {"_canvas_assignments_synced", "_canvas_grades_synced"}
 
 READ_ONLY_TABLES = {
     "canvas_submissions",

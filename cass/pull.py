@@ -379,6 +379,8 @@ def pull_grades(console: Console) -> None:
         db.save_canvas_grades(canvas_grades)
         console.print(f"  [green]Computed {len(canvas_grades)} Canvas grades[/green]")
 
+    db.snapshot_canvas_synced()
+
 
 async def pull_all_async(
     cfg: Config,
@@ -643,6 +645,8 @@ def pull_grades_headless() -> None:
 
     if canvas_grades:
         db.save_canvas_grades(canvas_grades)
+
+    db.snapshot_canvas_synced()
 
 
 async def pull_fetch(

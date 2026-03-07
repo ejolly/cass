@@ -1,10 +1,10 @@
 """DuckDB database for cass — per-project, self-contained.
 
-Schema v9: source-specific tables (gh_*, canvas_*) with proper keys,
+Schema v10: source-specific tables (gh_*, canvas_*) with proper keys,
 master tables (students, assignments) as unified joins, and separate
-grade tables for GH display and Canvas push. v9 adds SIS fields
-(sis_user_id, sis_section_id) to canvas_students and post_manually
-to canvas_assignments.
+grade tables for GH display and Canvas push. v10 adds synced shadow
+tables (_canvas_assignments_synced, _canvas_grades_synced) for
+persistent change tracking between local edits and Canvas state.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ from .models import (
 )
 
 DB_FILENAME = "cass.duckdb"
-_SCHEMA_VERSION = 9
+_SCHEMA_VERSION = 10
 
 _conn: duckdb.DuckDBPyConnection | None = None
 
@@ -97,6 +97,8 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
             "canvas_submissions",
             "gh_grades",
             "canvas_grades",
+            "_canvas_assignments_synced",
+            "_canvas_grades_synced",
         ):
             conn.execute(f"DROP TABLE IF EXISTS {table}")
 
@@ -222,6 +224,26 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
             score DOUBLE,
             posted_grade TEXT NOT NULL DEFAULT '',
             updated_at DOUBLE NOT NULL,
+            PRIMARY KEY (canvas_user_id, canvas_assignment_id)
+        )
+    """)
+
+    # --- Synced shadow tables (last-known Canvas state) ---
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS _canvas_assignments_synced (
+            canvas_id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            points_possible DOUBLE NOT NULL DEFAULT 0,
+            due_at TIMESTAMPTZ,
+            published BOOLEAN NOT NULL DEFAULT false
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS _canvas_grades_synced (
+            canvas_user_id INTEGER NOT NULL,
+            canvas_assignment_id INTEGER NOT NULL,
+            posted_grade TEXT NOT NULL DEFAULT '',
             PRIMARY KEY (canvas_user_id, canvas_assignment_id)
         )
     """)
@@ -735,3 +757,166 @@ def load_canvas_grades(canvas_assignment_id: int | None = None) -> list[CanvasGr
 def run_query(sql: str) -> duckdb.DuckDBPyRelation:
     conn = get_db()
     return conn.sql(sql)
+
+
+# ---------------------------------------------------------------------------
+# Synced shadow tables — persistent change tracking
+# ---------------------------------------------------------------------------
+
+# Pushable columns per table (mirrors viewer/config.py CANVAS_PUSHABLE)
+_PUSHABLE: dict[str, list[str]] = {
+    "canvas_assignments": ["name", "points_possible", "due_at", "published"],
+    "canvas_grades": ["posted_grade"],
+}
+
+
+def snapshot_canvas_synced(conn: duckdb.DuckDBPyConnection | None = None) -> None:
+    """Copy current canvas tables into synced shadow tables.
+
+    Called after a successful pull to record what Canvas has.
+    """
+    c = conn or get_db()
+    c.execute("""
+        INSERT OR REPLACE INTO _canvas_assignments_synced
+            (canvas_id, name, points_possible, due_at, published)
+        SELECT canvas_id, name, points_possible, due_at, published
+        FROM canvas_assignments
+    """)
+    c.execute("""
+        INSERT OR REPLACE INTO _canvas_grades_synced
+            (canvas_user_id, canvas_assignment_id, posted_grade)
+        SELECT canvas_user_id, canvas_assignment_id, posted_grade
+        FROM canvas_grades
+    """)
+
+
+def mark_synced_assignments(
+    conn: duckdb.DuckDBPyConnection,
+    canvas_ids: list[int],
+) -> None:
+    """Update synced shadow for specific assignments after push."""
+    for cid in canvas_ids:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO _canvas_assignments_synced
+                (canvas_id, name, points_possible, due_at, published)
+            SELECT canvas_id, name, points_possible, due_at, published
+            FROM canvas_assignments WHERE canvas_id = ?
+            """,
+            [cid],
+        )
+
+
+def mark_synced_grades(
+    conn: duckdb.DuckDBPyConnection,
+    keys: list[tuple[int, int]],
+) -> None:
+    """Update synced shadow for specific grade rows after push."""
+    for uid, aid in keys:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO _canvas_grades_synced
+                (canvas_user_id, canvas_assignment_id, posted_grade)
+            SELECT canvas_user_id, canvas_assignment_id, posted_grade
+            FROM canvas_grades
+            WHERE canvas_user_id = ? AND canvas_assignment_id = ?
+            """,
+            [uid, aid],
+        )
+
+
+def get_pending_changes(
+    conn: duckdb.DuckDBPyConnection | None = None,
+) -> dict[str, dict[str, dict[str, dict[str, object]]]]:
+    """Compute pending changes by diffing main tables against synced shadows.
+
+    Returns the same ``PendingChanges`` structure used by the viewer:
+    ``{table: {pk_key: {column: {"baseline": ..., "current": ...}}}}``.
+    """
+    import json
+
+    c = conn or get_db()
+    pending: dict[str, dict[str, dict[str, dict[str, object]]]] = {}
+
+    # Synced tables may not exist yet (pre-v10 DB or no pull)
+    existing = {
+        r[0]
+        for r in c.execute(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_schema = 'main'"
+        ).fetchall()
+    }
+
+    # --- Assignments ---
+    if "_canvas_assignments_synced" in existing:
+        rows = c.execute("""
+            SELECT m.canvas_id, m.name, s.name,
+                   m.points_possible, s.points_possible,
+                   m.due_at, s.due_at,
+                   m.published, s.published
+            FROM canvas_assignments m
+            JOIN _canvas_assignments_synced s
+              ON m.canvas_id = s.canvas_id
+            WHERE m.name != s.name
+               OR m.points_possible != s.points_possible
+               OR m.due_at IS DISTINCT FROM s.due_at
+               OR m.published != s.published
+        """).fetchall()
+
+        for row in rows:
+            (
+                cid,
+                m_name,
+                s_name,
+                m_pts,
+                s_pts,
+                m_due,
+                s_due,
+                m_pub,
+                s_pub,
+            ) = row
+            pk_key = str(cid)
+            cols: dict[str, dict[str, object]] = {}
+            if m_name != s_name:
+                cols["name"] = {"baseline": s_name, "current": m_name}
+            if m_pts != s_pts:
+                cols["points_possible"] = {
+                    "baseline": s_pts,
+                    "current": m_pts,
+                }
+            if m_due != s_due:
+                cols["due_at"] = {
+                    "baseline": s_due,
+                    "current": m_due,
+                }
+            if m_pub != s_pub:
+                cols["published"] = {
+                    "baseline": s_pub,
+                    "current": m_pub,
+                }
+            if cols:
+                pending.setdefault("canvas_assignments", {})[pk_key] = cols
+
+    # --- Grades ---
+    if "_canvas_grades_synced" in existing:
+        rows = c.execute("""
+            SELECT m.canvas_user_id, m.canvas_assignment_id,
+                   m.posted_grade, s.posted_grade
+            FROM canvas_grades m
+            JOIN _canvas_grades_synced s
+              ON m.canvas_user_id = s.canvas_user_id
+             AND m.canvas_assignment_id = s.canvas_assignment_id
+            WHERE m.posted_grade != s.posted_grade
+        """).fetchall()
+
+        for uid, aid, m_grade, s_grade in rows:
+            pk = {"canvas_assignment_id": aid, "canvas_user_id": uid}
+            pk_key = json.dumps(pk, sort_keys=True)
+            pending.setdefault("canvas_grades", {})[pk_key] = {
+                "posted_grade": {
+                    "baseline": s_grade,
+                    "current": m_grade,
+                },
+            }
+
+    return pending

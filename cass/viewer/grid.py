@@ -500,6 +500,50 @@ def clear_pending_cells() -> None:
     ui.run_javascript("if (window._pendingCells) window._pendingCells.clear()")
 
 
+def restore_pending_cells(
+    grid: ui.aggrid,
+    pending: PendingChanges,
+    table_name: str,
+    pk_cols: list[str],
+    *,
+    is_gradebook: bool = False,
+) -> None:
+    """Mark all existing pending cells in the JS set and refresh the grid.
+
+    Called on table load so that persisted pending changes appear highlighted.
+    """
+    table_pending = pending.get(table_name, {})
+    if not table_pending:
+        return
+
+    js_parts: list[str] = ["window._pendingCells = window._pendingCells || new Set();"]
+    for pk_key, cols in table_pending.items():
+        if is_gradebook:
+            pk = json.loads(pk_key)
+            row_id = str(pk["canvas_user_id"])
+            for col in cols:
+                if col == "posted_grade":
+                    col_field = f"_a{pk['canvas_assignment_id']}"
+                else:
+                    col_field = col
+                js_parts.append(
+                    f"window._pendingCells.add({json.dumps(f'{row_id}::{col_field}')});"
+                )
+        else:
+            if len(pk_cols) == 1:
+                row_id = pk_key
+            else:
+                pk = json.loads(pk_key)
+                row_id = "::".join(str(pk[c]) for c in pk_cols)
+            for col in cols:
+                js_parts.append(
+                    f"window._pendingCells.add({json.dumps(f'{row_id}::{col}')});"
+                )
+
+    ui.run_javascript("".join(js_parts))
+    grid.run_grid_method("refreshCells", {"force": True})  # pyright: ignore[reportUnknownMemberType]
+
+
 def attach_date_autocommit(grid: ui.aggrid) -> None:
     """Auto-commit date/datetime editors on value selection."""
     grid.options[":onCellEditingStarted"] = _DATE_AUTOCOMMIT_JS  # pyright: ignore[reportUnknownMemberType]
