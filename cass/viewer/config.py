@@ -281,7 +281,7 @@ _DISPLAY_NAMES: dict[str, str] = {
     "canvas_grades": "Gradebook",
     "gh_students": "Roster",
     "gh_assignments": "Assignments",
-    "gh_submissions": "Submissions",
+    "gh_submissions": "Recent Commits",
     "gh_grades": "Grades",
     "students": "Students",
     "assignments": "Assignments",
@@ -294,7 +294,7 @@ _GROUP_ORDER: dict[str, list[str]] = {
         "canvas_assignments",
         "canvas_submissions",
     ],
-    "github": ["gh_assignments", "gh_submissions", "gh_students"],
+    "github": ["gh_submissions", "gh_students", "gh_assignments"],
 }
 
 
