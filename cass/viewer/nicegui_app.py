@@ -173,7 +173,8 @@ def _render_viewer() -> None:
 
     _ITEM_BASE = (
         "w-full items-center gap-1 px-4 py-1 cursor-pointer "
-        "rounded-none text-white/70 hover:bg-white/[0.08] hover:text-white/95"
+        "rounded-none text-white/70 hover:bg-white/[0.08] hover:text-white/95 "
+        "flex-nowrap"
     )
     _ITEM_ACTIVE = "bg-blue-500/20 !text-white font-semibold"
 
@@ -313,7 +314,7 @@ def _render_viewer() -> None:
 
     # --- Layout ---
 
-    _SIDEBAR_PCT = 15
+    _SIDEBAR_PCT = 18
     splitter = ui.splitter(value=_SIDEBAR_PCT, limits=(0, 40)).classes(
         "w-full h-screen"
     )
@@ -325,7 +326,7 @@ def _render_viewer() -> None:
         # Header
         course_name = get_meta("course_name", conn) or "Untitled Course"
         with ui.column().classes("w-full px-4 py-3 gap-0 border-b border-white/10"):
-            ui.label(course_name).classes("text-sm font-semibold truncate")
+            ui.label(course_name).classes("text-sm font-semibold break-words")
             ui.label("cass viewer").classes("text-[0.65rem] opacity-40 tracking-wide")
 
         # Detect classroom config for Pull GH button
@@ -380,11 +381,11 @@ def _render_viewer() -> None:
                         ui.space()
                         if editable_item:
                             ui.badge("editable").props("outline color=green").classes(
-                                "text-[0.55rem]"
+                                "text-[0.55rem] shrink-0"
                             )
                         else:
                             ui.badge("view-only").props("outline color=grey-7").classes(
-                                "text-[0.55rem]"
+                                "text-[0.55rem] shrink-0"
                             )
                     sidebar_items[tn] = item
 
