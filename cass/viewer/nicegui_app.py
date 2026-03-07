@@ -70,14 +70,6 @@ _GRID_CSS = """
 }
 .push-table .conflict-row { background: rgba(234,179,8,0.1); }
 .push-table .error-row { background: rgba(239,68,68,0.1); }
-.sidebar-resizer {
-    position: absolute; top: 0; right: 0; width: 4px; height: 100%;
-    cursor: col-resize; z-index: 10;
-    background: transparent; transition: background 0.15s;
-}
-.sidebar-resizer:hover, .sidebar-resizer.dragging {
-    background: rgba(96,165,250,0.5);
-}
 """
 
 
@@ -311,15 +303,15 @@ def _render_viewer() -> None:
 
     # --- Layout ---
 
-    # Sidebar (Quasar left drawer — toggle, mobile-responsive built-in)
-    drawer = ui.left_drawer(
-        value=True,
-        top_corner=True,
-        bottom_corner=True,
-        fixed=True,
-    ).classes("bg-[#1d1d1d] border-r border-white/10 p-0")
-    drawer.props("width=224")
-    with drawer:
+    _SIDEBAR_PCT = 15
+    splitter = ui.splitter(value=_SIDEBAR_PCT, limits=(0, 40)).classes(
+        "w-full h-screen"
+    )
+
+    def _toggle_sidebar() -> None:
+        splitter.value = 0 if splitter.value > 0 else _SIDEBAR_PCT  # pyright: ignore[reportAttributeAccessIssue]
+
+    with splitter.before, ui.column().classes("w-full h-screen bg-[#1d1d1d] p-0 gap-0"):
         # Header
         course_name = get_meta("course_name", conn) or "Untitled Course"
         with ui.column().classes("w-full px-4 py-3 gap-0 border-b border-white/10"):
@@ -404,18 +396,15 @@ def _render_viewer() -> None:
                     )
                 sidebar_items[dt] = item
 
-        # Drag resizer handle
-        ui.html('<div class="sidebar-resizer" id="sidebar-resizer"></div>')
-
     # Main content
-    with ui.column().classes("w-full flex-1 gap-0"):
+    with splitter.after, ui.column().classes("w-full flex-1 gap-0"):
         # Toolbar row 1: title, metadata, export, status, actions
         with ui.row().classes(
             "w-full items-center gap-2 px-4 py-2 border-b border-white/10 bg-[#1d1d1d]"
         ):
             ui.button(
                 icon="menu",
-                on_click=drawer.toggle,
+                on_click=_toggle_sidebar,
             ).props("flat dense round color=grey-6")
 
             tl = ui.label("").classes("text-sm font-semibold")
@@ -495,47 +484,19 @@ def _render_viewer() -> None:
         grid_container["ref"] = gc
 
     # Keyboard shortcut: Ctrl/Cmd+K -> focus search
-    # Sidebar drag-to-resize
-    ui.add_body_html("""
-    <script>
-    document.addEventListener('keydown', (e) => {
-        if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
-            e.preventDefault();
-            const input = document.querySelector('.q-field__native');
-            if (input) input.focus();
-        }
-    });
-    (function() {
-        const resizer = document.getElementById('sidebar-resizer');
-        if (!resizer) return;
-        const drawer = resizer.closest('.q-drawer');
-        if (!drawer) return;
-        let dragging = false, startX = 0, startW = 0;
-        resizer.addEventListener('mousedown', (e) => {
-            e.preventDefault();
-            dragging = true; startX = e.clientX;
-            startW = drawer.offsetWidth;
-            resizer.classList.add('dragging');
-            document.body.style.cursor = 'col-resize';
-            document.body.style.userSelect = 'none';
-        });
-        document.addEventListener('mousemove', (e) => {
-            if (!dragging) return;
-            const w = Math.max(160, Math.min(600, startW + e.clientX - startX));
-            drawer.style.width = w + 'px';
-            const page = document.querySelector('.q-page-container');
-            if (page) page.style.paddingLeft = w + 'px';
-        });
-        document.addEventListener('mouseup', () => {
-            if (!dragging) return;
-            dragging = false;
-            resizer.classList.remove('dragging');
-            document.body.style.cursor = '';
-            document.body.style.userSelect = '';
-        });
-    })();
-    </script>
-    """)
+    def _focus_search() -> None:
+        ui.run_javascript("document.querySelector('.q-field__native')?.focus()")
+
+    ui.keyboard().on(
+        "key",
+        _focus_search,
+        js_handler="""(e) => {
+            if (e.key === 'k' && (e.ctrlKey || e.metaKey) && e.action === 'keydown') {
+                emit(e);
+                e.event.preventDefault();
+            }
+        }""",
+    )
 
     # Load initial table
     if tables:
