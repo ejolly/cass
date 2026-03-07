@@ -154,7 +154,7 @@ class TestEnrichedQueries:
         by_username = {r["github_username"]: r for r in rows}
         # Matched student should have Canvas sortable_name format
         matched = by_username["alice-a"]
-        assert ", " in matched["student"]
+        assert ", " in str(matched["student"])
         # Unmatched student with a name should get "Last, First" format
         instructor = by_username["instructor"]
         assert instructor["student"] == "User, Instructor"
@@ -197,9 +197,9 @@ class TestEnrichedQueries:
         rows = db.get_enriched_rows(populated_db, "gh_submissions")
         for row in rows:
             if row["last_commit_sha"]:
-                assert row["commit_url"].startswith("https://github.com/")
-                assert "/commit/" in row["commit_url"]
-            assert row["repo_url"].startswith("https://github.com/")
+                assert str(row["commit_url"]).startswith("https://github.com/")
+                assert "/commit/" in str(row["commit_url"])
+            assert str(row["repo_url"]).startswith("https://github.com/")
 
     def test_fallback_select_star(self, populated_db):
         """Tables without enriched queries should fall back to SELECT *."""
@@ -448,7 +448,7 @@ class TestCellUpdate:
             "val",
         )
         assert not result["ok"]
-        assert "Unknown column" in result["error"]
+        assert "Unknown column" in str(result["error"])
 
     def test_update_wrong_pk_columns(self, populated_db):
         result = update_cell(
@@ -459,7 +459,7 @@ class TestCellUpdate:
             "val",
         )
         assert not result["ok"]
-        assert "Expected PK" in result["error"]
+        assert "Expected PK" in str(result["error"])
 
     def test_update_invalid_table_name(self, populated_db):
         with pytest.raises(ValueError, match="Invalid SQL"):
