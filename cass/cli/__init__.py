@@ -101,7 +101,7 @@ def require_canvas() -> None:
 
 
 def status_display() -> None:
-    from .. import cache, db
+    from .. import __version__, cache, db
     from ..config import config_file_path, get_config
 
     cfg_path = config_file_path()
@@ -113,71 +113,120 @@ def status_display() -> None:
         return
 
     cfg = get_config()
-    console.print("[bold]cass[/bold] project status\n")
-    console.print(f"  Config: {cfg_path}")
+    console.print(f"\n[bold]cass[/bold] v{__version__}")
+    console.print()
+
+    # -- Configuration -------------------------------------------------------
+    console.rule("[bold]Configuration[/bold]", style="dim")
+    console.print(f"  Config     {cfg_path}")
 
     if cfg.has_classroom:
-        console.print(
-            f"  GitHub Classroom: org=[bold]{cfg.org}[/bold] id={cfg.classroom_id}"
-        )
+        console.print(f"  Classroom  [bold]{cfg.org}[/bold] (id {cfg.classroom_id})")
     else:
-        console.print("  GitHub Classroom: [dim]not configured[/dim]")
+        console.print("  Classroom  [dim]not configured[/dim]")
 
     if cfg.has_canvas:
         console.print(
-            f"  Canvas: [bold]{cfg.canvas_base_url}[/bold] "
-            f"course={cfg.canvas_course_id}"
+            f"  Canvas     [bold]{cfg.canvas_base_url}[/bold] "
+            f"(course {cfg.canvas_course_id})"
         )
     else:
-        console.print("  Canvas: [dim]not configured[/dim]")
+        console.print("  Canvas     [dim]not configured[/dim]")
+
+    # -- Database ------------------------------------------------------------
+    console.print()
+    console.rule("[bold]Database[/bold]", style="dim")
 
     if db.is_remote():
-        console.print(f"\n  Database: [bold]{db.db_path()}[/bold] (MotherDuck)")
+        console.print(f"  Storage    [bold]{db.db_path()}[/bold] (MotherDuck)")
     else:
         db_file = Path(db.db_path())
         if db_file.exists():
             size_kb = db_file.stat().st_size / 1024
-            console.print(f"\n  Database: {db_file.name} ({size_kb:.0f} KB)")
+            console.print(f"  Storage    {db_file.name} ({size_kb:.0f} KB)")
         else:
-            console.print("\n  Database: [dim]not created yet[/dim]")
+            console.print("  Storage    [dim]not created yet[/dim]")
+            console.print()
+            console.print("  Run [bold]cass pull[/bold] to fetch data.")
+            console.print()
+            _print_command_summary()
+            return
 
     if db.is_remote() or Path(db.db_path()).exists():
         cache_kb = cache.cache_size_kb()
         if cache_kb > 0:
             console.print(
-                f"    Cache: {cache.cache_count()} entries ({cache_kb:.0f} KB)"
+                f"  Cache      {cache.cache_count()} entries ({cache_kb:.0f} KB)"
             )
         if db.students_exist():
             students = db.load_students()
             gh_count = sum(1 for s in students if s.github_username)
             console.print(
-                f"    Students: {len(students)} ({gh_count} with GitHub links)"
+                f"  Students   {len(students)} ({gh_count} with GitHub links)"
             )
         else:
-            console.print("    Students: [dim]none[/dim]")
+            console.print("  Students   [dim]none[/dim]")
         assignments = db.load_assignments()
         if assignments:
-            console.print(f"    Assignments: {len(assignments)}")
+            console.print(f"  Assignments {len(assignments)}")
 
-        # Pending Canvas changes (local edits not yet pushed)
-        pending = db.get_pending_changes()
-        total = sum(len(cols) for rows in pending.values() for cols in rows.values())
-        if total > 0:
-            console.print(
-                f"\n  [yellow bold]Pending Canvas changes: {total}[/yellow bold]"
-            )
-            for table, rows in pending.items():
-                for _pk, cols in rows.items():
-                    for col, vals in cols.items():
-                        console.print(
-                            f"    {table}.{col}: "
-                            f"[dim]{vals['baseline']}[/dim] → "
-                            f"[bold]{vals['current']}[/bold]"
-                        )
-        else:
-            console.print("\n  [green]Canvas: synchronized[/green]")
+    # -- Canvas sync status --------------------------------------------------
+    console.print()
+    console.rule("[bold]Canvas Sync[/bold]", style="dim")
+
+    pending = db.get_pending_changes()
+    total = sum(len(cols) for rows in pending.values() for cols in rows.values())
+    if total > 0:
+        noun = "change" if total == 1 else "changes"
+        console.print(f"  [yellow bold]{total} pending {noun}[/yellow bold]")
+        for table, rows in pending.items():
+            for _pk, cols in rows.items():
+                for col, vals in cols.items():
+                    console.print(
+                        f"    {table}.{col}: "
+                        f"[dim]{vals['baseline']}[/dim] → "
+                        f"[bold]{vals['current']}[/bold]"
+                    )
+        console.print()
+        console.print(
+            "  Use [bold]cass gradebook push[/bold] to synchronize with Canvas."
+        )
+    else:
+        console.print("  [green]All changes synchronized[/green]")
 
     console.print()
+    _print_command_summary()
+
+
+def _print_command_summary() -> None:
+    from rich.table import Table
+
+    table = Table(
+        show_header=False,
+        show_edge=False,
+        pad_edge=False,
+        padding=(0, 2),
+        box=None,
+    )
+    table.add_column(style="bold cyan", no_wrap=True)
+    table.add_column(style="dim")
+
+    table.add_row("pull", "Fetch data from GitHub / Canvas APIs")
+    table.add_row("students", "Show the student roster")
+    table.add_row("assignments", "Show assignment metadata")
+    table.add_row("submissions", "View submission status")
+    table.add_row("gradebook", "Student x assignment grade matrix")
+    table.add_row("gradebook push", "Push grades to Canvas LMS")
+    table.add_row("view", "Open browser-based viewer")
+    table.add_row("canvas", "Canvas LMS course management")
+    table.add_row("db", "DuckDB REPL and cache tools")
+    table.add_row("query", "Run a SQL query")
+
+    console.rule("[bold]Commands[/bold]", style="dim")
+    console.print(table)
+    console.print(
+        "\n  Run [bold]cass <command> --help[/bold] for details on any command.\n"
+    )
 
 
 # ---------------------------------------------------------------------------
