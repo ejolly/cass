@@ -498,23 +498,32 @@ def build_gh_gradebook_view(
         "SELECT slug, title, deadline FROM gh_assignments ORDER BY deadline, title"
     ).fetchall()
 
-    # Fetch all GH submissions
+    # Fetch GH submissions, excluding hidden students
+    excluded_handles = {
+        r[0]
+        for r in conn.execute(
+            "SELECT github_username FROM gh_students WHERE excluded = true"
+        ).fetchall()
+    }
     subs_raw = conn.execute(
         "SELECT github_username, assignment_slug, submitted, "
         "commit_count, commits_after_deadline "
         "FROM gh_submissions"
     ).fetchall()
+    subs_raw = [r for r in subs_raw if r[0] not in excluded_handles]
     sub_map: dict[tuple[str, str], tuple[bool, int, int]] = {
         (r[0], r[1]): (r[2], r[3], r[4]) for r in subs_raw
     }
 
     # Build student list: Canvas name when matched, else gh_students.name
+    # Excludes students marked as hidden in the Roster
     student_rows = conn.execute(
         "SELECT gs.github_username, "
         "COALESCE(cs.sortable_name, s.name, gs.name) AS display_name "
         "FROM gh_students gs "
         "LEFT JOIN students s ON gs.github_username = s.github_username "
         "LEFT JOIN canvas_students cs ON s.canvas_id = cs.canvas_id "
+        "WHERE gs.excluded = false "
         "ORDER BY display_name"
     ).fetchall()
 

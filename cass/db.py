@@ -30,7 +30,7 @@ from .models import (
 )
 
 DB_FILENAME = "cass.duckdb"
-_SCHEMA_VERSION = 12
+_SCHEMA_VERSION = 13
 
 _conn: duckdb.DuckDBPyConnection | None = None
 
@@ -114,7 +114,8 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
             github_username TEXT PRIMARY KEY,
             github_id INTEGER NOT NULL DEFAULT 0,
             name TEXT NOT NULL DEFAULT '',
-            email TEXT NOT NULL DEFAULT ''
+            email TEXT NOT NULL DEFAULT '',
+            excluded BOOLEAN NOT NULL DEFAULT false
         )
     """)
     conn.execute("""
@@ -285,8 +286,12 @@ def save_gh_students(students: list[GHStudentInfo]) -> int:
     if not students:
         return 0
     conn.executemany(
-        "INSERT OR REPLACE INTO gh_students (github_username, github_id, name, email) "
-        "VALUES (?, ?, ?, ?)",
+        "INSERT INTO gh_students (github_username, github_id, name, email) "
+        "VALUES (?, ?, ?, ?) "
+        "ON CONFLICT (github_username) DO UPDATE SET "
+        "github_id = EXCLUDED.github_id, "
+        "name = EXCLUDED.name, "
+        "email = EXCLUDED.email",
         [
             (s.login.lower(), int(s.id) if s.id else 0, s.name, s.email)
             for s in students
