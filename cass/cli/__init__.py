@@ -159,6 +159,24 @@ def status_display() -> None:
         if assignments:
             console.print(f"    Assignments: {len(assignments)}")
 
+        # Pending Canvas changes (local edits not yet pushed)
+        pending = db.get_pending_changes()
+        total = sum(len(cols) for rows in pending.values() for cols in rows.values())
+        if total > 0:
+            console.print(
+                f"\n  [yellow bold]Pending Canvas changes: {total}[/yellow bold]"
+            )
+            for table, rows in pending.items():
+                for _pk, cols in rows.items():
+                    for col, vals in cols.items():
+                        console.print(
+                            f"    {table}.{col}: "
+                            f"[dim]{vals['baseline']}[/dim] → "
+                            f"[bold]{vals['current']}[/bold]"
+                        )
+        else:
+            console.print("\n  [green]Canvas: synchronized[/green]")
+
     console.print()
 
 

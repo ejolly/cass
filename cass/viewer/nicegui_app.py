@@ -10,10 +10,11 @@ import duckdb
 from nicegui import ui
 
 from ..config import config_file_path
-from ..db import DB_FILENAME
+from ..db import DB_FILENAME, get_pending_changes
 from ..db import reset as db_reset
 from .config import (
     CANVAS_PUSHABLE,
+    DEV_TABLES,
     PendingChanges,
     display_name,
     group_tables,
@@ -32,6 +33,7 @@ from .grid import (
     get_tables,
     is_editable,
     pending_count,
+    restore_pending_cells,
     revert_pending,
     row_id_js,
     track_change,
@@ -146,7 +148,7 @@ def _render_viewer() -> None:
     conn = duckdb.connect(db_path())
     tables = get_tables(conn)
     groups = group_tables(tables)
-    pending: PendingChanges = {}
+    pending: PendingChanges = get_pending_changes(conn)
 
     ui.add_head_html(f"<style>{_GRID_CSS}</style>")
 
@@ -282,6 +284,14 @@ def _render_viewer() -> None:
                 if is_gb or editable_flag:
                     attach_date_autocommit(grid)
 
+                # Restore pending cell highlights from persisted state
+                if is_gb:
+                    restore_pending_cells(
+                        grid, pending, "canvas_grades", [], is_gradebook=True
+                    )
+                elif editable_flag:
+                    restore_pending_cells(grid, pending, table_name, pk_cols)
+
         # Refresh pending/push display for new table context
         update_pending_display()
 
@@ -348,6 +358,30 @@ def _render_viewer() -> None:
                                 "text-[0.55rem]"
                             )
                     sidebar_items[tn] = item
+
+            # Dev section — collapsible, shows internal/synced tables
+            dev_tables = sorted(DEV_TABLES)
+            with (
+                ui.expansion("Dev", icon="code")
+                .classes(
+                    "w-full text-[0.7rem] font-bold tracking-wider"
+                    " opacity-40 uppercase px-0"
+                )
+                .props("dense header-class='px-4 py-1'")
+            ):
+                for dt in dev_tables:
+                    item = (
+                        ui.row()
+                        .classes(_ITEM_BASE)
+                        .on("click", lambda _e, n=dt: load_table(n))
+                    )
+                    with item:
+                        ui.label(dt).classes("text-xs font-mono opacity-60")
+                        ui.space()
+                        ui.badge("internal").props("outline color=grey-8").classes(
+                            "text-[0.55rem]"
+                        )
+                    sidebar_items[dt] = item
 
     # Main content
     with ui.column().classes("w-full flex-1 gap-0"):

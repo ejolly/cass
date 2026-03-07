@@ -17,6 +17,7 @@ from ..canvas.sync import (
     resolve_row_name,
     values_equal,
 )
+from ..db import mark_synced_assignments, mark_synced_grades
 
 if TYPE_CHECKING:
     from ..canvas.client import CanvasClient
@@ -211,6 +212,9 @@ def canvas_apply(
         return {"ok": True, "results": []}
 
     results: list[dict[str, object]] = []
+    synced_assignment_ids: list[int] = []
+    synced_grade_keys: list[tuple[int, int]] = []
+
     with CanvasClient() as c:
         if assignment_changes:
             updates = _extract_assignment_updates(assignment_changes)
@@ -219,7 +223,9 @@ def canvas_apply(
             # Clear successful entries from pending
             for r in a_results:
                 if r.get("ok"):
-                    assignment_changes.pop(str(r["canvas_id"]), None)
+                    cid = int(r["canvas_id"])  # type: ignore[arg-type]
+                    assignment_changes.pop(str(cid), None)
+                    synced_assignment_ids.append(cid)
 
         if grade_changes:
             grade_data, pk_keys = _extract_grade_data(grade_changes)
@@ -231,6 +237,16 @@ def canvas_apply(
                     aid: int = r["canvas_assignment_id"]  # type: ignore[assignment]
                     for pk_key in pk_keys.get(aid, []):
                         grade_changes.pop(pk_key, None)
+                        pk = json.loads(pk_key)
+                        synced_grade_keys.append(
+                            (pk["canvas_user_id"], pk["canvas_assignment_id"])
+                        )
+
+    # Update synced shadow tables for successfully pushed entries
+    if synced_assignment_ids:
+        mark_synced_assignments(conn, synced_assignment_ids)
+    if synced_grade_keys:
+        mark_synced_grades(conn, synced_grade_keys)
 
     # Clean up empty table entries
     if not assignment_changes:

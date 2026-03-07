@@ -290,3 +290,146 @@ def test_db_path_motherduck(tmp_path, monkeypatch):
     monkeypatch.setattr("cass.db.get_config", lambda: cfg)
     assert db.db_path() == "md:my_db"
     assert db.is_remote() is True
+
+
+# --- Synced shadow tables ---
+
+
+def test_snapshot_canvas_synced(db_conn):
+    """snapshot_canvas_synced copies canvas data to shadow tables."""
+    from cass.models import CanvasAssignment
+
+    db.save_canvas_assignments(
+        [CanvasAssignment(id=1, name="HW1", points_possible=10.0, published=True)]
+    )
+    db.save_canvas_grades(
+        [
+            CanvasGrade(
+                canvas_user_id=100, canvas_assignment_id=1, score=8.0, posted_grade="8"
+            )
+        ]
+    )
+    db.snapshot_canvas_synced(db_conn)
+
+    row = db_conn.execute(
+        "SELECT name, points_possible "
+        "FROM _canvas_assignments_synced WHERE canvas_id = 1"
+    ).fetchone()
+    assert row == ("HW1", 10.0)
+
+    row = db_conn.execute(
+        "SELECT posted_grade FROM _canvas_grades_synced "
+        "WHERE canvas_user_id = 100 AND canvas_assignment_id = 1"
+    ).fetchone()
+    assert row == ("8",)
+
+
+def test_get_pending_changes_empty(db_conn):
+    """No pending changes when main and synced tables match."""
+    from cass.models import CanvasAssignment
+
+    db.save_canvas_assignments(
+        [CanvasAssignment(id=1, name="HW1", points_possible=10.0, published=True)]
+    )
+    db.save_canvas_grades(
+        [
+            CanvasGrade(
+                canvas_user_id=100, canvas_assignment_id=1, score=8.0, posted_grade="8"
+            )
+        ]
+    )
+    db.snapshot_canvas_synced(db_conn)
+
+    pending = db.get_pending_changes(db_conn)
+    assert pending == {}
+
+
+def test_get_pending_changes_assignment_edit(db_conn):
+    """Editing an assignment name shows as pending."""
+    from cass.models import CanvasAssignment
+
+    db.save_canvas_assignments(
+        [CanvasAssignment(id=1, name="HW1", points_possible=10.0, published=True)]
+    )
+    db.snapshot_canvas_synced(db_conn)
+
+    # Simulate user editing the name
+    db_conn.execute(
+        "UPDATE canvas_assignments SET name = 'Homework 1' WHERE canvas_id = 1"
+    )
+
+    pending = db.get_pending_changes(db_conn)
+    assert "canvas_assignments" in pending
+    assert "1" in pending["canvas_assignments"]
+    change = pending["canvas_assignments"]["1"]["name"]
+    assert change["baseline"] == "HW1"
+    assert change["current"] == "Homework 1"
+
+
+def test_get_pending_changes_grade_edit(db_conn):
+    """Editing a grade shows as pending."""
+    db.save_canvas_grades(
+        [
+            CanvasGrade(
+                canvas_user_id=100, canvas_assignment_id=1, score=8.0, posted_grade="8"
+            )
+        ]
+    )
+    db.snapshot_canvas_synced(db_conn)
+
+    # Simulate user editing the grade
+    db_conn.execute(
+        "UPDATE canvas_grades SET posted_grade = '9' "
+        "WHERE canvas_user_id = 100 AND canvas_assignment_id = 1"
+    )
+
+    pending = db.get_pending_changes(db_conn)
+    assert "canvas_grades" in pending
+    import json
+
+    pk_key = json.dumps(
+        {"canvas_assignment_id": 1, "canvas_user_id": 100}, sort_keys=True
+    )
+    assert pk_key in pending["canvas_grades"]
+    assert pending["canvas_grades"][pk_key]["posted_grade"]["baseline"] == "8"
+    assert pending["canvas_grades"][pk_key]["posted_grade"]["current"] == "9"
+
+
+def test_mark_synced_assignments(db_conn):
+    """mark_synced_assignments updates the shadow after push."""
+    from cass.models import CanvasAssignment
+
+    db.save_canvas_assignments(
+        [CanvasAssignment(id=1, name="HW1", points_possible=10.0, published=True)]
+    )
+    db.snapshot_canvas_synced(db_conn)
+
+    # Edit + mark synced
+    db_conn.execute(
+        "UPDATE canvas_assignments SET name = 'Homework 1' WHERE canvas_id = 1"
+    )
+    assert db.get_pending_changes(db_conn) != {}
+
+    db.mark_synced_assignments(db_conn, [1])
+    assert db.get_pending_changes(db_conn) == {}
+
+
+def test_mark_synced_grades(db_conn):
+    """mark_synced_grades updates the shadow after push."""
+    db.save_canvas_grades(
+        [
+            CanvasGrade(
+                canvas_user_id=100, canvas_assignment_id=1, score=8.0, posted_grade="8"
+            )
+        ]
+    )
+    db.snapshot_canvas_synced(db_conn)
+
+    db_conn.execute(
+        "UPDATE canvas_grades SET posted_grade = '9' "
+        "WHERE canvas_user_id = 100 AND canvas_assignment_id = 1"
+    )
+    assert db.get_pending_changes(db_conn) != {}
+
+    db.mark_synced_grades(db_conn, [(100, 1)])
+    assert db.get_pending_changes(db_conn) == {}
