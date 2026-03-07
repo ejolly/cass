@@ -63,8 +63,21 @@ _LINK_JS = """
 }
 """.strip()
 
+_DATE_LINK_JS = """
+(params) => {
+    if (!params.value) return '';
+    const url = params.data && params.data.commit_url;
+    if (url) {
+        return '<a href="' + url + '" target="_blank" '
+            + 'style="color:#60a5fa;text-decoration:underline">'
+            + params.value + '</a>';
+    }
+    return params.value;
+}
+""".strip()
+
 # URL columns that should render as clickable links
-_LINK_COLUMNS = {"repo_url", "commit_url"}
+_LINK_COLUMNS = {"repo_url"}
 
 _DATETIME_JS = """
 (params) => {
@@ -312,9 +325,13 @@ def build_column_defs(
             "resizable": True,
         }
 
-        # Link columns (repo_url, commit_url)
+        # Link columns
         if name in _LINK_COLUMNS:
             col_def[":cellRenderer"] = _LINK_JS
+
+        # Last commit date as link to commit
+        if name == "last_commit_at" and table == "gh_submissions":
+            col_def[":cellRenderer"] = _DATE_LINK_JS
 
         # Datetime formatting
         elif _is_datetime_col(dtype):
