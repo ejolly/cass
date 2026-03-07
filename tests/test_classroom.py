@@ -1,7 +1,9 @@
 """Tests for cass.classroom — typed struct decoding via msgspec.convert."""
 
 import msgspec
+import pytest
 
+from cass.github.fetch import sanitize_student_dir
 from cass.models import (
     GHAcceptedAssignment,
     GHAssignment,
@@ -113,3 +115,42 @@ def test_convert_ignores_extra_fields():
     result = msgspec.convert(data, GHAssignment)
     assert result.id == 123
     assert result.slug == "hw-01"
+
+
+def test_convert_gh_assignment_with_starter_code():
+    data = {
+        "id": 123,
+        "slug": "hw-01",
+        "title": "Homework 01",
+        "starter_code_repository": {
+            "id": 456,
+            "full_name": "psyc-201/hw-01-starter",
+        },
+    }
+    result = msgspec.convert(data, GHAssignment)
+    assert result.starter_code_repository is not None
+    assert result.starter_code_repository.full_name == "psyc-201/hw-01-starter"
+
+
+def test_convert_gh_assignment_no_starter_code():
+    data = {"id": 123, "slug": "hw-01", "title": "Homework 01"}
+    result = msgspec.convert(data, GHAssignment)
+    assert result.starter_code_repository is None
+
+
+# --- sanitize_student_dir ---
+
+
+@pytest.mark.parametrize(
+    "sortable,gh,expected",
+    [
+        ("Smith, Alice", "asmith", "smith-alice"),
+        ("De La Cruz, Maria", "mcruz", "de-la-cruz-maria"),
+        ("", "asmith", "asmith"),
+        ("  Doe ,  Jane  ", "jdoe", "doe-jane"),
+        ("O'Brien, Sean", "sobrien", "obrien-sean"),
+        ("Madonna", "madonna", "madonna"),
+    ],
+)
+def test_sanitize_student_dir(sortable: str, gh: str, expected: str):
+    assert sanitize_student_dir(sortable, gh) == expected

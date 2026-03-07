@@ -1,162 +1,177 @@
-"""Download student assignment files from GitHub repos."""
+"""Download student repos from GitHub Classroom via git clone/pull.
+
+Clones student forks into ``gh-classroom/{last-first}/{assignment-slug}/``
+next to ``cass.toml``. Re-pulls use ``git fetch + reset --hard`` so the
+remote always wins — no merge conflicts.
+"""
 
 from __future__ import annotations
 
 __docformat__ = "google"
 
+import re
 import subprocess
 from pathlib import Path
 
-import msgspec
 from rich.console import Console
 
 from ..config import get_config
-from ..models import Assignment, GHContentItem, Student
+from ..models import Assignment, Student
 from .classroom import build_repo_map
 from .client import GitHubClient
 
+GH_CLASSROOM_DIR = "gh-classroom"
+
 console = Console()
 
-_CODE_EXTS = {".py", ".qmd"}
-_PDF_EXTS = {".pdf"}
 
-# Download destination: {project_root}/students/{student}/{assignment}/
-STUDENTS_DIR = "students"
+def sanitize_student_dir(sortable_name: str, github_username: str) -> str:
+    """Convert a student identity into a filesystem-safe directory name.
 
-_FINAL_PROJECT_SLUG = "final-project"
+    Uses Canvas ``sortable_name`` ("Last, First") when available,
+    falling back to ``github_username``.  Result is lowercased with
+    spaces/commas replaced by hyphens and non-alphanumeric chars stripped.
+
+    Examples:
+        >>> sanitize_student_dir("Smith, Alice", "asmith")
+        'smith-alice'
+        >>> sanitize_student_dir("De La Cruz, Maria", "mcruz")
+        'de-la-cruz-maria'
+        >>> sanitize_student_dir("", "asmith")
+        'asmith'
+    """
+    raw = sortable_name or github_username
+    # Replace commas and whitespace runs with a single hyphen
+    name = re.sub(r"[,\s]+", "-", raw.strip())
+    # Strip anything that isn't alphanumeric or hyphen
+    name = re.sub(r"[^a-zA-Z0-9-]", "", name)
+    # Collapse multiple hyphens, strip leading/trailing
+    name = re.sub(r"-{2,}", "-", name).strip("-").lower()
+    return name or github_username.lower()
 
 
-def student_dir(student: Student) -> str:
-    if student.github_username:
-        return student.github_username.lower()
-    return student.display_name.lower().replace(" ", "-")
+def _get_sortable_names() -> dict[int, str]:
+    """Load canvas_id → sortable_name from the canvas_students table."""
+    from .. import db
+
+    conn = db.get_db()
+    rows = conn.execute(
+        "SELECT canvas_id, sortable_name FROM canvas_students"
+    ).fetchall()
+    return {r[0]: r[1] for r in rows if r[1]}
 
 
-def download_file(url: str, dest: Path) -> bool:
+def _student_dir_name(student: Student, sortable_map: dict[int, str]) -> str:
+    """Resolve directory name for a student."""
+    sortable = sortable_map.get(student.canvas_id, "")
+    return sanitize_student_dir(sortable, student.github_username)
+
+
+def _clone_or_pull(repo_url: str, dest: Path) -> str:
+    """Clone (shallow) or force-pull a repo into *dest*.
+
+    Returns:
+        "cloned", "updated", or "up-to-date".
+    """
+    if (dest / ".git").exists():
+        # Fetch latest and hard-reset to remote HEAD
+        result = subprocess.run(
+            ["git", "-C", str(dest), "fetch", "origin"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"git fetch failed: {result.stderr.strip()}")
+
+        # Check if there are changes
+        diff = subprocess.run(
+            ["git", "-C", str(dest), "diff", "HEAD", "origin/HEAD", "--stat"],
+            capture_output=True,
+            text=True,
+        )
+        if not diff.stdout.strip():
+            return "up-to-date"
+
+        subprocess.run(
+            ["git", "-C", str(dest), "reset", "--hard", "origin/HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return "updated"
+
     dest.parent.mkdir(parents=True, exist_ok=True)
     result = subprocess.run(
-        ["curl", "-sL", "-o", str(dest), url],
+        ["git", "clone", "--depth", "1", repo_url, str(dest)],
         capture_output=True,
         text=True,
     )
-    if result.returncode != 0 or not dest.exists() or dest.stat().st_size == 0:
-        if dest.exists():
-            dest.unlink()
-        return False
-    return True
+    if result.returncode != 0:
+        raise RuntimeError(f"git clone failed: {result.stderr.strip()}")
+    return "cloned"
 
 
-async def list_contents(
+async def pull_gh(
     client: GitHubClient,
-    repo_short: str,
-    path: str = "",
-    ttl_hours: float = 6,
-    force_refresh: bool = False,
-) -> list[GHContentItem]:
-    cfg = get_config()
-    endpoint = f"/repos/{cfg.org}/{repo_short}/contents/{path}".rstrip("/")
-    try:
-        data = await client.get_cached(
-            endpoint, ttl_hours=ttl_hours, force_refresh=force_refresh
-        )
-    except Exception:
-        return []
-    if not isinstance(data, list):
-        return []
-    return msgspec.convert(data, list[GHContentItem])
-
-
-async def fetch_assignment(
-    client: GitHubClient,
-    assignment: Assignment,
+    assignments: list[Assignment],
     students: list[Student],
-    force: bool = False,
-    limit: int = 0,
-    ttl_hours: float = 6,
-    force_refresh: bool = False,
-) -> None:
-    """Download files for one assignment across all students."""
-    slug = assignment.gh_assignment_slug or assignment.slug
-    repo_map = await build_repo_map(
-        client, slug, ttl_hours=ttl_hours, force_refresh=force_refresh
-    )
-    is_final = slug == _FINAL_PROJECT_SLUG
-    dest_root = get_config().root / STUDENTS_DIR
+    *,
+    limit_students: int = 0,
+    limit_assignments: int = 0,
+) -> dict[str, int]:
+    """Clone/pull student repos for the given assignments.
 
-    downloaded = 0
-    skipped = 0
-    errors = 0
+    Args:
+        client: Authenticated GitHub API client (for ``build_repo_map``).
+        assignments: Assignments to fetch (already filtered to GH-linked).
+        students: Student roster.
+        limit_students: Cap number of students (0 = all).
+        limit_assignments: Cap number of assignments (0 = all).
+
+    Returns:
+        Counts dict with keys: cloned, updated, up_to_date, skipped, errors.
+    """
+    cfg = get_config()
+    dest_root = cfg.root / GH_CLASSROOM_DIR
+    sortable_map = _get_sortable_names()
 
     sorted_students = sorted(students, key=lambda s: s.display_name.lower())
-    if limit > 0:
-        sorted_students = sorted_students[:limit]
+    if limit_students > 0:
+        sorted_students = sorted_students[:limit_students]
 
-    for student in sorted_students:
-        if not student.github_username:
-            continue
-        repo_short = repo_map.get(student.handle_lower)
-        if not repo_short:
-            console.print(f"  [dim]{student.display_name}: no repo[/dim]")
-            errors += 1
-            continue
+    if limit_assignments > 0:
+        assignments = assignments[:limit_assignments]
 
-        student_slug = student_dir(student)
-        dest_dir = dest_root / student_slug / slug
+    counts = {"cloned": 0, "updated": 0, "up_to_date": 0, "skipped": 0, "errors": 0}
 
-        if is_final:
-            contents = await list_contents(
-                client,
-                repo_short,
-                "pdfs",
-                ttl_hours=ttl_hours,
-                force_refresh=force_refresh,
-            )
-            if not contents:
-                console.print(f"  [dim]{student.display_name}: no pdfs/ dir[/dim]")
-                errors += 1
-                continue
-            target_exts = _PDF_EXTS
-        else:
-            contents = await list_contents(
-                client,
-                repo_short,
-                "",
-                ttl_hours=ttl_hours,
-                force_refresh=force_refresh,
-            )
-            if not contents:
-                console.print(f"  [dim]{student.display_name}: empty repo[/dim]")
-                errors += 1
-                continue
-            target_exts = _CODE_EXTS
+    for a in assignments:
+        slug = a.gh_assignment_slug or a.slug
+        console.print(f"\n[bold]{slug}[/bold]")
 
-        for item in contents:
-            if item.type != "file":
-                continue
-            ext = Path(item.name).suffix.lower()
-            if ext not in target_exts:
+        repo_map = await build_repo_map(client, slug)
+
+        for student in sorted_students:
+            if not student.github_username:
+                counts["skipped"] += 1
                 continue
 
-            dest_path = dest_dir / item.name
-            if dest_path.exists() and not force:
-                skipped += 1
+            repo_short = repo_map.get(student.handle_lower)
+            if not repo_short:
+                console.print(f"  [dim]{student.display_name}: no repo[/dim]")
+                counts["skipped"] += 1
                 continue
 
-            if not item.download_url:
-                continue
-            download_url = item.download_url
+            dir_name = _student_dir_name(student, sortable_map)
+            dest = dest_root / dir_name / slug
+            repo_url = f"https://github.com/{cfg.org}/{repo_short}.git"
 
-            if download_file(download_url, dest_path):
-                downloaded += 1
-            else:
-                console.print(
-                    f"  [red]{student.display_name}: "
-                    f"failed to download {item.name}[/red]"
-                )
-                errors += 1
+            try:
+                status = _clone_or_pull(repo_url, dest)
+                counts[status.replace("-", "_")] += 1
+                if status != "up-to-date":
+                    console.print(f"  [green]{student.display_name}: {status}[/green]")
+            except RuntimeError as exc:
+                console.print(f"  [red]{student.display_name}: {exc}[/red]")
+                counts["errors"] += 1
 
-    console.print(
-        f"  [green]{downloaded} downloaded[/green], "
-        f"[dim]{skipped} skipped[/dim], "
-        f"[red]{errors} errors[/red]"
-    )
+    return counts

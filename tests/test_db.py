@@ -7,7 +7,9 @@ from cass.models import (
     CanvasGrade,
     CanvasStudent,
     CanvasSubmission,
+    GHAssignment,
     GHGrade,
+    GHStarterCodeRepo,
     GHStudentInfo,
     GHSubmission,
     Student,
@@ -412,6 +414,40 @@ def test_mark_synced_assignments(db_conn):
 
     db.mark_synced_assignments(db_conn, [1])
     assert db.get_pending_changes(db_conn) == {}
+
+
+def test_gh_assignments_with_starter_code(db_conn):
+    """save_gh_assignments stores starter_code_repo and preserves submittable_files."""
+    assignments = [
+        GHAssignment(
+            id=1,
+            slug="hw-01",
+            title="Homework 01",
+            starter_code_repository=GHStarterCodeRepo(
+                id=99, full_name="org/hw-01-starter"
+            ),
+        ),
+    ]
+    db.save_gh_assignments(assignments)
+    row = db_conn.execute(
+        "SELECT starter_code_repo, submittable_files "
+        "FROM gh_assignments WHERE slug = 'hw-01'"
+    ).fetchone()
+    assert row[0] == "org/hw-01-starter"
+    assert row[1] == ""  # default empty
+
+    # Simulate user editing submittable_files
+    db_conn.execute(
+        "UPDATE gh_assignments SET submittable_files = 'homework.py,homework.qmd' "
+        "WHERE slug = 'hw-01'"
+    )
+
+    # Re-save from API — should NOT overwrite submittable_files
+    db.save_gh_assignments(assignments)
+    row = db_conn.execute(
+        "SELECT submittable_files FROM gh_assignments WHERE slug = 'hw-01'"
+    ).fetchone()
+    assert row[0] == "homework.py,homework.qmd"
 
 
 def test_mark_synced_grades(db_conn):

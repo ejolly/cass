@@ -16,6 +16,13 @@ class GHStudentInfo(msgspec.Struct):
     email: str = ""
 
 
+class GHStarterCodeRepo(msgspec.Struct):
+    """Starter code / template repository for a GitHub Classroom assignment."""
+
+    id: int = 0
+    full_name: str = ""
+
+
 class GHAssignment(msgspec.Struct):
     id: int
     slug: str
@@ -24,6 +31,7 @@ class GHAssignment(msgspec.Struct):
     accepted: int = 0
     submissions: int = 0
     passing: int = 0
+    starter_code_repository: GHStarterCodeRepo | None = None
 
 
 class GHStudent(msgspec.Struct):

@@ -30,7 +30,7 @@ from .models import (
 )
 
 DB_FILENAME = "cass.duckdb"
-_SCHEMA_VERSION = 10
+_SCHEMA_VERSION = 11
 
 _conn: duckdb.DuckDBPyConnection | None = None
 
@@ -137,7 +137,9 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
             points_possible DOUBLE NOT NULL DEFAULT 1.0,
             accepted INTEGER NOT NULL DEFAULT 0,
             submissions_count INTEGER NOT NULL DEFAULT 0,
-            passing_count INTEGER NOT NULL DEFAULT 0
+            passing_count INTEGER NOT NULL DEFAULT 0,
+            starter_code_repo TEXT NOT NULL DEFAULT '',
+            submittable_files TEXT NOT NULL DEFAULT ''
         )
     """)
     conn.execute("""
@@ -391,7 +393,7 @@ def save_gh_assignments(assignments: list[GHAssignment]) -> int:
         return 0
     from datetime import datetime
 
-    rows: list[tuple[str, int, str, datetime | None, float, int, int, int]] = []
+    rows: list[tuple[str, int, str, datetime | None, float, int, int, int, str]] = []
     for a in assignments:
         deadline: datetime | None = None
         if a.deadline:
@@ -399,6 +401,9 @@ def save_gh_assignments(assignments: list[GHAssignment]) -> int:
                 deadline = datetime.fromisoformat(a.deadline)
             except ValueError:
                 pass
+        starter = ""
+        if a.starter_code_repository and a.starter_code_repository.full_name:
+            starter = a.starter_code_repository.full_name
         rows.append(
             (
                 a.slug,
@@ -409,19 +414,22 @@ def save_gh_assignments(assignments: list[GHAssignment]) -> int:
                 a.accepted,
                 a.submissions,
                 a.passing,
+                starter,
             )
         )
     for row in rows:
         conn.execute(
             "INSERT INTO gh_assignments "
             "(slug, gh_id, title, deadline, points_possible, accepted, "
-            "submissions_count, passing_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+            "submissions_count, passing_count, starter_code_repo) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT (slug) DO UPDATE SET "
             "gh_id = EXCLUDED.gh_id, title = EXCLUDED.title, "
             "deadline = EXCLUDED.deadline, points_possible = EXCLUDED.points_possible, "
             "accepted = EXCLUDED.accepted, "
             "submissions_count = EXCLUDED.submissions_count, "
-            "passing_count = EXCLUDED.passing_count",
+            "passing_count = EXCLUDED.passing_count, "
+            "starter_code_repo = EXCLUDED.starter_code_repo",
             row,
         )
     return len(rows)
