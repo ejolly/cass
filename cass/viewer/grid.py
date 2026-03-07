@@ -12,12 +12,12 @@ from typing import Any, Literal, cast
 import duckdb
 from nicegui import ui
 
+from ..db import ENRICHED_QUERIES
 from . import values_equal
 from .config import (
     CANVAS_PUSHABLE,
     COLUMN_DISPLAY_NAMES,
     COLUMN_ORDERING,
-    ENRICHED_QUERIES,
     EXCLUDED_TABLES,
     HIDDEN_COLUMNS,
     READ_ONLY_TABLES,
@@ -91,29 +91,12 @@ _DATETIME_JS = """
 }
 """.strip()
 
-_DATE_JS = """
+_LATE_HIGHLIGHT_JS = """
 (params) => {
     if (!params.value) return '';
-    const d = new Date(params.value);
-    if (isNaN(d)) return params.value;
-    return d.toLocaleDateString('en-US', {
-        month: 'short', day: 'numeric', year: 'numeric'
-    });
-}
-""".strip()
-
-_SUBMISSION_DATE_JS = """
-(params) => {
-    if (!params.value) return '';
-    const d = new Date(params.value);
-    if (isNaN(d)) return params.value;
-    const due = params.data && params.data.due_at ? new Date(params.data.due_at) : null;
-    const text = d.toLocaleDateString('en-US', {
-        month: 'short', day: 'numeric', year: 'numeric',
-        hour: 'numeric', minute: '2-digit'
-    });
-    if (due && d > due) return '<span style="color:#f87171">' + text + '</span>';
-    return text;
+    if (params.data && params.data.late)
+        return '<span style="color:#f87171">' + params.value + '</span>';
+    return params.value;
 }
 """.strip()
 
@@ -307,11 +290,9 @@ def build_column_defs(
     # Pre-fetch select editor values for canvas_assignments
     group_values: list[str] = []
     if table == "canvas_assignments":
-        group_rows = conn.execute(
-            "SELECT DISTINCT assignment_group FROM canvas_assignments "
-            "WHERE assignment_group != '' ORDER BY assignment_group"
-        ).fetchall()
-        group_values = [row[0] for row in group_rows]
+        from ..db import get_assignment_groups
+
+        group_values = get_assignment_groups(conn)
 
     defs: list[dict[str, Any]] = []
     for name in display_cols:
@@ -336,7 +317,7 @@ def build_column_defs(
         # Datetime formatting
         elif _is_datetime_col(dtype):
             if table == "canvas_submissions" and name == "submitted_at":
-                col_def[":cellRenderer"] = _SUBMISSION_DATE_JS
+                col_def[":cellRenderer"] = _LATE_HIGHLIGHT_JS
             else:
                 col_def[":valueFormatter"] = _DATETIME_JS
             # Date string editor for editable datetime columns
@@ -515,19 +496,15 @@ def build_gh_gradebook_view(
         "SELECT slug, title, deadline FROM gh_assignments ORDER BY deadline, title"
     ).fetchall()
 
-    # Fetch GH submissions, excluding hidden students
-    excluded_handles = {
-        r[0]
-        for r in conn.execute(
-            "SELECT github_username FROM gh_students WHERE excluded = true"
-        ).fetchall()
-    }
+    # Fetch GH submissions, excluding hidden students via SQL
     subs_raw = conn.execute(
-        "SELECT github_username, assignment_slug, submitted, "
-        "commit_count, commits_after_deadline "
-        "FROM gh_submissions"
+        "SELECT gs.github_username, gs.assignment_slug, gs.submitted, "
+        "gs.commit_count, gs.commits_after_deadline "
+        "FROM gh_submissions gs "
+        "LEFT JOIN gh_students gst "
+        "  ON gs.github_username = gst.github_username "
+        "WHERE COALESCE(gst.excluded, false) = false"
     ).fetchall()
-    subs_raw = [r for r in subs_raw if r[0] not in excluded_handles]
     sub_map: dict[tuple[str, str], tuple[bool, int, int]] = {
         (r[0], r[1]): (r[2], r[3], r[4]) for r in subs_raw
     }
@@ -787,31 +764,15 @@ def attach_gradebook_edit_handler(
         if not col_field or not col_field.startswith("_a") or "value" not in data:
             return
 
+        from ..db import upsert_canvas_grade
+
         canvas_assignment_id = int(col_field[2:])  # strip "_a" prefix
         canvas_user_id = data["data"]["_canvas_user_id"]
         new_grade = data["value"] or ""
 
-        old_row = conn.execute(
-            "SELECT posted_grade FROM canvas_grades "
-            "WHERE canvas_user_id = ? AND canvas_assignment_id = ?",
-            [canvas_user_id, canvas_assignment_id],
-        ).fetchone()
-
-        if old_row is None:
-            conn.execute(
-                "INSERT INTO canvas_grades "
-                "(canvas_user_id, canvas_assignment_id, posted_grade, updated_at) "
-                "VALUES (?, ?, ?, 0)",
-                [canvas_user_id, canvas_assignment_id, new_grade],
-            )
-            old_value = ""
-        else:
-            old_value = old_row[0]
-            conn.execute(
-                "UPDATE canvas_grades SET posted_grade = ? "
-                "WHERE canvas_user_id = ? AND canvas_assignment_id = ?",
-                [new_grade, canvas_user_id, canvas_assignment_id],
-            )
+        old_value = upsert_canvas_grade(
+            conn, canvas_user_id, canvas_assignment_id, new_grade
+        )
 
         pk: dict[str, object] = {
             "canvas_user_id": canvas_user_id,
@@ -969,12 +930,15 @@ def revert_pending(
     count = pending_count(pending)
     for table, rows in pending.items():
         pk_cols = get_primary_keys(conn, table)
+        valid_cols = set(get_column_names(conn, table))
         for pk_key, cols in rows.items():
             pk = {pk_cols[0]: pk_key} if len(pk_cols) == 1 else json.loads(pk_key)
             where_parts = [f"{col} = ?" for col in pk_cols]
             where_clause = " AND ".join(where_parts)
             pk_values = [pk[col] for col in pk_cols]
             for col_name, change in cols.items():
+                if col_name not in valid_cols:
+                    continue
                 sql = f"UPDATE {table} SET {col_name} = ? WHERE {where_clause}"
                 conn.execute(sql, [change["baseline"], *pk_values])
     pending.clear()

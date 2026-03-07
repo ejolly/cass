@@ -757,6 +757,56 @@ def load_gh_grades(assignment_slug: str | None = None) -> list[GHGrade]:
 # ---------------------------------------------------------------------------
 
 
+def upsert_canvas_grade(
+    conn: duckdb.DuckDBPyConnection,
+    canvas_user_id: int,
+    canvas_assignment_id: int,
+    posted_grade: str,
+) -> str:
+    """Insert or update a single canvas grade, returning the previous value.
+
+    Args:
+        conn: DuckDB connection.
+        canvas_user_id: Canvas user ID.
+        canvas_assignment_id: Canvas assignment ID.
+        posted_grade: New grade value.
+
+    Returns:
+        Previous posted_grade (empty string if row didn't exist).
+    """
+    old_row = conn.execute(
+        "SELECT posted_grade FROM canvas_grades "
+        "WHERE canvas_user_id = ? AND canvas_assignment_id = ?",
+        [canvas_user_id, canvas_assignment_id],
+    ).fetchone()
+
+    now = time.time()
+    if old_row is None:
+        conn.execute(
+            "INSERT INTO canvas_grades "
+            "(canvas_user_id, canvas_assignment_id, posted_grade, updated_at) "
+            "VALUES (?, ?, ?, ?)",
+            [canvas_user_id, canvas_assignment_id, posted_grade, now],
+        )
+        return ""
+
+    conn.execute(
+        "UPDATE canvas_grades SET posted_grade = ?, updated_at = ? "
+        "WHERE canvas_user_id = ? AND canvas_assignment_id = ?",
+        [posted_grade, now, canvas_user_id, canvas_assignment_id],
+    )
+    return old_row[0]
+
+
+def get_assignment_groups(conn: duckdb.DuckDBPyConnection) -> list[str]:
+    """Return distinct non-empty assignment groups, sorted alphabetically."""
+    rows = conn.execute(
+        "SELECT DISTINCT assignment_group FROM canvas_assignments "
+        "WHERE assignment_group != '' ORDER BY assignment_group"
+    ).fetchall()
+    return [r[0] for r in rows]
+
+
 def save_canvas_grades(grades: list[CanvasGrade]) -> int:
     """Upsert Canvas grades."""
     conn = get_db()
@@ -798,6 +848,156 @@ def load_canvas_grades(canvas_assignment_id: int | None = None) -> list[CanvasGr
         )
         for r in rows
     ]
+
+
+# ---------------------------------------------------------------------------
+# Enriched queries — JOINed views used by the viewer and tests
+# ---------------------------------------------------------------------------
+
+ENRICHED_QUERIES: dict[str, str] = {
+    "canvas_submissions": """
+        SELECT
+            cs.canvas_user_id,
+            cs.canvas_assignment_id,
+            st.sortable_name AS student,
+            ca.name AS assignment_name,
+            ca.assignment_group,
+            CASE WHEN cs.submitted_at IS NOT NULL
+                THEN strftime(cs.submitted_at, '%b %-d, %Y %-I:%M %p')
+                ELSE '' END AS submitted_at,
+            ca.due_at,
+            cs.score,
+            cs.workflow_state,
+            cs.late
+        FROM canvas_submissions cs
+        LEFT JOIN canvas_students st ON cs.canvas_user_id = st.canvas_id
+        LEFT JOIN canvas_assignments ca
+            ON cs.canvas_assignment_id = ca.canvas_id
+    """,
+    "canvas_students": """
+        SELECT
+            cs.sortable_name AS student,
+            cs.email,
+            cs.canvas_id
+        FROM canvas_students cs
+        ORDER BY cs.sortable_name
+    """,
+    "canvas_assignments": """
+        SELECT
+            ca.assignment_group,
+            ca.name,
+            ca.points_possible,
+            ca.due_at,
+            ca.published,
+            ca.canvas_id
+        FROM canvas_assignments ca
+        ORDER BY ca.assignment_group, ca.name
+    """,
+    "canvas_grades": """
+        SELECT
+            cg.canvas_user_id,
+            cg.canvas_assignment_id,
+            st.sortable_name AS student,
+            ca.name AS assignment_name,
+            ca.assignment_group,
+            cg.score,
+            cg.posted_grade,
+            cg.updated_at
+        FROM canvas_grades cg
+        LEFT JOIN canvas_students st ON cg.canvas_user_id = st.canvas_id
+        LEFT JOIN canvas_assignments ca
+            ON cg.canvas_assignment_id = ca.canvas_id
+    """,
+    "gh_students": """
+        SELECT
+            gs.excluded,
+            COALESCE(
+                cs.sortable_name,
+                CASE WHEN gs.name LIKE '% %'
+                    THEN split_part(gs.name, ' ', -1)
+                        || ', '
+                        || regexp_replace(gs.name, '\\s+\\S+$', '')
+                    ELSE gs.name
+                END
+            ) AS student,
+            gs.github_username,
+            COALESCE(s.email, gs.email) AS email,
+            gs.github_id
+        FROM gh_students gs
+        LEFT JOIN students s ON gs.github_username = s.github_username
+        LEFT JOIN canvas_students cs ON s.canvas_id = cs.canvas_id
+        ORDER BY student
+    """,
+    "gh_assignments": """
+        SELECT
+            ga.title,
+            ga.points_possible,
+            CASE WHEN ga.deadline IS NOT NULL
+                THEN strftime(ga.deadline, '%b %-d, %Y %-I:%M %p')
+                ELSE '' END AS deadline,
+            ga.accepted,
+            ga.submissions_count,
+            ga.passing_count,
+            ga.slug,
+            ga.gh_id,
+            ga.starter_code_repo,
+            ga.submittable_files
+        FROM gh_assignments ga
+        ORDER BY ga.deadline, ga.title
+    """,
+    "gh_submissions": """
+        SELECT
+            gs.github_username,
+            gs.assignment_slug,
+            CASE WHEN gs.last_commit_at != ''
+                THEN strftime(
+                    gs.last_commit_at::TIMESTAMP, '%b %-d, %Y %-I:%M %p')
+                ELSE '' END AS last_commit_at,
+            COALESCE(
+                cs.sortable_name,
+                CASE WHEN gst.name LIKE '% %'
+                    THEN split_part(gst.name, ' ', -1)
+                        || ', '
+                        || regexp_replace(gst.name, '\\s+\\S+$', '')
+                    ELSE gst.name
+                END,
+                gs.github_username
+            ) AS student,
+            ga.title AS assignment_name,
+            gs.commit_count,
+            CASE WHEN gs.last_commit_sha != ''
+                THEN 'https://github.com/' || gs.repo_name
+                    || '/commit/' || gs.last_commit_sha
+                ELSE '' END AS commit_url,
+            gs.late,
+            'https://github.com/' || gs.repo_name AS repo_url,
+            gs.last_commit_sha
+        FROM gh_submissions gs
+        LEFT JOIN students s ON gs.github_username = s.github_username
+        LEFT JOIN gh_students gst
+            ON gs.github_username = gst.github_username
+        LEFT JOIN canvas_students cs ON s.canvas_id = cs.canvas_id
+        LEFT JOIN gh_assignments ga ON gs.assignment_slug = ga.slug
+        WHERE COALESCE(gst.excluded, false) = false
+        ORDER BY gs.last_commit_at DESC, gs.github_username
+    """,
+}
+
+
+def get_enriched_rows(
+    conn: duckdb.DuckDBPyConnection,
+    table: str,
+) -> list[dict[str, object]]:
+    """Return all rows from a table using enriched query if available.
+
+    Uses ENRICHED_QUERIES for known tables (with JOINs, computed columns,
+    date formatting), falls back to ``SELECT * FROM {table}`` otherwise.
+    """
+    query = ENRICHED_QUERIES.get(table, f"SELECT * FROM {table}")
+    result = conn.execute(query)
+    col_names = [desc[0] for desc in result.description]
+    rows = result.fetchall()
+    return [dict(zip(col_names, row, strict=True)) for row in rows]
 
 
 # ---------------------------------------------------------------------------
