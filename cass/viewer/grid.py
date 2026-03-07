@@ -6,13 +6,14 @@ __docformat__ = "google"
 
 import json
 import math
+import re
 from datetime import date, datetime, time
 from typing import Any, Literal, cast
 
 import duckdb
 from nicegui import ui
 
-from ..db import ENRICHED_QUERIES
+from ..db import ENRICHED_QUERIES, get_assignment_groups, upsert_canvas_grade
 from . import values_equal
 from .config import (
     CANVAS_PUSHABLE,
@@ -24,6 +25,16 @@ from .config import (
     PendingChanges,
     display_name,
 )
+
+_SAFE_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _validate_identifier(name: str, kind: str = "identifier") -> None:
+    """Raise ValueError if *name* is not a safe SQL identifier."""
+    if not _SAFE_IDENT_RE.match(name):
+        msg = f"Invalid SQL {kind}: {name!r}"
+        raise ValueError(msg)
+
 
 # ---------------------------------------------------------------------------
 # Sanitization
@@ -157,6 +168,7 @@ def is_editable(conn: duckdb.DuckDBPyConnection, table: str) -> bool:
 
 def get_table_rows(conn: duckdb.DuckDBPyConnection, table: str) -> list[dict[str, Any]]:
     """Return all rows from a table as list of dicts."""
+    _validate_identifier(table, "table name")
     query = ENRICHED_QUERIES.get(table, f"SELECT * FROM {table}")
     result = conn.execute(query)
     col_names = [desc[0] for desc in result.description]
@@ -180,6 +192,8 @@ def update_cell(
     value: object,
 ) -> dict[str, object]:
     """Update a single cell in a table."""
+    _validate_identifier(table, "table name")
+
     pk_cols = get_primary_keys(conn, table)
     if not pk_cols:
         return {"ok": False, "error": "Table is not editable"}
@@ -290,8 +304,6 @@ def build_column_defs(
     # Pre-fetch select editor values for canvas_assignments
     group_values: list[str] = []
     if table == "canvas_assignments":
-        from ..db import get_assignment_groups
-
         group_values = get_assignment_groups(conn)
 
     defs: list[dict[str, Any]] = []
@@ -764,8 +776,6 @@ def attach_gradebook_edit_handler(
         if not col_field or not col_field.startswith("_a") or "value" not in data:
             return
 
-        from ..db import upsert_canvas_grade
-
         canvas_assignment_id = int(col_field[2:])  # strip "_a" prefix
         canvas_user_id = data["data"]["_canvas_user_id"]
         new_grade = data["value"] or ""
@@ -929,6 +939,7 @@ def revert_pending(
     """Revert all pending changes in the DB and reload the grid."""
     count = pending_count(pending)
     for table, rows in pending.items():
+        _validate_identifier(table, "table name")
         pk_cols = get_primary_keys(conn, table)
         valid_cols = set(get_column_names(conn, table))
         for pk_key, cols in rows.items():
