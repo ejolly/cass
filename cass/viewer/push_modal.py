@@ -30,7 +30,7 @@ def build_preview_html(
     parts: list[str] = []
 
     if assignment_changes:
-        parts.append("<h4 class='text-sm font-semibold mb-1'>Assignment changes</h4>")
+        parts.append("<h4 class='v-preview-header'>Assignment changes</h4>")
         parts.append('<table class="push-table"><thead><tr>')
         for h in ("Assignment", "Field", "On Canvas", "New value"):
             parts.append(f"<th>{h}</th>")
@@ -47,7 +47,7 @@ def build_preview_html(
             if "error" in ch:
                 name = escape(str(ch.get("name", "")))
                 err = escape(str(ch.get("error", "")))
-                parts.append(f'<td colspan="4" class="text-red-400">{name}: {err}</td>')
+                parts.append(f'<td colspan="4" class="v-text-error">{name}: {err}</td>')
             else:
                 name = escape(str(ch.get("name", "")))
                 col = escape(str(ch.get("column", "")))
@@ -62,7 +62,7 @@ def build_preview_html(
         parts.append("</tbody></table>")
 
     if grade_changes:
-        parts.append("<h4 class='text-sm font-semibold mt-4 mb-1'>Grade changes</h4>")
+        parts.append("<h4 class='v-preview-header-spaced'>Grade changes</h4>")
         parts.append('<table class="push-table"><thead><tr>')
         for h in ("Student \u2014 Assignment", "On Canvas", "New grade"):
             parts.append(f"<th>{h}</th>")
@@ -79,7 +79,7 @@ def build_preview_html(
             if "error" in ch:
                 name = escape(str(ch.get("name", "")))
                 err = escape(str(ch.get("error", "")))
-                parts.append(f'<td colspan="3" class="text-red-400">{name}: {err}</td>')
+                parts.append(f'<td colspan="3" class="v-text-error">{name}: {err}</td>')
             else:
                 name = escape(str(ch.get("name", "")))
                 warn = " \u26a0" if ch.get("conflict") else ""
@@ -93,9 +93,7 @@ def build_preview_html(
 
     if has_conflicts:
         parts.append(
-            '<div class="text-yellow-500 text-xs mt-3 p-2'
-            " bg-yellow-500/10 rounded"
-            '">'
+            '<div class="v-conflict-warning">'
             "\u26a0 Some Canvas values differ from when you "
             "last pulled. Pushing will overwrite.</div>"
         )
@@ -111,21 +109,19 @@ def open_push_modal(
     current_table: dict[str, str],
 ) -> None:
     """Open the Push to Canvas modal with preview/push workflow."""
-    with ui.dialog() as dialog, ui.card().classes("min-w-[32rem] max-w-[40rem]"):
+    with ui.dialog() as dialog, ui.card().classes("v-modal-card-lg"):
         dialog.open()
 
-        ui.label("Push to Canvas").classes("text-lg font-bold mb-2")
+        ui.label("Push to Canvas").classes("v-modal-title")
         content_area = ui.element("div")
-        action_area = ui.row().classes("w-full justify-end gap-2 mt-4")
+        action_area = ui.row().classes("v-modal-actions")
 
         state: dict[str, Any] = {"phase": "loading", "preview": None}
 
         def render_loading() -> None:
             content_area.clear()
             with content_area:
-                ui.label("Comparing with Canvas...").classes(
-                    "opacity-50 text-center py-4"
-                )
+                ui.label("Comparing with Canvas...").classes("v-modal-empty")
             action_area.clear()
             with action_area:
                 ui.button("Cancel", on_click=dialog.close).props("flat")
@@ -139,9 +135,7 @@ def open_push_modal(
             content_area.clear()
             with content_area:
                 if not changes:
-                    ui.label("No pending changes").classes(
-                        "opacity-50 text-center py-4"
-                    )
+                    ui.label("No pending changes").classes("v-modal-empty")
                     return
 
                 a_ch = [c for c in changes if c.get("table") == "canvas_assignments"]
@@ -162,7 +156,7 @@ def open_push_modal(
         def render_pushing() -> None:
             content_area.clear()
             with content_area:
-                ui.label("Pushing to Canvas...").classes("opacity-50 text-center py-4")
+                ui.label("Pushing to Canvas...").classes("v-modal-empty")
             action_area.clear()
             with action_area:
                 ui.button(
@@ -176,16 +170,16 @@ def open_push_modal(
             content_area.clear()
             with content_area:
                 ui.label(f"{len(succeeded)} pushed, {len(failed)} failed").classes(
-                    "font-semibold mb-2"
+                    "v-modal-result-header"
                 )
                 for r in results:
                     aid = r.get("canvas_id") or r.get("canvas_assignment_id") or "?"
                     if r.get("ok"):
-                        ui.label(f"\u2713 Assignment {aid}").classes("text-green-400")
+                        ui.label(f"\u2713 Assignment {aid}").classes("v-text-success")
                     else:
                         err = r.get("error", "Unknown")
                         ui.label(f"\u2717 Assignment {aid}: {err}").classes(
-                            "text-red-400"
+                            "v-text-error"
                         )
             action_area.clear()
             with action_area:
@@ -194,7 +188,7 @@ def open_push_modal(
         def render_error(message: str) -> None:
             content_area.clear()
             with content_area:
-                ui.label(message).classes("text-red-400")
+                ui.label(message).classes("v-text-error")
             action_area.clear()
             with action_area:
                 ui.button("Close", on_click=dialog.close).props("flat")

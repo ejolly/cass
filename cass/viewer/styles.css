@@ -1,0 +1,254 @@
+/*
+ * cass viewer — consolidated styles
+ *
+ * Single source of truth for all viewer CSS.
+ * Loaded via ui.add_head_html() with type="text/tailwindcss"
+ * so @apply directives are processed by the Tailwind engine.
+ *
+ * NiceGUI layer order:
+ *   theme → base → quasar → nicegui → components → utilities → overrides
+ *
+ * We place everything in "components" so Tailwind utilities and
+ * Quasar props can still override when needed.
+ */
+
+@layer components {
+    /* ================================================================
+     * Layout
+     * ============================================================= */
+    .v-sidebar {
+        @apply w-full h-screen bg-[#1d1d1d] p-0 gap-0;
+    }
+    .v-sidebar-header {
+        @apply w-full px-4 py-3 gap-0 border-b border-white/10;
+    }
+    .v-main-col {
+        @apply w-full flex-1 gap-0;
+    }
+    .v-toolbar-row {
+        @apply w-full items-center gap-2 px-4 py-2 border-b border-white/10 bg-[#1d1d1d];
+    }
+    .v-search-row {
+        @apply w-full px-4 py-1 border-b border-white/10 bg-[#1d1d1d];
+    }
+    .v-grid-container {
+        @apply flex-1 w-full;
+    }
+    .v-grid {
+        @apply w-full;
+    }
+
+    /* ================================================================
+     * Sidebar — header
+     * ============================================================= */
+    .v-course-name {
+        @apply text-sm font-semibold break-words;
+    }
+    .v-app-label {
+        @apply text-[0.65rem] opacity-40 tracking-wide;
+    }
+    .v-sync-row {
+        @apply w-full items-center gap-2 mt-2;
+    }
+    .v-action-row {
+        @apply w-full items-center gap-2;
+    }
+    .v-pending-badge {
+        @apply text-[0.6rem] font-semibold;
+    }
+
+    /* ================================================================
+     * Sidebar — navigation
+     * ============================================================= */
+    .v-nav-item {
+        @apply w-full items-center gap-1 px-4 py-1 cursor-pointer
+               rounded-none text-white/70 hover:bg-white/[0.08]
+               hover:text-white/95 flex-nowrap;
+    }
+    .v-nav-item-active {
+        @apply bg-blue-500/20 !text-white font-semibold;
+    }
+    .v-nav-scroll-col {
+        @apply w-full gap-0 py-2;
+    }
+    .v-nav-group-row {
+        @apply w-full items-center px-4 pt-3 pb-1 gap-1;
+    }
+    .v-nav-group-label {
+        @apply text-[0.7rem] font-bold tracking-wider opacity-50 uppercase;
+    }
+    .v-nav-table-name {
+        @apply text-xs font-mono;
+    }
+    .v-nav-badge {
+        @apply text-[0.55rem] shrink-0;
+    }
+    .v-nav-dev-table {
+        @apply text-xs font-mono opacity-60;
+    }
+    .v-pull-repos-btn {
+        @apply text-[0.6rem];
+    }
+
+    /* ================================================================
+     * Sidebar — dev section
+     * ============================================================= */
+    .v-dev-section {
+        @apply w-full gap-0 border-t border-white/10;
+    }
+    .v-dev-expansion {
+        @apply w-full text-[0.7rem] font-bold tracking-wider
+               opacity-40 uppercase px-0;
+    }
+
+    /* ================================================================
+     * Toolbar
+     * ============================================================= */
+    .v-table-label {
+        @apply text-sm font-semibold;
+    }
+    .v-meta-label {
+        @apply text-xs opacity-50;
+    }
+    .v-export-btn {
+        @apply text-xs;
+    }
+    .v-search-input {
+        @apply w-1/3 min-w-[12rem] text-xs;
+    }
+
+    /* ================================================================
+     * Modals — shared
+     * ============================================================= */
+    .v-modal-card {
+        @apply min-w-[28rem] max-w-[36rem];
+    }
+    .v-modal-card-lg {
+        @apply min-w-[32rem] max-w-[40rem];
+    }
+    .v-modal-card-scroll {
+        @apply min-w-[28rem] max-w-[36rem] max-h-[80vh] overflow-y-auto;
+    }
+    .v-modal-title {
+        @apply text-lg font-bold mb-2;
+    }
+    .v-modal-subtitle {
+        @apply text-xs opacity-60 mb-3;
+    }
+    .v-modal-actions {
+        @apply w-full justify-end gap-2 mt-4;
+    }
+    .v-modal-empty {
+        @apply opacity-50 text-center py-4;
+    }
+    .v-modal-error {
+        @apply text-red-400 text-xs mt-1;
+    }
+    .v-modal-status {
+        @apply text-xs opacity-70 mt-1;
+    }
+    .v-modal-result-header {
+        @apply font-semibold mb-2;
+    }
+
+    /* ================================================================
+     * Log area (pull modals)
+     * ============================================================= */
+    .v-log-area {
+        @apply w-full mt-3 max-h-[16rem] overflow-y-auto;
+    }
+    .v-log-line {
+        @apply text-xs font-mono opacity-80;
+    }
+
+    /* ================================================================
+     * Status colors
+     * ============================================================= */
+    .v-text-error {
+        @apply text-red-400;
+    }
+    .v-text-success {
+        @apply text-green-400;
+    }
+
+    /* ================================================================
+     * Setup wizard
+     * ============================================================= */
+    .v-setup-container {
+        @apply w-full max-w-lg mx-auto mt-12 gap-6 items-center;
+    }
+    .v-setup-title {
+        @apply text-2xl font-bold;
+    }
+    .v-setup-subtitle {
+        @apply text-sm opacity-60;
+    }
+    .v-setup-card-title {
+        @apply text-sm font-semibold;
+    }
+    .v-setup-card-subtitle {
+        @apply text-xs opacity-50;
+    }
+    .v-setup-path {
+        @apply text-xs opacity-40;
+    }
+    .v-setup-hint {
+        @apply text-xs opacity-30;
+    }
+    .v-setup-step {
+        @apply text-sm font-mono opacity-50;
+    }
+    .v-progress-container {
+        @apply w-full max-w-lg mx-auto mt-12 gap-4 items-center;
+    }
+    .v-progress-title {
+        @apply text-xl font-bold;
+    }
+
+    /* ================================================================
+     * Push preview HTML (used inside ui.html() in push_modal)
+     * ============================================================= */
+    .v-preview-header {
+        @apply text-sm font-semibold mb-1;
+    }
+    .v-preview-header-spaced {
+        @apply text-sm font-semibold mt-4 mb-1;
+    }
+    .v-conflict-warning {
+        @apply text-yellow-500 text-xs mt-3 p-2 bg-yellow-500/10 rounded;
+    }
+
+    /* ================================================================
+     * AG Grid — cell pending highlight
+     * ============================================================= */
+    .cell-pending {
+        background: rgba(245, 158, 11, 0.15) !important;
+    }
+
+    /* ================================================================
+     * Push preview table (plain CSS — no Tailwind equivalents)
+     * ============================================================= */
+    .push-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.8rem;
+        margin: 0.5rem 0;
+    }
+    .push-table th {
+        text-align: left;
+        padding: 0.3rem 0.5rem;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+        opacity: 0.6;
+        font-weight: 600;
+    }
+    .push-table td {
+        padding: 0.3rem 0.5rem;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    }
+    .push-table .conflict-row {
+        background: rgba(234, 179, 8, 0.1);
+    }
+    .push-table .error-row {
+        background: rgba(239, 68, 68, 0.1);
+    }
+}

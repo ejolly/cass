@@ -10,6 +10,8 @@ from typing import Any
 
 from nicegui import ui
 
+from .styles import load_styles
+
 
 def setup_wizard_page(on_complete: Any) -> None:
     """Render the first-time setup form. Canvas is required, GitHub optional.
@@ -19,14 +21,15 @@ def setup_wizard_page(on_complete: Any) -> None:
             the initial pull finishes. The caller should use this to
             navigate to the normal table view.
     """
-    with ui.column().classes("w-full max-w-lg mx-auto mt-12 gap-6 items-center"):
-        ui.label("Welcome to cass").classes("text-2xl font-bold")
-        ui.label("Configure your course to get started.").classes("text-sm opacity-60")
+    load_styles()
+    with ui.column().classes("v-setup-container"):
+        ui.label("Welcome to cass").classes("v-setup-title")
+        ui.label("Configure your course to get started.").classes("v-setup-subtitle")
 
         # --- Canvas (required) ---
         with ui.card().classes("w-full"):
-            ui.label("Canvas LMS").classes("text-sm font-semibold")
-            ui.label("Required").classes("text-xs opacity-50")
+            ui.label("Canvas LMS").classes("v-setup-card-title")
+            ui.label("Required").classes("v-setup-card-subtitle")
             canvas_url = ui.input(
                 label="Base URL",
                 placeholder="https://canvas.ucsd.edu",
@@ -43,8 +46,8 @@ def setup_wizard_page(on_complete: Any) -> None:
 
         # --- GitHub Classroom (optional) ---
         with ui.card().classes("w-full"):
-            ui.label("GitHub Classroom").classes("text-sm font-semibold")
-            ui.label("Optional").classes("text-xs opacity-50")
+            ui.label("GitHub Classroom").classes("v-setup-card-title")
+            ui.label("Optional").classes("v-setup-card-subtitle")
             gh_classroom_id = ui.input(
                 label="Classroom ID",
                 placeholder="299058",
@@ -56,7 +59,7 @@ def setup_wizard_page(on_complete: Any) -> None:
 
         # --- Project directory ---
         cwd = Path.cwd()
-        ui.label(f"Project directory: {cwd}").classes("text-xs opacity-40")
+        ui.label(f"Project directory: {cwd}").classes("v-setup-path")
 
         # --- Validation / status ---
         status_label = ui.label("").classes("text-sm")
@@ -69,19 +72,19 @@ def setup_wizard_page(on_complete: Any) -> None:
 
             if not url or not cid_raw:
                 status_label.text = "Canvas base URL and course ID are required."
-                status_label.classes(replace="text-sm text-red-400")
+                status_label.classes(replace="text-sm v-text-error")
                 return
 
             try:
                 cid = int(cid_raw)
             except ValueError:
                 status_label.text = "Course ID must be a number."
-                status_label.classes(replace="text-sm text-red-400")
+                status_label.classes(replace="text-sm v-text-error")
                 return
 
             if not token:
                 status_label.text = "Canvas API token is required."
-                status_label.classes(replace="text-sm text-red-400")
+                status_label.classes(replace="text-sm v-text-error")
                 return
 
             # Optional GitHub fields
@@ -94,7 +97,7 @@ def setup_wizard_page(on_complete: Any) -> None:
                     gh_id = int(gh_id_raw)
                 except ValueError:
                     status_label.text = "Classroom ID must be a number."
-                    status_label.classes(replace="text-sm text-red-400")
+                    status_label.classes(replace="text-sm v-text-error")
                     return
 
                 org = org_raw
@@ -112,7 +115,7 @@ def setup_wizard_page(on_complete: Any) -> None:
             save_token(token)
 
             status_label.text = "Configuration saved. Starting data pull..."
-            status_label.classes(replace="text-sm text-green-400")
+            status_label.classes(replace="text-sm v-text-success")
             await asyncio.sleep(0.3)
 
             on_complete()
@@ -124,7 +127,7 @@ def setup_wizard_page(on_complete: Any) -> None:
 
         ui.label(
             "This creates cass.toml and canvas-token.txt in your project directory."
-        ).classes("text-xs opacity-30")
+        ).classes("v-setup-hint")
 
 
 def pull_progress_page(on_complete: Any) -> None:
@@ -133,18 +136,19 @@ def pull_progress_page(on_complete: Any) -> None:
     Args:
         on_complete: Called (no args) once the pull finishes successfully.
     """
-    with ui.column().classes("w-full max-w-lg mx-auto mt-12 gap-4 items-center"):
-        ui.label("Pulling data...").classes("text-xl font-bold")
+    load_styles()
+    with ui.column().classes("v-progress-container"):
+        ui.label("Pulling data...").classes("v-progress-title")
 
         steps_container = ui.column().classes("w-full gap-1")
         step_labels: dict[str, ui.label] = {}
-        error_label = ui.label("").classes("text-sm text-red-400")
+        error_label = ui.label("").classes("text-sm v-text-error")
 
         STEP_ORDER = ["students", "assignments", "submissions", "grades"]
 
         with steps_container:
             for step in STEP_ORDER:
-                lbl = ui.label(f"  {step}").classes("text-sm font-mono opacity-50")
+                lbl = ui.label(f"  {step}").classes("v-setup-step")
                 step_labels[step] = lbl
 
         progress = ui.linear_progress(value=0, show_value=False).classes("w-full mt-4")
@@ -165,7 +169,7 @@ def pull_progress_page(on_complete: Any) -> None:
                 await pull_all_async(cfg, on_progress=on_progress)
                 progress.value = 1.0
                 for lbl in step_labels.values():
-                    lbl.classes(replace="text-sm font-mono text-green-400")
+                    lbl.classes(replace="text-sm font-mono v-text-success")
                 await asyncio.sleep(0.5)
                 on_complete()
             except Exception as exc:

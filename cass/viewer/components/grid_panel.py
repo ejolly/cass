@@ -37,7 +37,7 @@ class GridPanel:
         self._build()
 
     def _build(self) -> None:
-        self.page.grid_container = ui.element("div").classes("flex-1 w-full")
+        self.page.grid_container = ui.element("div").classes("v-grid-container")
 
     @staticmethod
     def build_grid(
@@ -89,7 +89,7 @@ class GridPanel:
 
         grid = (
             ui.aggrid(grid_options, theme="quartz")
-            .classes("w-full")
+            .classes("v-grid")
             .style("height: calc(100vh - 6rem)")
         )
 

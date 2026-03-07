@@ -18,28 +18,8 @@ from .grid import (
     get_tables,
     pending_count,
 )
+from .styles import NAV_ITEM_ACTIVE, load_styles
 
-# Minimal CSS only for things that cannot be expressed via Tailwind/Quasar:
-_GRID_CSS = """
-.cell-pending { background: rgba(245, 158, 11, 0.15) !important; }
-.push-table {
-    width: 100%; border-collapse: collapse;
-    font-size: 0.8rem; margin: 0.5rem 0;
-}
-.push-table th {
-    text-align: left; padding: 0.3rem 0.5rem;
-    border-bottom: 1px solid rgba(255,255,255,0.2);
-    opacity: 0.6; font-weight: 600;
-}
-.push-table td {
-    padding: 0.3rem 0.5rem;
-    border-bottom: 1px solid rgba(255,255,255,0.05);
-}
-.push-table .conflict-row { background: rgba(234,179,8,0.1); }
-.push-table .error-row { background: rgba(239,68,68,0.1); }
-"""
-
-_ITEM_ACTIVE = "bg-blue-500/20 !text-white font-semibold"
 _SIDEBAR_PCT = 30
 
 
@@ -108,9 +88,9 @@ class ViewerPage:
 
         # Update sidebar active states
         if old in self.sidebar_items:
-            self.sidebar_items[old].classes(remove=_ITEM_ACTIVE)
+            self.sidebar_items[old].classes(remove=NAV_ITEM_ACTIVE)
         if table_name in self.sidebar_items:
-            self.sidebar_items[table_name].classes(add=_ITEM_ACTIVE)
+            self.sidebar_items[table_name].classes(add=NAV_ITEM_ACTIVE)
 
         # Update toolbar label
         if self.table_label is not None:
@@ -165,7 +145,7 @@ class ViewerPage:
         from .components.sidebar import Sidebar
         from .components.toolbar import Toolbar
 
-        ui.add_head_html(f"<style>{_GRID_CSS}</style>")
+        load_styles()
 
         splitter = ui.splitter(value=_SIDEBAR_PCT, limits=(0, 50)).classes(
             "w-full h-screen"
@@ -178,7 +158,7 @@ class ViewerPage:
         with splitter.before:
             Sidebar(self)
 
-        with splitter.after, ui.column().classes("w-full flex-1 gap-0"):
+        with splitter.after, ui.column().classes("v-main-col"):
             Toolbar(self, toggle_sidebar=_toggle_sidebar)
             GridPanel(self)
 

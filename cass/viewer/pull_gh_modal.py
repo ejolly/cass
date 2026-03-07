@@ -29,13 +29,13 @@ def open_pull_gh_modal() -> None:
         s.canvas_id: student_dir_name(s, sortable_map) for s in all_students
     }
 
-    with ui.dialog() as dialog, ui.card().classes("min-w-[28rem] max-w-[36rem]"):
+    with ui.dialog() as dialog, ui.card().classes("v-modal-card"):
         dialog.open()
 
-        ui.label("Pull GH Repos").classes("text-lg font-bold mb-2")
+        ui.label("Pull GH Repos").classes("v-modal-title")
         ui.label(
             "Clone or update student repos from GitHub Classroom into gh-classroom/."
-        ).classes("text-xs opacity-60 mb-3")
+        ).classes("v-modal-subtitle")
 
         # --- Controls ---
         student_select = (
@@ -61,19 +61,17 @@ def open_pull_gh_modal() -> None:
         )
 
         # --- Progress area ---
-        log_area = ui.element("div").classes(
-            "w-full mt-3 max-h-[16rem] overflow-y-auto"
-        )
+        log_area = ui.element("div").classes("v-log-area")
         log_area.set_visibility(False)
 
         # --- Action buttons ---
-        action_row = ui.row().classes("w-full justify-end gap-2 mt-4")
+        action_row = ui.row().classes("v-modal-actions")
         state: dict[str, Any] = {"running": False}
 
         def _append_log(msg: str) -> None:
             log_area.set_visibility(True)
             with log_area:
-                ui.label(msg).classes("text-xs font-mono opacity-80")
+                ui.label(msg).classes("v-log-line")
 
         async def _run_pull() -> None:
             if state["running"]:
