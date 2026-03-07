@@ -39,6 +39,15 @@ class CanvasStudent(msgspec.Struct):
     login_id: str = ""
 
 
+class CanvasEnrollmentGrades(msgspec.Struct):
+    """Nested grades object inside a Canvas enrollment."""
+
+    current_score: float | None = None
+    final_score: float | None = None
+    current_grade: str | None = None
+    final_grade: str | None = None
+
+
 class CanvasEnrollment(msgspec.Struct):
     """Canvas enrollment record."""
 
@@ -48,8 +57,19 @@ class CanvasEnrollment(msgspec.Struct):
     enrollment_state: str = ""
     role: str = ""
     course_section_id: int = 0
-    computed_final_score: float | None = None
-    computed_current_score: float | None = None
+    grades: CanvasEnrollmentGrades = msgspec.field(
+        default_factory=CanvasEnrollmentGrades
+    )
+
+    @property
+    def computed_final_score(self) -> float | None:
+        """Canvas returns final_score nested inside grades dict."""
+        return self.grades.final_score
+
+    @property
+    def computed_current_score(self) -> float | None:
+        """Canvas returns current_score nested inside grades dict."""
+        return self.grades.current_score
 
 
 class CanvasUser(msgspec.Struct):
