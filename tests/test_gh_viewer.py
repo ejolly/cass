@@ -9,18 +9,16 @@ import msgspec
 import pytest
 
 from cass import db
-from cass.db import ENRICHED_QUERIES
+from cass.db import ENRICHED_QUERIES, EXCLUDED_TABLES, READ_ONLY_TABLES, is_editable
 from cass.models import GHAssignment, GHCommit, GHSubmission, Student
 from cass.viewer.config import (
     COLUMN_DISPLAY_NAMES,
     COLUMN_ORDERING,
-    EXCLUDED_TABLES,
     HIDDEN_COLUMNS,
-    READ_ONLY_TABLES,
     display_name,
     group_tables,
 )
-from cass.viewer.grid import build_gh_gradebook_view, get_table_rows, is_editable
+from cass.viewer.grid import build_gh_gradebook_view, get_table_rows
 
 # ===================================================================
 # Phase 1: Model + Schema

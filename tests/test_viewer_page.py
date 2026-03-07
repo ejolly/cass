@@ -403,7 +403,7 @@ async def test_viewer_page_pending_display(
     user: User, ui_conn: duckdb.DuckDBPyConnection
 ) -> None:
     """update_pending_display reflects pending count in the badge."""
-    from cass.viewer.grid import pending_count, track_change
+    from cass.viewer.actions import pending_count, track_change
     from cass.viewer.page import ViewerPage
 
     page_ref: dict[str, ViewerPage | None] = {"ref": None}

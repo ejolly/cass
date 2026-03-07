@@ -11,6 +11,7 @@ from __future__ import annotations
 
 __docformat__ = "google"
 
+import json
 import re
 import time
 
@@ -33,6 +34,25 @@ from .models import (
 DB_FILENAME = "cass.duckdb"
 _SCHEMA_VERSION = 13
 _SAFE_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+# Tables excluded from the viewer entirely
+EXCLUDED_TABLES = {
+    "meta",
+    "canvas_students",
+    "gh_grades",
+    "_canvas_assignments_synced",
+    "_canvas_grades_synced",
+}
+
+# Tables shown in the viewer but not editable
+READ_ONLY_TABLES = {
+    "canvas_submissions",
+    "gh_submissions",
+    "gh_assignments",
+    "gh_grades",
+    "assignments",
+    "students",
+}
 
 _conn: duckdb.DuckDBPyConnection | None = None
 
@@ -1006,6 +1026,130 @@ def get_enriched_rows(
 
 
 # ---------------------------------------------------------------------------
+# Viewer DB introspection
+# ---------------------------------------------------------------------------
+
+
+def _validate_identifier(name: str, kind: str = "identifier") -> None:
+    """Raise ValueError if *name* is not a safe SQL identifier."""
+    if not _SAFE_IDENT_RE.match(name):
+        msg = f"Invalid SQL {kind}: {name!r}"
+        raise ValueError(msg)
+
+
+def get_tables(
+    conn: duckdb.DuckDBPyConnection,
+) -> list[dict[str, str]]:
+    """Return list of non-excluded tables with their type."""
+    rows = conn.execute(
+        "SELECT table_name, table_type FROM information_schema.tables "
+        "WHERE table_schema = 'main' ORDER BY table_type, table_name"
+    ).fetchall()
+    return [
+        {"name": name, "type": "view" if "VIEW" in ttype else "table"}
+        for name, ttype in rows
+        if name not in EXCLUDED_TABLES
+    ]
+
+
+def get_primary_keys(conn: duckdb.DuckDBPyConnection, table: str) -> list[str]:
+    """Return primary key column names for a table."""
+    try:
+        pk_rows = conn.execute(
+            "SELECT constraint_column_names FROM duckdb_constraints() "
+            "WHERE table_name = ? AND constraint_type = 'PRIMARY KEY'",
+            [table],
+        ).fetchall()
+        if pk_rows:
+            return list(pk_rows[0][0])
+    except duckdb.Error:
+        pass
+    return []
+
+
+def get_column_names(conn: duckdb.DuckDBPyConnection, table: str) -> list[str]:
+    """Return column names for a table."""
+    cols_raw = conn.execute(f"DESCRIBE {table}").fetchall()
+    return [row[0] for row in cols_raw]
+
+
+def is_editable(conn: duckdb.DuckDBPyConnection, table: str) -> bool:
+    """Check if a table is editable (has PKs, is a real table, not read-only)."""
+    tables = get_tables(conn)
+    table_type = next((t["type"] for t in tables if t["name"] == table), None)
+    pk_cols = get_primary_keys(conn, table)
+    return table_type == "table" and len(pk_cols) > 0 and table not in READ_ONLY_TABLES
+
+
+def update_cell(
+    conn: duckdb.DuckDBPyConnection,
+    table: str,
+    pk: dict[str, object],
+    column: str,
+    value: object,
+) -> dict[str, object]:
+    """Update a single cell in a table.
+
+    Returns:
+        Dict with ``ok`` and ``old_value`` on success, or ``ok`` and ``error``.
+    """
+    _validate_identifier(table, "table name")
+
+    pk_cols = get_primary_keys(conn, table)
+    if not pk_cols:
+        return {"ok": False, "error": "Table is not editable"}
+
+    valid_cols = get_column_names(conn, table)
+    if column not in valid_cols:
+        return {"ok": False, "error": f"Unknown column: {column}"}
+
+    if set(pk.keys()) != set(pk_cols):
+        return {"ok": False, "error": f"Expected PK columns: {pk_cols}"}
+
+    where_parts = [f"{col} = ?" for col in pk_cols]
+    where_clause = " AND ".join(where_parts)
+    pk_values = [pk[col] for col in pk_cols]
+
+    old_row = conn.execute(
+        f"SELECT {column} FROM {table} WHERE {where_clause}",
+        pk_values,
+    ).fetchone()
+    old_value = old_row[0] if old_row else None
+
+    sql = f"UPDATE {table} SET {column} = ? WHERE {where_clause}"
+    conn.execute(sql, [value, *pk_values])
+
+    return {"ok": True, "old_value": old_value}
+
+
+def revert_changes(
+    conn: duckdb.DuckDBPyConnection,
+    pending: dict[str, dict[str, dict[str, dict[str, object]]]],
+) -> int:
+    """Revert all pending changes in the DB by restoring baseline values.
+
+    Returns:
+        Number of field changes reverted.
+    """
+    count = sum(len(cols) for rows in pending.values() for cols in rows.values())
+    for table, rows in pending.items():
+        _validate_identifier(table, "table name")
+        pk_cols = get_primary_keys(conn, table)
+        valid_cols = set(get_column_names(conn, table))
+        for pk_key, cols in rows.items():
+            pk = {pk_cols[0]: pk_key} if len(pk_cols) == 1 else json.loads(pk_key)
+            where_parts = [f"{col} = ?" for col in pk_cols]
+            where_clause = " AND ".join(where_parts)
+            pk_values = [pk[col] for col in pk_cols]
+            for col_name, change in cols.items():
+                if col_name not in valid_cols:
+                    continue
+                sql = f"UPDATE {table} SET {col_name} = ? WHERE {where_clause}"
+                conn.execute(sql, [change["baseline"], *pk_values])
+    return count
+
+
+# ---------------------------------------------------------------------------
 # Raw query (for `cass query`)
 # ---------------------------------------------------------------------------
 
@@ -1089,8 +1233,6 @@ def get_pending_changes(
     Returns the same ``PendingChanges`` structure used by the viewer:
     ``{table: {pk_key: {column: {"baseline": ..., "current": ...}}}}``.
     """
-    import json
-
     c = conn or get_db()
     pending: dict[str, dict[str, dict[str, dict[str, object]]]] = {}
 

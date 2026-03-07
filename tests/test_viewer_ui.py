@@ -16,6 +16,8 @@ import pytest
 from nicegui import ui
 from nicegui.testing import User
 
+from cass.db import get_primary_keys, get_tables, is_editable, update_cell
+from cass.viewer.actions import pending_count, track_change
 from cass.viewer.config import DEV_TABLES, PendingChanges, display_name, group_tables
 from cass.viewer.grid import (
     _grid_to_markdown,
@@ -24,16 +26,10 @@ from cass.viewer.grid import (
     build_column_defs,
     build_gradebook_view,
     find_grid,
-    get_primary_keys,
     get_table_rows,
-    get_tables,
-    is_editable,
-    pending_count,
     reload_current_grid,
     revert_pending,
     row_id_js,
-    track_change,
-    update_cell,
 )
 
 # ---------------------------------------------------------------------------

@@ -8,13 +8,11 @@ from nicegui import ui
 
 from ..config import config_file_path
 from ..db import DB_FILENAME
+from ..db import get_tables as get_tables
+from ..db import is_editable as is_editable
 from ..db import reset as db_reset
-from .grid import (
-    get_tables,
-    is_editable,
-    pending_count,
-    track_change,
-)
+from .actions import pending_count as pending_count
+from .actions import track_change as track_change
 
 # Re-export for tests and external consumers
 __all__ = [

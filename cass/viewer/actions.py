@@ -15,6 +15,9 @@ from typing import TYPE_CHECKING
 
 import duckdb
 
+from ..canvas.sync import values_equal
+from .config import CANVAS_PUSHABLE
+
 if TYPE_CHECKING:
     from ..canvas.client import CanvasClient
     from .config import PendingChanges
@@ -311,3 +314,48 @@ def build_preview_html(
         )
 
     return "".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Pending change tracking
+# ---------------------------------------------------------------------------
+
+
+def track_change(
+    pending: PendingChanges,
+    table: str,
+    pk: dict[str, object],
+    column: str,
+    old_value: object,
+    new_value: object,
+) -> None:
+    """Record a cell edit as a pending Canvas change."""
+    pushable = CANVAS_PUSHABLE.get(table)
+    if not pushable or column not in pushable:
+        return
+
+    pk_key = (
+        str(next(iter(pk.values()))) if len(pk) == 1 else json.dumps(pk, sort_keys=True)
+    )
+
+    table_changes = pending.setdefault(table, {})
+    row_changes = table_changes.setdefault(pk_key, {})
+
+    if column in row_changes:
+        row_changes[column]["current"] = new_value
+        if values_equal(row_changes[column]["baseline"], new_value):
+            del row_changes[column]
+            if not row_changes:
+                del table_changes[pk_key]
+            if not table_changes:
+                del pending[table]
+    else:
+        row_changes[column] = {
+            "baseline": old_value,
+            "current": new_value,
+        }
+
+
+def pending_count(pending: PendingChanges) -> int:
+    """Total number of pending field changes."""
+    return sum(len(cols) for rows in pending.values() for cols in rows.values())

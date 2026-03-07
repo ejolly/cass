@@ -7,16 +7,13 @@ __docformat__ = "google"
 import duckdb
 from nicegui import ui
 
-from ..db import get_pending_changes
+from ..db import get_pending_changes, get_tables
+from .actions import pending_count
 from .config import (
     CANVAS_PUSHABLE,
     PendingChanges,
     display_name,
     group_tables,
-)
-from .grid import (
-    get_tables,
-    pending_count,
 )
 from .styles import NAV_ITEM_ACTIVE, load_styles
 
