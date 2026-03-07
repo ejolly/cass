@@ -353,6 +353,13 @@ def pull(
     cfg = get_config()
     pull_all = not any([do_students, do_assignments, do_submissions, do_grades])
 
+    # Always refresh course name
+    if cfg.has_canvas:
+        from ..canvas.matching import fetch_course_name
+        from ..db import save_meta
+
+        save_meta("course_name", fetch_course_name(cfg.canvas_course_id))
+
     async def _pull() -> None:
         client = None
         if cfg.has_classroom:
