@@ -38,6 +38,7 @@ from .grid import (
     row_id_js,
     track_change,
 )
+from .pull_gh_modal import open_pull_gh_modal
 from .push_modal import open_push_modal
 
 # Re-export for tests and external consumers
@@ -449,6 +450,19 @@ def _render_viewer() -> None:
             ).props("dense no-caps size=sm color=primary")
             pb.set_visibility(False)
             push_btn["ref"] = pb
+
+            # Pull GH repos button (visible if classroom configured)
+            try:
+                from ..config import get_config
+
+                has_classroom = get_config().has_classroom
+            except SystemExit:
+                has_classroom = False
+            if has_classroom:
+                ui.button(
+                    "Pull GH",
+                    on_click=open_pull_gh_modal,
+                ).props("dense no-caps size=sm color=grey-7")
 
         # Toolbar row 2: search
         with ui.row().classes("w-full px-4 py-1 border-b border-white/10 bg-[#1d1d1d]"):
