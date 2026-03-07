@@ -235,10 +235,8 @@ async def fetch_submissions(
             last_commit_sha=last_commit_sha,
         )
 
-    # Check roster students + any GH-only students from accepted assignments
-    roster_handles = {s.handle_lower for s in roster if s.github_username}
-    all_handles = roster_handles | set(student_repo_info.keys())
-    results = await asyncio.gather(*(check_handle(h) for h in all_handles))
+    handles = [s.handle_lower for s in roster if s.github_username]
+    results = await asyncio.gather(*(check_handle(h) for h in handles))
     submissions = [s for s in results if s is not None]
     return sorted(submissions, key=lambda s: s.github_username)
 
@@ -293,9 +291,8 @@ async def fetch_file_submissions(
             repo_name=f"{cfg.org}/{repo_short}",
         )
 
-    roster_handles = {s.handle_lower for s in roster if s.github_username}
-    all_handles = roster_handles | set(repo_by_handle.keys())
-    results = await asyncio.gather(*(check_handle(h) for h in all_handles))
+    handles = [s.handle_lower for s in roster if s.github_username]
+    results = await asyncio.gather(*(check_handle(h) for h in handles))
     submissions = [s for s in results if s is not None]
     return sorted(submissions, key=lambda s: s.github_username)
 
