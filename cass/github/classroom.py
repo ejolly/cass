@@ -145,10 +145,9 @@ async def fetch_submissions(
                     "grade": entry.grade or "",
                 }
 
-    async def check_student(student: Student) -> GHSubmission | None:
-        if not student.github_username:
+    async def check_handle(handle: str) -> GHSubmission | None:
+        if not handle:
             return None
-        handle = student.handle_lower
         info = student_repo_info.get(handle)
         if not info:
             return GHSubmission(
@@ -236,7 +235,10 @@ async def fetch_submissions(
             last_commit_sha=last_commit_sha,
         )
 
-    results = await asyncio.gather(*(check_student(s) for s in roster))
+    # Check roster students + any GH-only students from accepted assignments
+    roster_handles = {s.handle_lower for s in roster if s.github_username}
+    all_handles = roster_handles | set(student_repo_info.keys())
+    results = await asyncio.gather(*(check_handle(h) for h in all_handles))
     submissions = [s for s in results if s is not None]
     return sorted(submissions, key=lambda s: s.github_username)
 
@@ -268,10 +270,9 @@ async def fetch_file_submissions(
             if handle and repo_name:
                 repo_by_handle[handle] = repo_name.split("/")[-1]
 
-    async def check_student(student: Student) -> GHSubmission | None:
-        if not student.github_username:
+    async def check_handle(handle: str) -> GHSubmission | None:
+        if not handle:
             return None
-        handle = student.handle_lower
         repo_short = repo_by_handle.get(handle)
         if not repo_short:
             return GHSubmission(
@@ -292,7 +293,9 @@ async def fetch_file_submissions(
             repo_name=f"{cfg.org}/{repo_short}",
         )
 
-    results = await asyncio.gather(*(check_student(s) for s in roster))
+    roster_handles = {s.handle_lower for s in roster if s.github_username}
+    all_handles = roster_handles | set(repo_by_handle.keys())
+    results = await asyncio.gather(*(check_handle(h) for h in all_handles))
     submissions = [s for s in results if s is not None]
     return sorted(submissions, key=lambda s: s.github_username)
 
