@@ -143,7 +143,7 @@ def test_conflict_warning_banner():
         has_conflicts=True,
     )
     assert "differ from when you last pulled" in html
-    assert "text-yellow-500" in html
+    assert "v-conflict-warning" in html
 
 
 def test_no_conflict_banner_when_false():
@@ -181,7 +181,7 @@ def test_error_row_assignment():
     html = build_preview_html(changes, [], has_conflicts=False)
     assert 'class="error-row"' in html
     assert 'colspan="4"' in html
-    assert "text-red-400" in html
+    assert "v-text-error" in html
     assert "HW1: API timeout" in html
 
 

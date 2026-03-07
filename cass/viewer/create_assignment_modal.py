@@ -145,15 +145,15 @@ def open_create_assignment_modal(
 
     with (
         ui.dialog() as dialog,
-        ui.card().classes("min-w-[28rem] max-w-[36rem] max-h-[80vh] overflow-y-auto"),
+        ui.card().classes("v-modal-card-scroll"),
     ):
         dialog.open()
 
-        ui.label("Create Assignment").classes("text-lg font-bold mb-2")
+        ui.label("Create Assignment").classes("v-modal-title")
         ui.label(
             "Add a local assignment to canvas_assignments. "
             "Use Push to Canvas to sync it upstream."
-        ).classes("text-xs opacity-60 mb-3")
+        ).classes("v-modal-subtitle")
 
         name_input = (
             ui.input(label="Name", placeholder="e.g. Homework 3")
@@ -198,10 +198,10 @@ def open_create_assignment_modal(
 
         published_toggle = ui.switch("Published", value=False).classes("mt-1")
 
-        error_label = ui.label("").classes("text-red-400 text-xs mt-1")
+        error_label = ui.label("").classes("v-modal-error")
         error_label.set_visibility(False)
 
-        status_label = ui.label("").classes("text-xs opacity-70 mt-1")
+        status_label = ui.label("").classes("v-modal-status")
         status_label.set_visibility(False)
 
         async def _on_create() -> None:
@@ -250,7 +250,7 @@ def open_create_assignment_modal(
                 )
             else:
                 status_label.text = f"Canvas error: {result['error']}"
-                status_label.classes("text-red-400", remove="opacity-70")
+                status_label.classes("v-text-error", remove="v-modal-status")
                 create_btn.props(remove="disabled")
                 notify(
                     f"Created locally but Canvas push failed: {result['error']}",
@@ -262,7 +262,7 @@ def open_create_assignment_modal(
             if tbl in ("canvas_assignments", "canvas_grades"):
                 load_table(tbl)
 
-        with ui.row().classes("w-full justify-end gap-2 mt-4"):
+        with ui.row().classes("v-modal-actions"):
             ui.button("Cancel", on_click=dialog.close).props(
                 "flat dense no-caps size=sm"
             )

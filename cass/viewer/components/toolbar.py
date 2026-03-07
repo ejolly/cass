@@ -32,34 +32,36 @@ class Toolbar:
         p = self.page
 
         # Row 1: title, metadata, export
-        with ui.row().classes(
-            "w-full items-center gap-2 px-4 py-2 border-b border-white/10 bg-[#1d1d1d]"
-        ):
+        with ui.row().classes("v-toolbar-row"):
             ui.button(icon="menu", on_click=toggle_sidebar).props(
                 "flat dense round color=grey-6"
             )
 
-            p.table_label = ui.label("").classes("text-sm font-semibold")
-            p.meta_label = ui.label("").classes("text-xs opacity-50")
+            p.table_label = ui.label("").classes("v-table-label")
+            p.meta_label = ui.label("").classes("v-meta-label")
 
             ui.button(
                 "Export CSV",
                 on_click=lambda: export_csv({"ref": p.grid_container}),
-            ).props("outline dense no-caps size=sm color=grey-5").classes("text-xs")
+            ).props("outline dense no-caps size=sm color=grey-5").classes(
+                "v-export-btn"
+            )
             ui.button(
                 "Export Markdown",
                 on_click=lambda: export_markdown(
                     {"ref": p.grid_container},
                     {"name": p.current_table},
                 ),
-            ).props("outline dense no-caps size=sm color=grey-5").classes("text-xs")
+            ).props("outline dense no-caps size=sm color=grey-5").classes(
+                "v-export-btn"
+            )
 
         # Row 2: search
-        with ui.row().classes("w-full px-4 py-1 border-b border-white/10 bg-[#1d1d1d]"):
+        with ui.row().classes("v-search-row"):
             p.search_input = (
                 ui.input(placeholder="Search rows...")
                 .props("dense outlined rounded")
-                .classes("w-1/3 min-w-[12rem] text-xs")
+                .classes("v-search-input")
             )
             p.search_input.on(
                 "update:model-value",

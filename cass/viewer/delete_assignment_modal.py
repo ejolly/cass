@@ -112,15 +112,15 @@ def open_delete_assignment_modal(
 
     with (
         ui.dialog() as dialog,
-        ui.card().classes("min-w-[28rem] max-w-[36rem]"),
+        ui.card().classes("v-modal-card"),
     ):
         dialog.open()
 
-        ui.label("Delete Assignment").classes("text-lg font-bold mb-2")
+        ui.label("Delete Assignment").classes("v-modal-title")
         ui.label(
             "Remove an assignment from Canvas and the local database. "
             "This also deletes associated grades and submissions."
-        ).classes("text-xs opacity-60 mb-3")
+        ).classes("v-modal-subtitle")
 
         assignment_select = (
             ui.select(
@@ -132,10 +132,10 @@ def open_delete_assignment_modal(
             .classes("w-full")
         )
 
-        error_label = ui.label("").classes("text-red-400 text-xs mt-1")
+        error_label = ui.label("").classes("v-modal-error")
         error_label.set_visibility(False)
 
-        status_label = ui.label("").classes("text-xs opacity-70 mt-1")
+        status_label = ui.label("").classes("v-modal-status")
         status_label.set_visibility(False)
 
         async def _on_delete() -> None:
@@ -184,7 +184,7 @@ def open_delete_assignment_modal(
             if tbl in ("canvas_assignments", "canvas_grades"):
                 load_table(tbl)
 
-        with ui.row().classes("w-full justify-end gap-2 mt-4"):
+        with ui.row().classes("v-modal-actions"):
             ui.button("Cancel", on_click=dialog.close).props(
                 "flat dense no-caps size=sm"
             )

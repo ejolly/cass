@@ -11,16 +11,10 @@ from nicegui import ui
 from ...db import get_meta
 from ..config import DEV_TABLES, display_name
 from ..grid import is_editable, revert_pending
+from ..styles import NAV_ITEM, NAV_ITEM_ACTIVE
 
 if TYPE_CHECKING:
     from ..page import ViewerPage
-
-_ITEM_BASE = (
-    "w-full items-center gap-1 px-4 py-1 cursor-pointer "
-    "rounded-none text-white/70 hover:bg-white/[0.08] hover:text-white/95 "
-    "flex-nowrap"
-)
-_ITEM_ACTIVE = "bg-blue-500/20 !text-white font-semibold"
 
 
 class Sidebar:
@@ -31,7 +25,7 @@ class Sidebar:
         self._build()
 
     def _build(self) -> None:
-        with ui.column().classes("w-full h-screen bg-[#1d1d1d] p-0 gap-0"):
+        with ui.column().classes("v-sidebar"):
             self._build_header()
             self._build_nav_groups()
             self._build_dev_section()
@@ -39,12 +33,12 @@ class Sidebar:
     def _build_header(self) -> None:
         p = self.page
         course_name = get_meta("course_name", p.conn) or "Untitled"
-        with ui.column().classes("w-full px-4 py-3 gap-0 border-b border-white/10"):
-            ui.label(course_name).classes("text-sm font-semibold break-words")
-            ui.label("cass viewer").classes("text-[0.65rem] opacity-40 tracking-wide")
+        with ui.column().classes("v-sidebar-header"):
+            ui.label(course_name).classes("v-course-name")
+            ui.label("cass viewer").classes("v-app-label")
 
             # Sync status
-            with ui.row().classes("w-full items-center gap-2 mt-2"):
+            with ui.row().classes("v-sync-row"):
                 ui.button(
                     icon="sync",
                     on_click=lambda: ui.navigate.to("/pull"),
@@ -55,9 +49,9 @@ class Sidebar:
                     "Synchronized",
                     color="green",
                     text_color="white",
-                ).classes("text-[0.6rem] font-semibold")
+                ).classes("v-pending-badge")
 
-            with ui.row().classes("w-full items-center gap-2"):
+            with ui.row().classes("v-action-row"):
                 p.revert_btn = ui.button(
                     "Revert",
                     on_click=lambda: revert_pending(
@@ -92,12 +86,10 @@ class Sidebar:
             has_classroom = False
 
         scroll = ui.scroll_area().classes("flex-1")
-        with scroll, ui.column().classes("w-full gap-0 py-2"):
+        with scroll, ui.column().classes("v-nav-scroll-col"):
             for group in p.groups:
-                with ui.row().classes("w-full items-center px-4 pt-3 pb-1 gap-1"):
-                    ui.label(group["label"]).classes(
-                        "text-[0.7rem] font-bold tracking-wider opacity-50 uppercase"
-                    )
+                with ui.row().classes("v-nav-group-row"):
+                    ui.label(group["label"]).classes("v-nav-group-label")
                     if group["label"] == "Canvas LMS":
                         ui.space()
                         ui.button(
@@ -131,7 +123,7 @@ class Sidebar:
                             icon="download",
                             on_click=open_pull_gh_modal,
                         ).props("flat dense no-caps size=xs color=grey-6").classes(
-                            "text-[0.6rem]"
+                            "v-pull-repos-btn"
                         )
 
                 # Sidebar entries
@@ -148,7 +140,7 @@ class Sidebar:
                     item = (
                         ui.row()
                         .classes(
-                            f"{_ITEM_BASE}{' ' + _ITEM_ACTIVE if is_active else ''}"
+                            f"{NAV_ITEM}{' ' + NAV_ITEM_ACTIVE if is_active else ''}"
                         )
                         .on(
                             "click",
@@ -156,15 +148,15 @@ class Sidebar:
                         )
                     )
                     with item:
-                        ui.label(dn).classes("text-xs font-mono")
+                        ui.label(dn).classes("v-nav-table-name")
                         ui.space()
                         if editable_item:
                             ui.badge("editable").props("outline color=green").classes(
-                                "text-[0.55rem] shrink-0"
+                                "v-nav-badge"
                             )
                         else:
                             ui.badge("view-only").props("outline color=grey-7").classes(
-                                "text-[0.55rem] shrink-0"
+                                "v-nav-badge"
                             )
                     p.sidebar_items[tn] = item
 
@@ -172,27 +164,24 @@ class Sidebar:
         p = self.page
         dev_tables = sorted(DEV_TABLES)
         with (
-            ui.column().classes("w-full gap-0 border-t border-white/10"),
+            ui.column().classes("v-dev-section"),
             ui.expansion("Dev", icon="code")
-            .classes(
-                "w-full text-[0.7rem] font-bold tracking-wider"
-                " opacity-40 uppercase px-0"
-            )
+            .classes("v-dev-expansion")
             .props("dense header-class='px-4 py-1'"),
         ):
             for dt in dev_tables:
                 item = (
                     ui.row()
-                    .classes(_ITEM_BASE)
+                    .classes(NAV_ITEM)
                     .on(
                         "click",
                         lambda _e, n=dt: p.load_table(n),
                     )
                 )
                 with item:
-                    ui.label(dt).classes("text-xs font-mono opacity-60")
+                    ui.label(dt).classes("v-nav-dev-table")
                     ui.space()
                     ui.badge("internal").props("outline color=grey-8").classes(
-                        "text-[0.55rem]"
+                        "v-nav-badge"
                     )
                 p.sidebar_items[dt] = item
