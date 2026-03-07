@@ -404,9 +404,10 @@ def _render_viewer() -> None:
                     sidebar_entries.append(("gh_gradebook", "Gradebook", False))
                 for t in group["items"]:
                     tn = t["name"]
-                    sidebar_entries.append(
-                        (tn, display_name(tn), is_editable(conn, tn))
-                    )
+                    # gh_students is technically editable (excluded toggle)
+                    # but should display as view-only in the sidebar
+                    show_editable = is_editable(conn, tn) and tn != "gh_students"
+                    sidebar_entries.append((tn, display_name(tn), show_editable))
 
                 for tn, dn, editable_item in sidebar_entries:
                     is_active = tn == current_table["name"]
