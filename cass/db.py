@@ -300,6 +300,15 @@ def save_gh_students(students: list[GHStudentInfo]) -> int:
     return len(students)
 
 
+def load_gh_student_handles() -> set[str]:
+    """Return the set of github_username values from the GH Classroom roster."""
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT github_username FROM gh_students WHERE excluded = false"
+    ).fetchall()
+    return {r[0] for r in rows}
+
+
 # ---------------------------------------------------------------------------
 # Canvas Students (source)
 # ---------------------------------------------------------------------------

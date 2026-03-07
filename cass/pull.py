@@ -38,7 +38,21 @@ async def _fetch_gh_submissions(
     force_refresh: bool,
     on_status: typing.Callable[[str], None] | None = None,
 ) -> list[GHSubmission]:
-    """Fetch GH submissions for all assignments (shared by CLI + viewer)."""
+    """Fetch GH submissions for all assignments (shared by CLI + viewer).
+
+    The roster is built from the GH Classroom roster (``gh_students``) as the
+    authoritative source, merged with Canvas students.  This ensures that:
+    - GH-roster students without a Canvas account get submissions
+    - Random users who only accepted an assignment are excluded
+    """
+    # Build merged roster: Canvas students + GH-roster-only students
+    gh_handles = db.load_gh_student_handles()
+    canvas_handles = {s.handle_lower for s in students if s.github_username}
+    gh_only = gh_handles - canvas_handles
+    roster = list(students)
+    for handle in gh_only:
+        roster.append(Student(canvas_id=0, github_username=handle))
+
     all_subs: list[GHSubmission] = []
     for i, a in enumerate(gh_assignments, 1):
         if on_status is not None:
@@ -47,7 +61,7 @@ async def _fetch_gh_submissions(
             client,
             a.gh_assignment_slug,
             a.deadline,
-            students,
+            roster,
             ttl_hours=ttl_hours,
             force_refresh=force_refresh,
         )
