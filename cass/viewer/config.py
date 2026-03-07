@@ -176,6 +176,7 @@ HIDDEN_COLUMNS: dict[str, list[str]] = {
         "github_username",
         "assignment_slug",
         "last_commit_sha",
+        "commit_url",
     ],
 }
 
@@ -226,9 +227,8 @@ COLUMN_ORDERING: dict[str, list[str]] = {
         "student",
         "assignment_name",
         "commit_count",
-        "late",
-        "commit_url",
         "repo_url",
+        "late",
     ],
 }
 
@@ -273,9 +273,8 @@ COLUMN_DISPLAY_NAMES: dict[str, dict[str, str]] = {
         "student": "Student",
         "assignment_name": "Assignment",
         "commit_count": "Commits",
-        "late": "Late",
-        "commit_url": "Link",
         "repo_url": "Repo",
+        "late": "Late",
     },
 }
 
