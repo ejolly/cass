@@ -10,7 +10,7 @@ import duckdb
 from nicegui import ui
 
 from ..config import config_file_path
-from ..db import DB_FILENAME, get_pending_changes
+from ..db import DB_FILENAME, get_meta, get_pending_changes
 from ..db import reset as db_reset
 from .config import (
     CANVAS_PUSHABLE,
@@ -70,6 +70,14 @@ _GRID_CSS = """
 }
 .push-table .conflict-row { background: rgba(234,179,8,0.1); }
 .push-table .error-row { background: rgba(239,68,68,0.1); }
+.sidebar-resizer {
+    position: absolute; top: 0; right: 0; width: 4px; height: 100%;
+    cursor: col-resize; z-index: 10;
+    background: transparent; transition: background 0.15s;
+}
+.sidebar-resizer:hover, .sidebar-resizer.dragging {
+    background: rgba(96,165,250,0.5);
+}
 """
 
 
@@ -309,28 +317,39 @@ def _render_viewer() -> None:
         top_corner=True,
         bottom_corner=True,
         fixed=True,
-    ).classes("bg-[#1d1d1d] border-r border-white/10 !w-56 p-0")
+    ).classes("bg-[#1d1d1d] border-r border-white/10 p-0")
+    drawer.props("width=224")
     with drawer:
         # Header
-        with ui.row().classes(
-            "w-full items-center justify-between px-4 py-3 border-b border-white/10"
-        ):
-            ui.label("CASS").classes(
-                "text-xs font-bold tracking-widest opacity-60 uppercase"
-            )
-            ui.button(
-                icon="chevron_left",
-                on_click=drawer.toggle,
-            ).props("flat dense round size=sm color=grey-6")
+        course_name = get_meta("course_name", conn) or "Untitled Course"
+        with ui.column().classes("w-full px-4 py-3 gap-0 border-b border-white/10"):
+            ui.label(course_name).classes("text-sm font-semibold truncate")
+            ui.label("cass viewer").classes("text-[0.65rem] opacity-40 tracking-wide")
+
+        # Detect classroom config for Pull GH button
+        try:
+            from ..config import get_config
+
+            has_classroom = get_config().has_classroom
+        except SystemExit:
+            has_classroom = False
 
         # Navigation
         scroll = ui.scroll_area().classes("flex-1")
         with scroll, ui.column().classes("w-full gap-0 py-2"):
             for group in groups:
-                ui.label(group["label"]).classes(
-                    "text-[0.7rem] font-bold tracking-wider"
-                    " opacity-50 uppercase px-4 pt-3 pb-1"
-                )
+                with ui.row().classes("w-full items-center px-4 pt-3 pb-1 gap-1"):
+                    ui.label(group["label"]).classes(
+                        "text-[0.7rem] font-bold tracking-wider opacity-50 uppercase"
+                    )
+                    if group["label"] == "GitHub Classroom" and has_classroom:
+                        ui.space()
+                        ui.button(
+                            icon="sync",
+                            on_click=open_pull_gh_modal,
+                        ).props("flat dense round size=xs color=grey-6").tooltip(
+                            "Pull repos from GitHub"
+                        )
                 for t in group["items"]:
                     tn = t["name"]
                     dn = display_name(tn)
@@ -360,29 +379,33 @@ def _render_viewer() -> None:
                             )
                     sidebar_items[tn] = item
 
-            # Dev section — collapsible, shows internal/synced tables
-            dev_tables = sorted(DEV_TABLES)
-            with (
-                ui.expansion("Dev", icon="code")
-                .classes(
-                    "w-full text-[0.7rem] font-bold tracking-wider"
-                    " opacity-40 uppercase px-0"
+        # Dev section — pinned to bottom of sidebar, outside scroll area
+        dev_tables = sorted(DEV_TABLES)
+        with (
+            ui.column().classes("w-full gap-0 border-t border-white/10"),
+            ui.expansion("Dev", icon="code")
+            .classes(
+                "w-full text-[0.7rem] font-bold tracking-wider"
+                " opacity-40 uppercase px-0"
+            )
+            .props("dense header-class='px-4 py-1'"),
+        ):
+            for dt in dev_tables:
+                item = (
+                    ui.row()
+                    .classes(_ITEM_BASE)
+                    .on("click", lambda _e, n=dt: load_table(n))
                 )
-                .props("dense header-class='px-4 py-1'")
-            ):
-                for dt in dev_tables:
-                    item = (
-                        ui.row()
-                        .classes(_ITEM_BASE)
-                        .on("click", lambda _e, n=dt: load_table(n))
+                with item:
+                    ui.label(dt).classes("text-xs font-mono opacity-60")
+                    ui.space()
+                    ui.badge("internal").props("outline color=grey-8").classes(
+                        "text-[0.55rem]"
                     )
-                    with item:
-                        ui.label(dt).classes("text-xs font-mono opacity-60")
-                        ui.space()
-                        ui.badge("internal").props("outline color=grey-8").classes(
-                            "text-[0.55rem]"
-                        )
-                    sidebar_items[dt] = item
+                sidebar_items[dt] = item
+
+        # Drag resizer handle
+        ui.html('<div class="sidebar-resizer" id="sidebar-resizer"></div>')
 
     # Main content
     with ui.column().classes("w-full flex-1 gap-0"):
@@ -402,16 +425,16 @@ def _render_viewer() -> None:
             meta_label["ref"] = ml
 
             ui.button(
-                "CSV",
+                "Export CSV",
                 on_click=lambda: export_csv(grid_container),
-            ).props("flat dense no-caps size=sm color=grey-5").classes("text-xs")
+            ).props("outline dense no-caps size=sm color=grey-5").classes("text-xs")
             ui.button(
-                "Markdown",
+                "Export Markdown",
                 on_click=lambda: export_markdown(
                     grid_container,
                     current_table,
                 ),
-            ).props("flat dense no-caps size=sm color=grey-5").classes("text-xs")
+            ).props("outline dense no-caps size=sm color=grey-5").classes("text-xs")
 
             ui.space()
 
@@ -451,19 +474,6 @@ def _render_viewer() -> None:
             pb.set_visibility(False)
             push_btn["ref"] = pb
 
-            # Pull GH repos button (visible if classroom configured)
-            try:
-                from ..config import get_config
-
-                has_classroom = get_config().has_classroom
-            except SystemExit:
-                has_classroom = False
-            if has_classroom:
-                ui.button(
-                    "Pull GH",
-                    on_click=open_pull_gh_modal,
-                ).props("dense no-caps size=sm color=grey-7")
-
         # Toolbar row 2: search
         with ui.row().classes("w-full px-4 py-1 border-b border-white/10 bg-[#1d1d1d]"):
             si = (
@@ -485,6 +495,7 @@ def _render_viewer() -> None:
         grid_container["ref"] = gc
 
     # Keyboard shortcut: Ctrl/Cmd+K -> focus search
+    # Sidebar drag-to-resize
     ui.add_body_html("""
     <script>
     document.addEventListener('keydown', (e) => {
@@ -494,6 +505,35 @@ def _render_viewer() -> None:
             if (input) input.focus();
         }
     });
+    (function() {
+        const resizer = document.getElementById('sidebar-resizer');
+        if (!resizer) return;
+        const drawer = resizer.closest('.q-drawer');
+        if (!drawer) return;
+        let dragging = false, startX = 0, startW = 0;
+        resizer.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            dragging = true; startX = e.clientX;
+            startW = drawer.offsetWidth;
+            resizer.classList.add('dragging');
+            document.body.style.cursor = 'col-resize';
+            document.body.style.userSelect = 'none';
+        });
+        document.addEventListener('mousemove', (e) => {
+            if (!dragging) return;
+            const w = Math.max(160, Math.min(600, startW + e.clientX - startX));
+            drawer.style.width = w + 'px';
+            const page = document.querySelector('.q-page-container');
+            if (page) page.style.paddingLeft = w + 'px';
+        });
+        document.addEventListener('mouseup', () => {
+            if (!dragging) return;
+            dragging = false;
+            resizer.classList.remove('dragging');
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+        });
+    })();
     </script>
     """)
 

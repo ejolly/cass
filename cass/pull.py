@@ -399,6 +399,10 @@ async def pull_all_async(
         if on_progress is not None:
             on_progress(step, detail)
 
+    # --- course info ---
+    course_name = matching_mod.fetch_course_name(cfg.canvas_course_id)
+    db.save_meta("course_name", course_name)
+
     # --- students ---
     _report("students", "Pulling Canvas students...")
     canvas_students, sis_section_map = matching_mod.fetch_students_with_sections(

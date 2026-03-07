@@ -44,6 +44,12 @@ def fetch_students(course_id: int) -> list[CanvasStudent]:
         return c.list_students()
 
 
+def fetch_course_name(course_id: int) -> str:
+    """Fetch the course name from the Canvas API."""
+    with CanvasClient(course_id=course_id) as c:
+        return c.get_course().name
+
+
 def fetch_students_with_sections(
     course_id: int,
 ) -> tuple[list[CanvasStudent], dict[int, str]]:
