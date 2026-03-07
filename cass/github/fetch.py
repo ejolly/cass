@@ -11,6 +11,7 @@ __docformat__ = "google"
 
 import re
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 from rich.console import Console
@@ -23,6 +24,8 @@ from .client import GitHubClient
 GH_CLASSROOM_DIR = "gh-classroom"
 
 console = Console()
+
+ProgressCallback = Callable[[str], None]
 
 
 def sanitize_student_dir(sortable_name: str, github_username: str) -> str:
@@ -118,6 +121,7 @@ async def pull_gh(
     *,
     limit_students: int = 0,
     limit_assignments: int = 0,
+    on_progress: ProgressCallback | None = None,
 ) -> dict[str, int]:
     """Clone/pull student repos for the given assignments.
 
@@ -127,6 +131,7 @@ async def pull_gh(
         students: Student roster.
         limit_students: Cap number of students (0 = all).
         limit_assignments: Cap number of assignments (0 = all).
+        on_progress: Optional callback for status messages (viewer use).
 
     Returns:
         Counts dict with keys: cloned, updated, up_to_date, skipped, errors.
@@ -134,6 +139,12 @@ async def pull_gh(
     cfg = get_config()
     dest_root = cfg.root / GH_CLASSROOM_DIR
     sortable_map = _get_sortable_names()
+
+    def _report(msg: str) -> None:
+        if on_progress is not None:
+            on_progress(msg)
+        else:
+            console.print(msg)
 
     sorted_students = sorted(students, key=lambda s: s.display_name.lower())
     if limit_students > 0:
@@ -146,7 +157,7 @@ async def pull_gh(
 
     for a in assignments:
         slug = a.gh_assignment_slug or a.slug
-        console.print(f"\n[bold]{slug}[/bold]")
+        _report(f"[bold]{slug}[/bold]")
 
         repo_map = await build_repo_map(client, slug)
 
@@ -157,7 +168,7 @@ async def pull_gh(
 
             repo_short = repo_map.get(student.handle_lower)
             if not repo_short:
-                console.print(f"  [dim]{student.display_name}: no repo[/dim]")
+                _report(f"  {student.display_name}: no repo")
                 counts["skipped"] += 1
                 continue
 
@@ -169,9 +180,9 @@ async def pull_gh(
                 status = _clone_or_pull(repo_url, dest)
                 counts[status.replace("-", "_")] += 1
                 if status != "up-to-date":
-                    console.print(f"  [green]{student.display_name}: {status}[/green]")
+                    _report(f"  {student.display_name}: {status}")
             except RuntimeError as exc:
-                console.print(f"  [red]{student.display_name}: {exc}[/red]")
+                _report(f"  {student.display_name}: ERROR {exc}")
                 counts["errors"] += 1
 
     return counts
