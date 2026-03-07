@@ -50,6 +50,22 @@ def sanitize(obj: object) -> object:  # pyright: ignore[reportUnknownParameterTy
 # Datetime formatting
 # ---------------------------------------------------------------------------
 
+_LINK_JS = """
+(params) => {
+    if (!params.value) return '';
+    const url = params.value;
+    const short = url.replace('https://github.com/', '');
+    const parts = short.split('/commit/');
+    const label = parts.length > 1 ? parts[1].substring(0, 7) : parts[0];
+    return '<a href="' + url + '" target="_blank" '
+        + 'style="color:#60a5fa;text-decoration:underline">'
+        + label + '</a>';
+}
+""".strip()
+
+# URL columns that should render as clickable links
+_LINK_COLUMNS = {"repo_url", "commit_url"}
+
 _DATETIME_JS = """
 (params) => {
     if (!params.value) return '';
@@ -296,8 +312,12 @@ def build_column_defs(
             "resizable": True,
         }
 
+        # Link columns (repo_url, commit_url)
+        if name in _LINK_COLUMNS:
+            col_def[":cellRenderer"] = _LINK_JS
+
         # Datetime formatting
-        if _is_datetime_col(dtype):
+        elif _is_datetime_col(dtype):
             if table == "canvas_submissions" and name == "submitted_at":
                 col_def[":cellRenderer"] = _SUBMISSION_DATE_JS
             else:
@@ -452,6 +472,109 @@ def build_gradebook_view(
         }
         for a_id, *_rest in assignments:
             row[f"_a{a_id}"] = grade_map.get((int(s_id), int(a_id)), "")
+        row_data.append(row)
+
+    return row_data, col_defs
+
+
+# ---------------------------------------------------------------------------
+# GH Gradebook pivot view
+# ---------------------------------------------------------------------------
+
+
+def build_gh_gradebook_view(
+    conn: duckdb.DuckDBPyConnection,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Build pivoted GH gradebook: students as rows, assignments as columns.
+
+    Cells show ``X/Y`` where X = commits before deadline, Y = commits after.
+    Read-only — no edit handlers.
+
+    Returns:
+        (row_data, col_defs) — ready for AG Grid.
+    """
+    # Fetch GH assignments ordered by deadline
+    assignments = conn.execute(
+        "SELECT slug, title, deadline FROM gh_assignments ORDER BY deadline, title"
+    ).fetchall()
+
+    # Fetch all GH submissions
+    subs_raw = conn.execute(
+        "SELECT github_username, assignment_slug, submitted, "
+        "commit_count, commits_after_deadline "
+        "FROM gh_submissions"
+    ).fetchall()
+    sub_map: dict[tuple[str, str], tuple[bool, int, int]] = {
+        (r[0], r[1]): (r[2], r[3], r[4]) for r in subs_raw
+    }
+
+    # Build student list: Canvas name when matched, else gh_students.name
+    student_rows = conn.execute(
+        "SELECT gs.github_username, "
+        "COALESCE(cs.sortable_name, s.name, gs.name) AS display_name "
+        "FROM gh_students gs "
+        "LEFT JOIN students s ON gs.github_username = s.github_username "
+        "LEFT JOIN canvas_students cs ON s.canvas_id = cs.canvas_id "
+        "ORDER BY display_name"
+    ).fetchall()
+
+    # Also include students who have submissions but aren't in gh_students
+    known_handles = {r[0] for r in student_rows}
+    extra_handles = {h for h, _ in sub_map if h not in known_handles}
+    for handle in sorted(extra_handles):
+        student_rows.append((handle, handle))
+
+    # Build column defs
+    col_defs: list[dict[str, Any]] = [
+        {
+            "headerName": "Student",
+            "field": "_student_name",
+            "pinned": "left",
+            "minWidth": 160,
+            "sortable": True,
+            "filter": False,
+            "resizable": True,
+            "editable": False,
+            "cellStyle": {"fontWeight": "600"},
+        },
+    ]
+
+    for slug, title, _deadline in assignments:
+        field = f"_a{slug}"
+        col_defs.append(
+            {
+                "headerName": title,
+                "field": field,
+                "minWidth": 80,
+                "sortable": True,
+                "filter": False,
+                "resizable": True,
+                "editable": False,
+                "headerTooltip": title,
+                "wrapHeaderText": True,
+                "autoHeaderHeight": True,
+            }
+        )
+
+    # Hidden username column for identification
+    col_defs.append({"field": "_github_username", "hide": True})
+
+    # Build row data
+    row_data: list[dict[str, Any]] = []
+    for handle, name in student_rows:
+        row: dict[str, Any] = {
+            "_student_name": name,
+            "_github_username": handle,
+        }
+        for slug, _title, _deadline in assignments:
+            field = f"_a{slug}"
+            sub = sub_map.get((handle, slug))
+            if sub and sub[0]:  # submitted
+                commit_count, after = sub[1], sub[2]
+                before = commit_count - after
+                row[field] = f"{before}/{after}"
+            else:
+                row[field] = ""
         row_data.append(row)
 
     return row_data, col_defs
@@ -793,6 +916,8 @@ def reload_current_grid(
     if grid is not None:
         if table_name == "canvas_grades":
             new_rows, _col_defs = build_gradebook_view(conn)
+        elif table_name == "gh_gradebook":
+            new_rows, _col_defs = build_gh_gradebook_view(conn)
         else:
             new_rows = get_table_rows(conn, table_name)
         grid.options["rowData"] = new_rows  # pyright: ignore[reportUnknownMemberType]

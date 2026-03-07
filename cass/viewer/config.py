@@ -13,6 +13,7 @@ from typing import Any
 EXCLUDED_TABLES = {
     "meta",
     "canvas_students",
+    "gh_grades",
     "_canvas_assignments_synced",
     "_canvas_grades_synced",
 }
@@ -24,6 +25,7 @@ READ_ONLY_TABLES = {
     "canvas_submissions",
     "gh_submissions",
     "gh_students",
+    "gh_assignments",
     "gh_grades",
     "assignments",
     "students",
@@ -85,6 +87,55 @@ ENRICHED_QUERIES: dict[str, str] = {
         LEFT JOIN canvas_assignments ca
             ON cg.canvas_assignment_id = ca.canvas_id
     """,
+    "gh_students": """
+        SELECT
+            COALESCE(s.name, gs.name) AS student,
+            gs.github_username,
+            COALESCE(s.email, gs.email) AS email,
+            gs.github_id
+        FROM gh_students gs
+        LEFT JOIN students s ON gs.github_username = s.github_username
+        ORDER BY student
+    """,
+    "gh_assignments": """
+        SELECT
+            ga.title,
+            ga.points_possible,
+            ga.deadline,
+            ga.accepted,
+            ga.submissions_count,
+            ga.passing_count,
+            ga.slug,
+            ga.gh_id,
+            ga.starter_code_repo,
+            ga.submittable_files
+        FROM gh_assignments ga
+        ORDER BY ga.deadline, ga.title
+    """,
+    "gh_submissions": """
+        SELECT
+            gs.github_username,
+            gs.assignment_slug,
+            COALESCE(s.name, gst.name, gs.github_username) AS student,
+            ga.title AS assignment_name,
+            gs.submitted,
+            gs.commit_count,
+            gs.commits_after_deadline,
+            gs.late,
+            'https://github.com/' || gs.repo_name AS repo_url,
+            CASE WHEN gs.last_commit_sha != ''
+                THEN 'https://github.com/' || gs.repo_name
+                    || '/commit/' || gs.last_commit_sha
+                ELSE '' END AS commit_url,
+            gs.last_commit_at,
+            gs.last_commit_sha
+        FROM gh_submissions gs
+        LEFT JOIN students s ON gs.github_username = s.github_username
+        LEFT JOIN gh_students gst
+            ON gs.github_username = gst.github_username
+        LEFT JOIN gh_assignments ga ON gs.assignment_slug = ga.slug
+        ORDER BY gs.last_commit_at DESC, gs.github_username
+    """,
 }
 
 # Column display config: hide internal IDs, reorder for readability
@@ -93,7 +144,13 @@ HIDDEN_COLUMNS: dict[str, list[str]] = {
     "canvas_students": ["canvas_id"],
     "canvas_submissions": ["canvas_user_id", "canvas_assignment_id", "due_at"],
     "canvas_grades": ["canvas_user_id", "canvas_assignment_id"],
-    "gh_assignments": ["gh_id"],
+    "gh_assignments": ["gh_id", "slug", "starter_code_repo", "submittable_files"],
+    "gh_students": ["github_id"],
+    "gh_submissions": [
+        "github_username",
+        "assignment_slug",
+        "last_commit_sha",
+    ],
 }
 
 COLUMN_ORDERING: dict[str, list[str]] = {
@@ -124,6 +181,30 @@ COLUMN_ORDERING: dict[str, list[str]] = {
         "posted_grade",
         "updated_at",
     ],
+    "gh_students": [
+        "student",
+        "github_username",
+        "email",
+    ],
+    "gh_assignments": [
+        "title",
+        "points_possible",
+        "deadline",
+        "accepted",
+        "submissions_count",
+        "passing_count",
+    ],
+    "gh_submissions": [
+        "student",
+        "assignment_name",
+        "submitted",
+        "commit_count",
+        "commits_after_deadline",
+        "late",
+        "repo_url",
+        "commit_url",
+        "last_commit_at",
+    ],
 }
 
 # Human-friendly column header names
@@ -148,16 +229,29 @@ COLUMN_DISPLAY_NAMES: dict[str, dict[str, str]] = {
         "score": "Score",
         "workflow_state": "State",
     },
+    "gh_students": {
+        "student": "Student",
+        "github_username": "GitHub Username",
+        "email": "Email",
+    },
     "gh_assignments": {
-        "slug": "Slug",
-        "title": "Title",
-        "deadline": "Deadline",
+        "title": "Name",
         "points_possible": "Points",
+        "deadline": "Deadline",
         "accepted": "Accepted",
         "submissions_count": "Submissions",
         "passing_count": "Passing",
-        "starter_code_repo": "Starter Repo",
-        "submittable_files": "Submittable Files",
+    },
+    "gh_submissions": {
+        "student": "Student",
+        "assignment_name": "Assignment",
+        "submitted": "Submitted",
+        "commit_count": "Commits",
+        "commits_after_deadline": "Late Commits",
+        "late": "Late",
+        "repo_url": "Repo",
+        "commit_url": "Latest Commit",
+        "last_commit_at": "Last Commit",
     },
 }
 
@@ -177,7 +271,7 @@ _DISPLAY_NAMES: dict[str, str] = {
     "canvas_assignments": "Assignments",
     "canvas_submissions": "Submissions",
     "canvas_grades": "Gradebook",
-    "gh_students": "Students",
+    "gh_students": "Roster",
     "gh_assignments": "Assignments",
     "gh_submissions": "Submissions",
     "gh_grades": "Grades",
@@ -192,7 +286,7 @@ _GROUP_ORDER: dict[str, list[str]] = {
         "canvas_assignments",
         "canvas_submissions",
     ],
-    "github": ["gh_students", "gh_assignments", "gh_submissions", "gh_grades"],
+    "github": ["gh_assignments", "gh_submissions", "gh_students"],
     "combined": ["students", "assignments"],
 }
 

@@ -63,6 +63,7 @@ class GHCommitInfo(msgspec.Struct):
 
 
 class GHCommit(msgspec.Struct):
+    sha: str = ""
     commit: GHCommitInfo = msgspec.field(default_factory=GHCommitInfo)
 
 
