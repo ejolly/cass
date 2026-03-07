@@ -30,7 +30,7 @@ from .models import (
 )
 
 DB_FILENAME = "cass.duckdb"
-_SCHEMA_VERSION = 11
+_SCHEMA_VERSION = 12
 
 _conn: duckdb.DuckDBPyConnection | None = None
 
@@ -165,6 +165,8 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
             commit_count INTEGER NOT NULL DEFAULT 0,
             passing BOOLEAN NOT NULL DEFAULT false,
             gh_autograder_score TEXT NOT NULL DEFAULT '',
+            last_commit_at TEXT NOT NULL DEFAULT '',
+            last_commit_sha TEXT NOT NULL DEFAULT '',
             fetched_at DOUBLE NOT NULL,
             PRIMARY KEY (github_username, assignment_slug)
         )
@@ -584,7 +586,8 @@ def save_gh_submissions(subs: list[GHSubmission]) -> int:
         "INSERT OR REPLACE INTO gh_submissions "
         "(github_username, assignment_slug, submitted, late, lateness_seconds, "
         "repo_name, commits_after_deadline, commit_count, passing, "
-        "gh_autograder_score, fetched_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "gh_autograder_score, last_commit_at, last_commit_sha, fetched_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             (
                 s.github_username,
@@ -597,6 +600,8 @@ def save_gh_submissions(subs: list[GHSubmission]) -> int:
                 s.commit_count,
                 s.passing,
                 s.gh_autograder_score,
+                s.last_commit_at,
+                s.last_commit_sha,
                 now,
             )
             for s in subs
@@ -608,19 +613,20 @@ def save_gh_submissions(subs: list[GHSubmission]) -> int:
 def load_gh_submissions(assignment_slug: str | None = None) -> list[GHSubmission]:
     """Load GitHub submissions."""
     conn = get_db()
+    _cols = (
+        "github_username, assignment_slug, submitted, late, "
+        "lateness_seconds, repo_name, commits_after_deadline, commit_count, "
+        "passing, gh_autograder_score, last_commit_at, last_commit_sha"
+    )
     if assignment_slug:
         rows = conn.execute(
-            "SELECT github_username, assignment_slug, submitted, late, "
-            "lateness_seconds, repo_name, commits_after_deadline, commit_count, "
-            "passing, gh_autograder_score FROM gh_submissions "
+            f"SELECT {_cols} FROM gh_submissions "
             "WHERE assignment_slug = ? ORDER BY github_username",
             [assignment_slug],
         ).fetchall()
     else:
         rows = conn.execute(
-            "SELECT github_username, assignment_slug, submitted, late, "
-            "lateness_seconds, repo_name, commits_after_deadline, commit_count, "
-            "passing, gh_autograder_score FROM gh_submissions "
+            f"SELECT {_cols} FROM gh_submissions "
             "ORDER BY assignment_slug, github_username"
         ).fetchall()
     return [
@@ -635,6 +641,8 @@ def load_gh_submissions(assignment_slug: str | None = None) -> list[GHSubmission
             commit_count=r[7],
             passing=r[8],
             gh_autograder_score=r[9],
+            last_commit_at=r[10] or "",
+            last_commit_sha=r[11] or "",
         )
         for r in rows
     ]

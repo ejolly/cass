@@ -165,6 +165,9 @@ async def fetch_submissions(
         late = False
         lateness_seconds = 0
 
+        last_commit_at = ""
+        last_commit_sha = ""
+
         if assignment_deadline:
             if commit_count == 0:
                 on_time = False
@@ -193,8 +196,30 @@ async def fetch_submissions(
                         dt = datetime.fromisoformat(date_str)
                         delta = dt - assignment_deadline
                         lateness_seconds = max(0, int(delta.total_seconds()))
+
+                # Extract latest commit info (after > before chronologically)
+                if after:
+                    last_commit_at = after[0].commit.committer.date
+                    last_commit_sha = after[0].sha
+                elif on_time and isinstance(before_raw, list) and before_raw:
+                    before_commits = msgspec.convert(before_raw, list[GHCommit])
+                    if before_commits:
+                        last_commit_at = before_commits[0].commit.committer.date
+                        last_commit_sha = before_commits[0].sha
         else:
             on_time = commit_count > 0
+            # No deadline — fetch latest commit directly
+            if commit_count > 0:
+                latest_data = await client.get_cached(
+                    f"/repos/{cfg.org}/{repo_short}/commits?per_page=1",
+                    ttl_hours=ttl_hours,
+                    force_refresh=force_refresh,
+                )
+                if isinstance(latest_data, list) and latest_data:
+                    latest = msgspec.convert(latest_data, list[GHCommit])
+                    if latest:
+                        last_commit_at = latest[0].commit.committer.date
+                        last_commit_sha = latest[0].sha
 
         return GHSubmission(
             github_username=handle,
@@ -207,6 +232,8 @@ async def fetch_submissions(
             commit_count=commit_count,
             passing=info["passing"],
             gh_autograder_score=info["grade"],
+            last_commit_at=last_commit_at,
+            last_commit_sha=last_commit_sha,
         )
 
     results = await asyncio.gather(*(check_student(s) for s in roster))

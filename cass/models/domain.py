@@ -58,6 +58,8 @@ class GHSubmission(msgspec.Struct):
     commit_count: int = 0
     passing: bool = False
     gh_autograder_score: str = ""
+    last_commit_at: str = ""
+    last_commit_sha: str = ""
 
     def with_assignment_slug(self, slug: str) -> GHSubmission:
         """Return a copy with a different assignment_slug."""

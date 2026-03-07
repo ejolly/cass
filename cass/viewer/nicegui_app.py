@@ -25,6 +25,7 @@ from .grid import (
     attach_edit_handler,
     attach_gradebook_edit_handler,
     build_column_defs,
+    build_gh_gradebook_view,
     build_gradebook_view,
     export_csv,
     export_markdown,
@@ -214,10 +215,15 @@ def _render_viewer() -> None:
             tl.text = display_name(table_name)
 
         # Build grid data
-        is_gb = table_name == "canvas_grades"
-        if is_gb:
+        is_canvas_gb = table_name == "canvas_grades"
+        is_gh_gb = table_name == "gh_gradebook"
+        is_gb = is_canvas_gb or is_gh_gb
+        if is_canvas_gb:
             row_data, col_defs = build_gradebook_view(conn)
             pk_cols: list[str] = []
+        elif is_gh_gb:
+            row_data, col_defs = build_gh_gradebook_view(conn)
+            pk_cols = []
         else:
             row_data = get_table_rows(conn, table_name)
             col_defs = build_column_defs(conn, table_name)
@@ -252,9 +258,13 @@ def _render_viewer() -> None:
                     "stopEditingWhenCellsLoseFocus": True,
                 }
 
-                if is_gb:
+                if is_canvas_gb:
                     grid_options[":getRowId"] = (
                         "(params) => String(params.data._canvas_user_id)"
+                    )
+                elif is_gh_gb:
+                    grid_options[":getRowId"] = (
+                        "(params) => String(params.data._github_username)"
                     )
                 else:
                     grid_options[":getRowId"] = f"(params) => {row_id_js(pk_cols)}"
@@ -265,7 +275,7 @@ def _render_viewer() -> None:
                     .style("height: calc(100vh - 6rem)")
                 )
 
-                if is_gb:
+                if is_canvas_gb:
                     attach_gradebook_edit_handler(
                         grid,
                         conn,
@@ -282,11 +292,11 @@ def _render_viewer() -> None:
                         update_pending_display,
                     )
 
-                if is_gb or editable_flag:
+                if is_canvas_gb or editable_flag:
                     attach_date_autocommit(grid)
 
                 # Restore pending cell highlights from persisted state
-                if is_gb:
+                if is_canvas_gb:
                     restore_pending_cells(
                         grid, pending, "canvas_grades", [], is_gradebook=True
                     )
@@ -342,10 +352,17 @@ def _render_viewer() -> None:
                         ).props("flat dense round size=xs color=grey-6").tooltip(
                             "Pull repos from GitHub"
                         )
+                # Inject GH gradebook virtual entry at top of GitHub group
+                sidebar_entries: list[tuple[str, str, bool]] = []
+                if group["label"] == "GitHub Classroom":
+                    sidebar_entries.append(("gh_gradebook", "Gradebook", False))
                 for t in group["items"]:
                     tn = t["name"]
-                    dn = display_name(tn)
-                    editable_item = is_editable(conn, tn)
+                    sidebar_entries.append(
+                        (tn, display_name(tn), is_editable(conn, tn))
+                    )
+
+                for tn, dn, editable_item in sidebar_entries:
                     is_active = tn == current_table["name"]
 
                     item = (
