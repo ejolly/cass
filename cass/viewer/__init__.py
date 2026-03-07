@@ -44,11 +44,7 @@ def preview_assignments(
     results: list[dict[str, object]] = []
     for pk_key, columns in table_changes.items():
         canvas_id = int(pk_key)
-        name_row = conn.execute(
-            "SELECT name FROM canvas_assignments WHERE canvas_id = ?",
-            [canvas_id],
-        ).fetchone()
-        assignment_name = name_row[0] if name_row else f"ID {canvas_id}"
+        assignment_name = resolve_row_name(conn, "canvas_assignments", pk_key)
 
         try:
             live = client.get_assignment(canvas_id)
@@ -107,7 +103,7 @@ def preview_grades(
                     "SELECT name FROM canvas_students WHERE canvas_id = ?",
                     [uid],
                 ).fetchone()
-                student_name = student_row[0] if student_row else f"User {uid}"
+                student_name = str(student_row[0]) if student_row else f"User {uid}"
 
                 live_sub = live_by_user.get(uid)
                 for col, vals in columns.items():

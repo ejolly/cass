@@ -9,11 +9,11 @@ import msgspec
 import pytest
 
 from cass import db
+from cass.db import ENRICHED_QUERIES
 from cass.models import GHAssignment, GHCommit, GHSubmission, Student
 from cass.viewer.config import (
     COLUMN_DISPLAY_NAMES,
     COLUMN_ORDERING,
-    ENRICHED_QUERIES,
     EXCLUDED_TABLES,
     HIDDEN_COLUMNS,
     READ_ONLY_TABLES,
