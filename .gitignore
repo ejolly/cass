@@ -6,6 +6,8 @@ canvas-token.txt
 canvas_mapping.json
 classroom_roster.csv
 cass.duckdb
+cass.db
+cass.db-journal
 .cass_cache.duckdb
 .cass_cache.duckdb.wal
 grade-data/
@@ -17,3 +19,7 @@ docs/api/
 backups/
 gh-classroom/
 memory/
+dev.py
+.canvastoken
+*.db
+tests/testdb/

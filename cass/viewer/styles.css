@@ -177,11 +177,14 @@
     .v-setup-container {
         @apply w-full max-w-lg mx-auto mt-12 gap-6 items-center;
     }
+    .v-setup-card {
+        @apply gap-3;
+    }
     .v-setup-title {
         @apply text-2xl font-bold;
     }
     .v-setup-subtitle {
-        @apply text-sm opacity-60;
+        @apply text-sm opacity-60 text-center;
     }
     .v-setup-card-title {
         @apply text-sm font-semibold;
@@ -194,6 +197,9 @@
     }
     .v-setup-hint {
         @apply text-xs opacity-30;
+    }
+    .v-setup-submit {
+        @apply min-w-[14rem];
     }
     .v-setup-step {
         @apply text-sm font-mono opacity-50;

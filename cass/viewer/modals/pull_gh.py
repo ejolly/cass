@@ -5,8 +5,6 @@ from __future__ import annotations
 __docformat__ = "google"
 
 import asyncio
-import shutil
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from nicegui import ui
@@ -77,7 +75,7 @@ class PullGHModal:
 
     def open(self) -> None:
         from ... import db
-        from ...github.fetch import get_sortable_names, student_dir_name
+        from ...apis.github.fetch import get_sortable_names, student_dir_name
 
         all_assignments = db.load_assignments()
         gh_all = [a for a in all_assignments if a.gh_assignment_slug]
@@ -130,9 +128,9 @@ class PullGHModal:
         self._log_area.set_visibility(True)
 
         try:
-            from ...config import get_config
-            from ...github import fetch as fetch_mod
-            from ...github.client import GitHubClient
+            from ...actions.config import get_config
+            from ...apis.github import fetch as fetch_mod
+            from ...apis.github.client import GitHubClient
 
             cfg = get_config()
             if not cfg.has_classroom:
@@ -195,21 +193,21 @@ class PullGHModal:
         self._log_area.set_visibility(True)
 
         try:
-            from ...github.fetch import GH_CLASSROOM_DIR
+            from ...actions.config import get_config
+            from ...apis.github.fetch import gh_classroom_dir, remove_gh_classroom_repos
 
-            gh_dir = Path(GH_CLASSROOM_DIR)
+            cfg = get_config()
+            gh_dir = gh_classroom_dir(cfg.root)
             if not gh_dir.exists():
                 self._append_log("Nothing to remove — gh-classroom/ not found.")
                 return
 
-            subdirs = [p for p in gh_dir.iterdir() if p.is_dir()]
-            if not subdirs:
+            removed = remove_gh_classroom_repos(cfg.root)
+            if not removed:
                 self._append_log("gh-classroom/ is already empty.")
                 return
 
-            for p in subdirs:
-                shutil.rmtree(p)
-            self._append_log(f"Removed {len(subdirs)} folder(s) from gh-classroom/.")
+            self._append_log(f"Removed {removed} folder(s) from gh-classroom/.")
         except Exception as exc:
             self._append_log(f"ERROR: {exc}")
         finally:

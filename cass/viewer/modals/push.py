@@ -122,10 +122,22 @@ class PushModal:
     # Actions
     # ------------------------------------------------------------------
 
-    def _fetch_preview(self) -> None:
+    async def _fetch_preview(self) -> None:
+        import asyncio
+
+        from ...db import connect_db
+
         p = self.page
+        pending_snapshot = p.pending
+
+        def _blocking() -> dict[str, object]:
+            thread_conn = connect_db(p._project_root)
+            return canvas_preview(thread_conn, pending_snapshot)
+
         try:
-            self._preview = canvas_preview(p.conn, p.pending)
+            self._preview = await asyncio.get_event_loop().run_in_executor(
+                None, _blocking
+            )
             self._phase = "preview"
             self._render_preview()
         except Exception as exc:
@@ -137,10 +149,19 @@ class PushModal:
         self._render_pushing()
         ui.timer(0.1, self._execute_push, once=True)
 
-    def _execute_push(self) -> None:
+    async def _execute_push(self) -> None:
+        import asyncio
+
+        from ...db import connect_db
+
         p = self.page
+
+        def _blocking() -> dict[str, object]:
+            thread_conn = connect_db(p._project_root)
+            return canvas_apply(thread_conn, p.pending)
+
         try:
-            result = canvas_apply(p.conn, p.pending)
+            result = await asyncio.get_event_loop().run_in_executor(None, _blocking)
             if result["ok"]:
                 self.dialog.close()
                 clear_pending_cells()

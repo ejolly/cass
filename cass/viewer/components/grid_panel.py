@@ -22,7 +22,7 @@ from ..grid import (
 )
 
 if TYPE_CHECKING:
-    import duckdb
+    import sqlite_utils
 
     from ..config import PendingChanges
     from ..page import ViewerPage
@@ -41,7 +41,7 @@ class GridPanel:
     @staticmethod
     def build_grid(
         container: ui.element,
-        conn: duckdb.DuckDBPyConnection,
+        conn: sqlite_utils.Database,
         table_name: str,
         pending: PendingChanges,
         update_pending_display: Any,

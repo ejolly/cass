@@ -5,29 +5,63 @@ from __future__ import annotations
 __docformat__ = "google"
 
 import asyncio
-import re
 from pathlib import Path
 from typing import Any
 
+from msgspec import Struct
 from nicegui import ui
 
+from ..actions.config import parse_canvas_course_url, parse_classroom_url
 from .styles import load_styles
 
-# Matches Canvas course URLs like https://canvas.ucsd.edu/courses/72335
-_CANVAS_COURSE_URL_RE = re.compile(
-    r"^(https?://[^/]+)/courses/(\d+)",
-)
+
+class ViewerClassroomSetupResult(Struct):
+    classroom_url: str = ""
+    classroom_url_id: int = 0
+    classroom_gh_id: int = 0
+    classroom_slug: str = ""
+    classroom_title: str = ""
+    org: str = ""
+    warning: str = ""
 
 
-def _parse_canvas_url(raw: str) -> tuple[str, int] | None:
-    """Extract (base_url, course_id) from a Canvas course URL.
+async def resolve_viewer_classroom_setup(
+    classroom_url: str,
+) -> ViewerClassroomSetupResult:
+    """Resolve GitHub Classroom setup fields for the viewer wizard."""
+    gh_url = classroom_url.strip()
+    if not gh_url:
+        return ViewerClassroomSetupResult()
 
-    Returns None if the URL doesn't match the expected pattern.
-    """
-    m = _CANVAS_COURSE_URL_RE.match(raw.strip())
-    if not m:
-        return None
-    return m.group(1), int(m.group(2))
+    gh_url_id = parse_classroom_url(gh_url) or 0
+    if not gh_url_id:
+        raise ValueError(
+            "Invalid GitHub Classroom URL. Expected format: "
+            "https://classroom.github.com/classrooms/123456-course-name"
+        )
+
+    from ..apis.github.service import resolve_classroom_direct_async
+
+    result = await resolve_classroom_direct_async(gh_url)
+
+    if result.resolved is not None:
+        return ViewerClassroomSetupResult(
+            classroom_url=result.resolved.url,
+            classroom_url_id=result.resolved.url_id,
+            classroom_gh_id=result.resolved.gh_id,
+            classroom_slug=result.resolved.slug,
+            classroom_title=result.resolved.title,
+            org=result.resolved.org,
+        )
+
+    warning = result.error_detail
+    if result.recovery_hint:
+        warning = f"{warning} {result.recovery_hint}"
+    return ViewerClassroomSetupResult(
+        classroom_url=gh_url,
+        classroom_url_id=gh_url_id,
+        warning=warning,
+    )
 
 
 def setup_wizard_page(on_complete: Any) -> None:
@@ -41,11 +75,17 @@ def setup_wizard_page(on_complete: Any) -> None:
     load_styles()
     with ui.column().classes("v-setup-container"):
         ui.label("Welcome to cass").classes("v-setup-title")
-        ui.label("Configure your course to get started.").classes("v-setup-subtitle")
+        ui.label(
+            "Connect Canvas, optionally add GitHub Classroom, "
+            "then pull your course data."
+        ).classes("v-setup-subtitle")
 
         # --- Canvas (required) ---
-        with ui.card().classes("w-full"):
+        with ui.card().classes("w-full v-setup-card"):
             ui.label("Canvas LMS").classes("v-setup-card-title")
+            ui.label(
+                "Paste the course URL exactly as it appears in your browser."
+            ).classes("v-setup-card-subtitle")
             canvas_course_url = ui.input(
                 label="Course URL",
                 placeholder="https://canvas.ucsd.edu/courses/72335",
@@ -62,13 +102,12 @@ def setup_wizard_page(on_complete: Any) -> None:
             caption="Optional",
             icon="school",
         ).classes("w-full v-setup-expansion"):
-            gh_classroom_id = ui.input(
-                label="Classroom ID",
-                placeholder="299058",
-            ).classes("w-full")
-            gh_org = ui.input(
-                label="Organization",
-                placeholder="psyc-201",
+            ui.label(
+                "Paste the classroom URL to enable GitHub pulls, or leave it blank."
+            ).classes("v-setup-card-subtitle")
+            gh_classroom_url = ui.input(
+                label="Classroom URL",
+                placeholder="https://classroom.github.com/classrooms/123456-course-name",
             ).classes("w-full")
 
         # --- Project directory ---
@@ -90,7 +129,7 @@ def setup_wizard_page(on_complete: Any) -> None:
                 status_label.classes(replace="text-sm v-text-error")
                 return
 
-            parsed = _parse_canvas_url(course_url)
+            parsed = parse_canvas_course_url(course_url)
             if parsed is None:
                 status_label.text = (
                     "Invalid course URL. "
@@ -107,31 +146,62 @@ def setup_wizard_page(on_complete: Any) -> None:
                 return
 
             # Optional GitHub fields
-            gh_id = 0
-            org = ""
-            gh_id_raw = gh_classroom_id.value.strip() if gh_classroom_id.value else ""
-            org_raw = gh_org.value.strip() if gh_org.value else ""
-            if gh_id_raw and org_raw:
+            gh_url_raw = gh_classroom_url.value or ""
+            gh_classroom_result = ViewerClassroomSetupResult()
+            if gh_url_raw.strip():
                 try:
-                    gh_id = int(gh_id_raw)
-                except ValueError:
-                    status_label.text = "Classroom ID must be a number."
+                    gh_classroom_result = await resolve_viewer_classroom_setup(
+                        gh_url_raw,
+                    )
+                except ValueError as exc:
+                    status_label.text = str(exc)
                     status_label.classes(replace="text-sm v-text-error")
                     return
 
-                org = org_raw
-
             # Write config
-            from ..config import reset_config, write_config
+            from ..actions.config import reset_config, update_config
 
             toml_path = cwd / "cass.toml"
-            write_config(toml_path, gh_id, org, url, cid)
+            update_config(
+                toml_path,
+                classroom_url=gh_classroom_result.classroom_url or None,
+                classroom_url_id=gh_classroom_result.classroom_url_id or None,
+                classroom_gh_id=(
+                    gh_classroom_result.classroom_gh_id
+                    if gh_classroom_result.classroom_url
+                    else None
+                ),
+                classroom_slug=(
+                    gh_classroom_result.classroom_slug
+                    if gh_classroom_result.classroom_url
+                    else None
+                ),
+                classroom_title=(
+                    gh_classroom_result.classroom_title
+                    if gh_classroom_result.classroom_url
+                    else None
+                ),
+                org=gh_classroom_result.org
+                if gh_classroom_result.classroom_url
+                else None,
+                canvas_base_url=url,
+                canvas_course_id=cid,
+            )
             reset_config()
 
             # Save Canvas token (need config loaded first for root path)
-            from ..canvas.client import save_token
+            from ..apis.canvas.client import save_token
 
             save_token(token)
+
+            if gh_classroom_result.warning:
+                status_label.text = (
+                    "Configuration saved. GitHub Classroom URL was saved, but the "
+                    "gh-classroom ID is still unresolved. "
+                    f"{gh_classroom_result.warning}"
+                )
+                status_label.classes(replace="text-sm v-text-warning")
+                return
 
             status_label.text = "Configuration saved. Starting data pull..."
             status_label.classes(replace="text-sm v-text-success")
@@ -142,10 +212,10 @@ def setup_wizard_page(on_complete: Any) -> None:
         ui.button(
             "Initialize & Pull Data",
             on_click=handle_submit,
-        ).props("color=primary no-caps").classes("px-6")
+        ).props("color=primary no-caps").classes("px-6 v-setup-submit")
 
         ui.label(
-            "This creates cass.toml and canvas-token.txt in your project directory."
+            "This creates cass.toml and .canvastoken in your project directory."
         ).classes("v-setup-hint")
 
 
@@ -181,8 +251,8 @@ def pull_progress_page(on_complete: Any) -> None:
 
         async def run_pull() -> None:
             try:
-                from ..config import get_config
-                from ..pull import pull_all_async
+                from ..actions.config import get_config
+                from ..actions.pull import pull_all_async
 
                 cfg = get_config()
                 await pull_all_async(cfg, on_progress=on_progress)

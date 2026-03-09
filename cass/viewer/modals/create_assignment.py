@@ -134,11 +134,13 @@ class CreateAssignmentModal:
 
         import asyncio
 
-        from ...canvas.client import CanvasClient
+        from ...apis.canvas.client import CanvasClient
+        from ...db import connect_db
 
         def _do_push() -> dict[str, object]:
+            thread_conn = connect_db(p._project_root)
             with CanvasClient() as client:
-                return push_new_assignment(p.conn, local_id, client)
+                return push_new_assignment(thread_conn, local_id, client)
 
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(None, _do_push)

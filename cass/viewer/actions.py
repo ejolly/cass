@@ -1,6 +1,6 @@
 """Viewer CRUD actions — pure business logic shared by CLI and viewer modals.
 
-All functions here are UI-free: they operate on DuckDB connections, dicts, and
+All functions here are UI-free: they operate on SQLite connections, dicts, and
 domain types.  Modal classes and CLI commands import from here; nothing in this
 module imports NiceGUI.
 """
@@ -13,13 +13,13 @@ import json
 from html import escape
 from typing import TYPE_CHECKING
 
-import duckdb
+import sqlite_utils
 
-from ..canvas.sync import values_equal
-from .config import CANVAS_PUSHABLE
+from ..apis.canvas.sync import values_equal
+from ..db import CANVAS_PUSHABLE
 
 if TYPE_CHECKING:
-    from ..canvas.client import CanvasClient
+    from ..apis.canvas.client import CanvasClient
     from .config import PendingChanges
 
 # ---------------------------------------------------------------------------
@@ -51,9 +51,11 @@ def validate_assignment_fields(*, name: str, points: float | None) -> list[str]:
 
 
 def list_assignments_for_select(
-    conn: duckdb.DuckDBPyConnection,
+    conn: sqlite_utils.Database,
 ) -> dict[int, str]:
     """Return {canvas_id: name} for all assignments, sorted by name."""
+    if "canvas_assignments" not in conn.table_names():
+        return {}
     rows = conn.execute(
         "SELECT canvas_id, name FROM canvas_assignments ORDER BY name"
     ).fetchall()
@@ -61,7 +63,7 @@ def list_assignments_for_select(
 
 
 def create_local_assignment(
-    conn: duckdb.DuckDBPyConnection,
+    conn: sqlite_utils.Database,
     *,
     name: str,
     points_possible: float = 0.0,
@@ -86,11 +88,13 @@ def create_local_assignment(
         "VALUES (?, ?, ?, ?, ?, ?)",
         [new_id, name, points_possible, due_at, published, assignment_group],
     )
+    if conn.conn is not None:
+        conn.conn.commit()
     return new_id
 
 
 def replace_local_id(
-    conn: duckdb.DuckDBPyConnection,
+    conn: sqlite_utils.Database,
     local_id: int,
     real_id: int,
 ) -> None:
@@ -110,17 +114,19 @@ def replace_local_id(
         "VALUES (?, ?, ?, ?, ?, ?, ?)",
         [real_id, *row],
     )
+    if conn.conn is not None:
+        conn.conn.commit()
 
 
 def push_new_assignment(
-    conn: duckdb.DuckDBPyConnection,
+    conn: sqlite_utils.Database,
     local_id: int,
     client: CanvasClient,
 ) -> dict[str, object]:
     """Push a locally-created assignment to Canvas and update the local DB.
 
     Args:
-        conn: DuckDB connection.
+        conn: SQLite database connection.
         local_id: The negative local canvas_id.
         client: Authenticated Canvas API client.
 
@@ -137,7 +143,7 @@ def push_new_assignment(
 
     name, points, due_at, published, group_name = row
 
-    # Resolve group name -> Canvas group ID
+    # Resolve group name -> Canvas group ID (create if new)
     group_id: int | None = None
     if group_name:
         groups = client.list_assignment_groups()
@@ -145,6 +151,15 @@ def push_new_assignment(
             if g.name == group_name:
                 group_id = g.id
                 break
+        if group_id is None:
+            try:
+                new_group = client.create_assignment_group(group_name)
+                group_id = new_group.id
+            except Exception as e:
+                return {
+                    "ok": False,
+                    "error": f"Failed to create group '{group_name}': {e}",
+                }
 
     try:
         created = client.create_assignment(
@@ -161,7 +176,7 @@ def push_new_assignment(
 
 
 def delete_local_assignment(
-    conn: duckdb.DuckDBPyConnection,
+    conn: sqlite_utils.Database,
     canvas_id: int,
 ) -> None:
     """Delete an assignment and all related rows from the local DB."""
@@ -178,10 +193,12 @@ def delete_local_assignment(
         "DELETE FROM _canvas_assignments_synced WHERE canvas_id = ?", [canvas_id]
     )
     conn.execute("DELETE FROM canvas_assignments WHERE canvas_id = ?", [canvas_id])
+    if conn.conn is not None:
+        conn.conn.commit()
 
 
 def delete_assignment_from_canvas(
-    conn: duckdb.DuckDBPyConnection,
+    conn: sqlite_utils.Database,
     canvas_id: int,
     client: CanvasClient,
 ) -> dict[str, object]:

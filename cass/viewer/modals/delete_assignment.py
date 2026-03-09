@@ -89,11 +89,13 @@ class DeleteAssignmentModal:
 
         import asyncio
 
-        from ...canvas.client import CanvasClient
+        from ...apis.canvas.client import CanvasClient
+        from ...db import connect_db
 
         def _do_delete() -> dict[str, object]:
+            thread_conn = connect_db(p._project_root)
             with CanvasClient() as client:
-                return delete_assignment_from_canvas(p.conn, canvas_id, client)
+                return delete_assignment_from_canvas(thread_conn, canvas_id, client)
 
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(None, _do_delete)

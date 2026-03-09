@@ -1,34 +1,17 @@
 # CLAUDE.md — cass
 
-CLI grading toolkit for GitHub Classroom and Canvas LMS. DuckDB storage, Typer CLI, NiceGUI browser viewer.
+CLI grading toolkit for GitHub Classroom and Canvas LMS. SQLite storage, Typer CLI, NiceGUI browser viewer.
 
 ## Architecture
 
-CLI (`cass/cli/`) and viewer (`cass/viewer/`) are co-equal interfaces with near feature parity.
-Both MUST delegate to the shared functional core — never duplicate business logic between them.
+CLI (`cass/cli/`) and viewer (`cass/viewer/`) are thin interfaces over a shared functional core.
+**Never** put business logic, data transforms, queries, or API calls in CLI or viewer code.
+Always use existing models (`db/schema.py`, `apis/*/schema.py`), operations (`db/`, `apis/`, `actions/`), and catalog metadata (`db/catalog.py`). No ad-hoc dicts, raw SQL in interfaces, or one-off data wrangling — if it doesn't exist in core, add it there first.
 
 ```
-┌───────┐  ┌────────┐
-│  CLI  │  │ Viewer │   ← thin interfaces (args parsing / UI only)
-└───┬───┘  └───┬────┘
-    └─────┬────┘
-          ▼
-┌─────────────────────┐
-│   Functional Core   │   ← all business logic lives here
-│ db.py  pull.py      │
-│ canvas/{sync,client, │
-│ matching,egrades}.py │
-│ models/             │
-└─────────┬───────────┘
-          ▼
-      ┌────────┐
-      │ DuckDB │
-      └────────┘
+CLI / Viewer  →  actions/  →  db/     →  SQLite
+                  apis/       catalog
 ```
-
-- DB queries → `db.py`, not CLI or viewer
-- Canvas push/preview → `canvas/sync.py`
-- If both interfaces need it, extract to core
 
 ## Commands
 
@@ -41,30 +24,28 @@ uv run poe install         # uv tool install . --force
 
 **Always run `uv run poe lint && uv run poe test` before finishing work.**
 
-Use `symbex` for token-efficient code exploration (signatures, docstrings, structure):
+Use `symbex` for token-efficient code exploration:
 
 ```bash
 symbex -s -d cass/             # all signatures
 symbex '*Client*' -s -d cass/  # find classes/functions matching pattern
-symbex --docs --public -d cass/ # public symbols with docstrings
-symbex 'MyClass.method' -d cass/ # specific method source
 ```
+
+## Style
+
+- File header: `from __future__ import annotations` → `__docformat__ = "google"` → imports
+- `msgspec.Struct` for API response types; `dataclass` for internal service types
+- API types: `GH`/`Canvas`-prefixed. Domain types: unprefixed
+- Error handling: `SystemExit` (config), `RuntimeError` (API/logic), `typer.Exit(code=1)` (CLI), `typer.Abort()` (user cancel)
+- basedpyright strict — suppress with `# pyright: ignore[ruleCode]` (NOT `# type: ignore`)
+- Lazy imports inside CLI command functions (keeps `cass --help` fast)
+- `TYPE_CHECKING` guard for type-only imports in CLI modules
 
 ## Gotchas
 
-- DuckDB: no `INSERT OR REPLACE` with multiple UNIQUE constraints — use `INSERT ... ON CONFLICT (pk) DO UPDATE SET ...`
 - `CanvasFile.content_type` uses `msgspec.field(name="content-type")` (hyphenated API field)
 - Canvas assignment/tab IDs are strings, not ints
-- basedpyright strict mode — suppress with `# pyright: ignore[ruleCode]` (NOT `# type: ignore`)
-- Lazy imports inside CLI command functions (keeps `cass --help` fast)
-
-## Style (where we differ from defaults)
-
-- File header: `from __future__ import annotations` → `__docformat__ = "google"` → imports
-- `msgspec.Struct` for all data models (not dataclasses/pydantic)
-- API types: `GH`/`Canvas`-prefixed. Domain types: unprefixed
-- Error handling: `SystemExit` (config), `RuntimeError` (API/logic), `typer.Exit(code=1)` (CLI), `typer.Abort()` (user cancel)
-- `TYPE_CHECKING` guard for type-only imports in CLI modules
+- GitHub Classroom URL `url_id` is the org ID, NOT the classroom API `gh_id` — cannot lookup by `url_id` directly
 
 ## Linear
 
