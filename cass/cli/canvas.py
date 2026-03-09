@@ -10,7 +10,7 @@ import typer
 from rich.console import Console
 
 if TYPE_CHECKING:
-    from ..canvas.client import CanvasClient
+    from ..apis.canvas.client import CanvasClient
 
 canvas_app = typer.Typer(
     invoke_without_command=True,
@@ -45,7 +45,7 @@ canvas_app.add_typer(quizzes_app, name="quizzes", rich_help_panel="Browse")
 
 
 def require_canvas() -> None:
-    from ..config import get_config
+    from ..actions.config import get_config
 
     cfg = get_config()
     if not cfg.has_canvas:
@@ -55,7 +55,7 @@ def require_canvas() -> None:
 
 
 def client() -> CanvasClient:
-    from ..canvas.client import CanvasClient
+    from ..apis.canvas.client import CanvasClient
 
     return CanvasClient()
 
@@ -74,7 +74,7 @@ def canvas_callback(ctx: typer.Context) -> None:
 
     from rich.panel import Panel
 
-    from ..canvas.client import CanvasClient
+    from ..apis.canvas.client import CanvasClient
 
     with CanvasClient() as c:
         course = c.get_course()
@@ -826,7 +826,7 @@ def sync(
     """
     from rich.table import Table
 
-    from ..config import get_config
+    from ..actions.config import get_config
 
     require_canvas()
     cfg = get_config()
@@ -874,7 +874,7 @@ def sync(
 
         # --- Assignments ---
         if cfg.canvas_assignments:
-            from ..canvas.sync import push_assignments
+            from ..apis.canvas.sync import push_assignments
 
             live_assignments = c.list_assignments()
             live_by_name = {a.name.lower(): a for a in live_assignments}

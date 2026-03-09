@@ -18,11 +18,6 @@ DEV_TABLES = {
     "assignments",
 }
 
-CANVAS_PUSHABLE: dict[str, set[str]] = {
-    "canvas_assignments": {"name", "points_possible", "due_at", "published"},
-    "canvas_grades": {"posted_grade"},
-}
-
 # Column display config: hide internal IDs, reorder for readability
 HIDDEN_COLUMNS: dict[str, list[str]] = {
     "canvas_assignments": ["canvas_id"],
@@ -156,7 +151,6 @@ _DISPLAY_NAMES: dict[str, str] = {
     "gh_students": "Roster",
     "gh_assignments": "Assignments",
     "gh_submissions": "Recent Commits",
-    "gh_grades": "Grades",
     "students": "Students",
     "assignments": "Assignments",
 }
@@ -199,11 +193,11 @@ def group_tables(
 ) -> list[dict[str, Any]]:
     """Group tables into sidebar sections.
 
-    GitHub tables are only shown when the classroom is configured, to avoid
-    displaying empty ``gh_*`` tables in Canvas-only setups.
+    GitHub tables are shown whenever they exist in the schema. Classroom
+    configuration only controls GitHub-specific actions such as pulling repos.
     """
     if has_classroom is None:
-        from ..config import get_config
+        from ..actions.config import get_config
 
         try:
             has_classroom = get_config().has_classroom
@@ -219,13 +213,12 @@ def group_tables(
                 "items": _sort_group(canvas, _GROUP_ORDER["canvas"]),
             }
         )
-    if has_classroom:
-        github = [t for t in tables if classify_table(t["name"]) == "github"]
-        if github:
-            groups.append(
-                {
-                    "label": "GitHub Classroom",
-                    "items": _sort_group(github, _GROUP_ORDER["github"]),
-                }
-            )
+    github = [t for t in tables if classify_table(t["name"]) == "github"]
+    if github:
+        groups.append(
+            {
+                "label": "GitHub Classroom",
+                "items": _sort_group(github, _GROUP_ORDER["github"]),
+            }
+        )
     return groups

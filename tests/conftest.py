@@ -1,38 +1,38 @@
 """Shared fixtures for cass tests."""
 
-import duckdb
+import shutil
+from pathlib import Path
+
 import pytest
+import sqlite_utils
 
 from cass import db
-from tests.seed import seed
+from cass.db.core import _db  # noqa: F401 — needed for monkeypatch target
+
+_TESTDB = Path(__file__).parent / "testdb" / "cass.db"
 
 
 @pytest.fixture
 def db_conn(monkeypatch):
-    """Fresh in-memory DuckDB with schema initialized."""
-    conn = duckdb.connect(":memory:")
-    db.init_schema(conn)
-    monkeypatch.setattr(db, "_conn", conn)
-    yield conn
-    conn.close()
-    monkeypatch.setattr(db, "_conn", None)
+    """Fresh in-memory SQLite with schema initialized."""
+    sdb = sqlite_utils.Database(memory=True)
+    db.init_schema(sdb)
+    monkeypatch.setattr("cass.db.core._db", sdb)
+    monkeypatch.setattr("cass.db.core._db_path", None)
+    return sdb
 
 
 @pytest.fixture
-def populated_db(monkeypatch):
-    """In-memory DuckDB populated with anonymized realistic test data.
-
-    Contains 15 Canvas students, 18 GH students (2 excluded, 1 unmatched),
-    5 Canvas + 8 GH assignments, 75 Canvas grades/submissions, 141 GH
-    submissions/grades, and synced shadow tables.
-    """
-    conn = duckdb.connect(":memory:")
-    db.init_schema(conn)
-    seed(conn)
-    monkeypatch.setattr(db, "_conn", conn)
-    yield conn
-    conn.close()
-    monkeypatch.setattr(db, "_conn", None)
+def real_db(tmp_path, monkeypatch):
+    """Writable copy of the real pulled snapshot. Skip if absent."""
+    if not _TESTDB.exists():
+        pytest.skip("No test snapshot — run 'uv run poe seed-testdb'")
+    copy = tmp_path / "cass.db"
+    shutil.copy2(_TESTDB, copy)
+    sdb = sqlite_utils.Database(str(copy))
+    monkeypatch.setattr("cass.db.core._db", sdb)
+    monkeypatch.setattr("cass.db.core._db_path", None)
+    return sdb
 
 
 @pytest.fixture

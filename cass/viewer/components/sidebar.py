@@ -73,20 +73,12 @@ class Sidebar:
     def _build_nav_groups(self) -> None:
         p = self.page
 
-        # Detect classroom config
-        try:
-            from ...config import get_config
-
-            has_classroom = get_config().has_classroom
-        except SystemExit:
-            has_classroom = False
-
         scroll = ui.scroll_area().classes("flex-1")
         with scroll, ui.column().classes("v-nav-scroll-col"):
             for group in p.groups:
                 with ui.row().classes("v-nav-group-row"):
                     ui.label(group["label"]).classes("v-nav-group-label")
-                    if group["label"] == "Canvas LMS":
+                    if group["label"] == "Canvas LMS" and p.has_canvas_assignments:
                         ui.space()
                         ui.button(
                             icon="add",
@@ -100,7 +92,7 @@ class Sidebar:
                         ).props("flat dense round size=xs color=grey-6").tooltip(
                             "Delete assignment"
                         )
-                    if group["label"] == "GitHub Classroom" and has_classroom:
+                    if group["label"] == "GitHub Classroom" and p.has_classroom:
                         ui.space()
                         ui.button(
                             "Pull Repos",

@@ -7,7 +7,7 @@ __docformat__ = "google"
 import json
 from typing import Any
 
-import duckdb
+import sqlite_utils
 from nicegui import ui
 
 from ...db import update_cell, upsert_canvas_grade
@@ -43,7 +43,7 @@ def attach_date_autocommit(grid: ui.aggrid) -> None:
 
 def attach_edit_handler(
     grid: ui.aggrid,
-    conn: duckdb.DuckDBPyConnection,
+    conn: sqlite_utils.Database,
     table_name: str,
     pk_cols: list[str],
     pending: PendingChanges,
@@ -110,7 +110,7 @@ def attach_edit_handler(
 
 def attach_gradebook_edit_handler(
     grid: ui.aggrid,
-    conn: duckdb.DuckDBPyConnection,
+    conn: sqlite_utils.Database,
     pending: PendingChanges,
     update_pending_display: Any,
 ) -> None:

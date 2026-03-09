@@ -1,8 +1,8 @@
 # cass
 
-Grading toolkit for [Canvas LMS](https://www.instructure.com/canvas) and [GitHub Classroom](https://classroom.github.com/) — pull rosters, track submissions, edit grades, push back to Canvas.
+Grading toolkit for [Canvas LMS](https://www.instructure.com/canvas) and [GitHub Classroom](https://classroom.github.com/) — pull rosters, track submissions, manually edit Canvas grades, and push them back to Canvas.
 
-All data lives in a local [DuckDB](https://duckdb.org/) database (`cass.duckdb`) alongside a version-trackable `cass.toml` config.
+All app data lives in a local SQLite database (`cass.db`) alongside a version-trackable `cass.toml` config. The checked-in `cass.duckdb` is used only as a local integration-test fixture source.
 
 ## Install
 
@@ -27,12 +27,12 @@ If no config exists, the viewer walks you through setup: Canvas URL, course ID, 
 ### CLI
 
 ```bash
-cass init        # interactive config setup
-cass pull        # fetch students, assignments, submissions, grades
-cass gradebook   # view the gradebook
+cass init         # interactive config setup
+cass pull         # fetch students, assignments, submissions
+cass status       # overview of local state and sync status
 ```
 
-Running `cass` with no arguments shows project status.
+Running `cass` with no arguments shows help.
 
 ## Configuration
 
@@ -49,7 +49,7 @@ id = 299058
 org = "psyc-201"
 ```
 
-Canvas API token goes in `canvas-token.txt` (same directory) or the `CANVAS_TOKEN` env var. Generate one in Canvas under Account > Settings > Approved Integrations.
+Canvas API token goes in `.canvastoken` (same directory) or the `CANVAS_TOKEN` env var. Generate one in Canvas under Account > Settings > Approved Integrations.
 
 ### Declarative sync (optional)
 
@@ -68,17 +68,14 @@ due_at = "2026-01-20T23:59:59-08:00"
 group = "Homework"
 ```
 
-```bash
-cass canvas sync --dry-run   # preview
-cass canvas sync --apply     # push to Canvas
-```
+This project configuration is generated and managed through the CLI/setup flows and identifies the current project directory with a specific Canvas course and optional GitHub Classroom.
 
 ## Browser viewer
 
 `cass view` opens a NiceGUI-powered UI for browsing, editing, and pushing data.
 
-- **Navigate** tables by source group (Combined / Canvas / GitHub) in the sidebar
-- **Edit** grades and assignment metadata by double-clicking cells
+- **Navigate** Canvas and GitHub data views in the sidebar
+- **Edit** Canvas grades and assignment metadata by double-clicking cells
 - **Push to Canvas** with a diff preview against live state and conflict warnings
 - **Search** across rows with Ctrl/Cmd+K
 - **Export** any table to CSV or Markdown
@@ -92,26 +89,27 @@ Editable tables show an "editable" badge. Changes are tracked as pending until y
 ```bash
 cass pull                  # fetch everything
 cass pull --students       # pull one stage only
-cass pull --grades         # recompute grades from submissions
 ```
 
-### View data
+### Workflow
 
 ```bash
-cass students              # roster
-cass assignments           # assignment metadata
-cass submissions hw-01     # submissions (optionally filtered by slug)
-cass gradebook             # student x assignment matrix
+cass status                # local DB + sync overview
+cass query students        # roster
+cass query assignments     # assignment metadata
+cass query submissions     # submissions dataset
+cass query gradebook       # student x assignment matrix
 ```
 
-All accept `--csv <file>`, `--save <file.md>`, and `--where "SQL expr"`.
+`cass query` also accepts `--where`, `--order`, and `--limit`.
 
 ### Grade sync
 
 ```bash
-cass gradebook push           # dry-run preview
-cass gradebook push --post    # push to Canvas
-cass egrades                  # export eGrades CSV (UCSD format)
+cass push                  # preview + confirm pending Canvas changes
+cass push --yes            # skip confirmation prompt
+cass revert                # discard pending local changes
+cass egrades               # export eGrades CSV (UCSD format)
 ```
 
 ### Canvas management
@@ -127,13 +125,12 @@ cass canvas announce "Title" "Body"
 
 Run any subcommand with `--help` for full options.
 
-### Database
+### Querying
 
 ```bash
-cass query "SELECT * FROM students"   # one-off SQL
-cass query                            # interactive DuckDB REPL
-cass export students --csv roster.csv
-cass import grades.csv                # auto-detects target table
+cass query students
+cass query assignments --limit 20
+cass query --sql "select count(*) from students"
 ```
 
 ### Backup & restore
@@ -141,7 +138,7 @@ cass import grades.csv                # auto-detects target table
 ```bash
 cass backup                    # timestamped snapshot → backups/
 cass backup --tag "pre-regrade"
-cass restore backups/cass_2026-03-05.duckdb
+cass restore backups/cass_2026-03-05.db
 ```
 
 ### Global flags
@@ -156,27 +153,26 @@ cass restore backups/cass_2026-03-05.duckdb
 
 ```
 cass.toml          →  config (git-tracked)
-canvas-token.txt   →  credentials (gitignored)
-cass.duckdb        →  all data (git-tracked, shareable)
-.cass_cache.duckdb →  API cache (gitignored)
+.canvastoken      →  credentials (gitignored)
+cass.db            →  all data (git-tracked, shareable)
+.cass_cache.db     →  API cache (gitignored)
 ```
 
-`cass pull` fetches from Canvas (and optionally GitHub), stores raw data in source tables (`canvas_students`, `gh_submissions`, etc.), then merges into unified master tables (`students`, `assignments`). Grades are computed from submissions and stored in `canvas_grades` for pushing back.
+`cass pull` fetches from Canvas (and optionally GitHub), stores raw data in source tables (`canvas_students`, `gh_submissions`, etc.), then merges into unified master tables (`students`, `assignments`). `canvas_grades` remains a manual working table for review and Canvas push.
 
 When both systems are configured, Canvas is the authoritative roster. GitHub students are auto-matched to Canvas students by name, with interactive CLI resolution for ambiguous cases.
 
 ## Collaborative workflow
 
-Commit `cass.duckdb` to git for shared grading:
+Commit `cass.db` to git for shared grading:
 
 ```bash
 # TA grades, commits
-cass pull --grades
-git add cass.duckdb && git commit -m "grade hw-02" && git push
+git add cass.db && git commit -m "grade hw-02" && git push
 
 # Instructor reviews, pushes to Canvas
 git pull
-cass gradebook push --post
+cass push --yes
 ```
 
 ## Development

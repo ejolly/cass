@@ -8,13 +8,15 @@ import math
 from datetime import date, datetime, time
 from typing import Any, cast
 
-import duckdb
+import sqlite_utils
 
 from ...db import (
     ENRICHED_QUERIES,
     get_assignment_groups,
     get_primary_keys,
+    get_table_capability,
     is_editable,
+    load_canvas_gradebook_data,
 )
 from ..config import (
     COLUMN_DISPLAY_NAMES,
@@ -47,7 +49,7 @@ def sanitize(obj: object) -> object:  # pyright: ignore[reportUnknownParameterTy
 # ---------------------------------------------------------------------------
 
 
-def get_table_rows(conn: duckdb.DuckDBPyConnection, table: str) -> list[dict[str, Any]]:
+def get_table_rows(conn: sqlite_utils.Database, table: str) -> list[dict[str, Any]]:
     """Return all rows from a table as sanitized list of dicts."""
     from ...db import get_enriched_rows
 
@@ -120,9 +122,13 @@ PENDING_CELL_RULE = (
 # ---------------------------------------------------------------------------
 
 
-def _is_datetime_col(dtype: str) -> bool:
-    """Check if a column type is a datetime/timestamp."""
-    return "TIMESTAMP" in dtype or "DATE" in dtype
+# Column names that hold datetime values (SQLite stores them as TEXT)
+_DATETIME_COLUMNS = {"due_at", "submitted_at", "deadline", "updated_at"}
+
+
+def _is_datetime_col(dtype: str, name: str = "") -> bool:
+    """Check if a column is a datetime/timestamp."""
+    return "TIMESTAMP" in dtype or "DATE" in dtype or name in _DATETIME_COLUMNS
 
 
 def get_display_columns(table: str, all_cols: list[str]) -> list[str]:
@@ -139,14 +145,32 @@ def get_display_columns(table: str, all_cols: list[str]) -> list[str]:
     return [*ordered, *remaining]
 
 
-def build_column_defs(
-    conn: duckdb.DuckDBPyConnection, table: str
-) -> list[dict[str, Any]]:
+def _get_col_types(conn: sqlite_utils.Database, table: str) -> dict[str, str]:
+    """Get column type map for a table from PRAGMA table_info.
+
+    For enriched queries that JOIN multiple tables, we merge type info
+    from all tables referenced in the query.
+    """
+    types: dict[str, str] = {}
+    if table in ENRICHED_QUERIES:
+        # Gather types from all tables in the database
+        for t in conn.table_names():
+            for col in conn[t].columns:
+                if col.name not in types:
+                    types[col.name] = (col.type or "TEXT").upper()
+    else:
+        if table in conn.table_names():
+            for col in conn[table].columns:
+                types[col.name] = (col.type or "TEXT").upper()
+    return types
+
+
+def build_column_defs(conn: sqlite_utils.Database, table: str) -> list[dict[str, Any]]:
     """Build AG Grid column definitions for a table."""
     query = ENRICHED_QUERIES.get(table, f"SELECT * FROM {table}")
     result = conn.execute(query)
     col_names = [desc[0] for desc in result.description]
-    col_types = {str(desc[0]): str(desc[1]) for desc in result.description}
+    col_types = _get_col_types(conn, table)
 
     display_cols = get_display_columns(table, col_names)
     hidden_cols = HIDDEN_COLUMNS.get(table, [])
@@ -154,6 +178,8 @@ def build_column_defs(
 
     editable = is_editable(conn, table)
     pk_cols = get_primary_keys(conn, table) if editable else []
+    capability = get_table_capability(table)
+    editable_cols = capability.editable_columns
 
     # Pre-fetch select editor values for canvas_assignments
     group_values: list[str] = []
@@ -181,22 +207,30 @@ def build_column_defs(
             col_def[":cellRenderer"] = _DATE_LINK_JS
 
         # Datetime formatting
-        elif _is_datetime_col(dtype):
+        elif _is_datetime_col(dtype, name):
             if table == "canvas_submissions" and name == "submitted_at":
                 col_def[":cellRenderer"] = _LATE_HIGHLIGHT_JS
             else:
                 col_def[":valueFormatter"] = _DATETIME_JS
-            # Date string editor for editable datetime columns
-            if editable and name not in pk_cols:
+
+        # Column-level editability (respects editable_columns restriction)
+        col_is_editable = (
+            editable
+            and name not in pk_cols
+            and (editable_cols is None or name in editable_cols)
+        )
+
+        # Type-specific editors and renderers for editable columns
+        if col_is_editable:
+            if _is_datetime_col(dtype, name):
                 col_def["cellEditor"] = "agDateStringCellEditor"
                 if "TIMESTAMP" in dtype:
                     col_def["cellEditorParams"] = {"includeTime": True}
-
-        # Type-specific editors for editable columns
-        if editable and name not in pk_cols:
-            if "BOOL" in dtype:
+            elif "BOOL" in dtype:
                 col_def["cellEditor"] = "agCheckboxCellEditor"
-            elif "INT" in dtype or "DOUBLE" in dtype or "FLOAT" in dtype:
+                col_def["cellRenderer"] = "agCheckboxCellRenderer"
+                col_def["singleClickEdit"] = True
+            elif any(t in dtype for t in ("INT", "DOUBLE", "FLOAT", "REAL")):
                 col_def["cellEditor"] = "agNumberCellEditor"
             # Select editor for assignment_group on canvas_assignments
             elif (
@@ -215,8 +249,7 @@ def build_column_defs(
                 "opacity": "0.6",
             }
 
-        # Editability: only non-PK columns on editable tables
-        if editable and name not in pk_cols:
+        if col_is_editable:
             col_def["editable"] = True
             col_def[":cellClassRules"] = {
                 "cell-pending": PENDING_CELL_RULE,
@@ -248,31 +281,14 @@ def row_id_js(pk_cols: list[str]) -> str:
 
 
 def build_gradebook_view(
-    conn: duckdb.DuckDBPyConnection,
+    conn: sqlite_utils.Database,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Build pivoted gradebook data: students as rows, assignments as columns.
 
     Returns:
         (row_data, col_defs) — ready for AG Grid.
     """
-    # Fetch assignments ordered by assignment_group then name
-    assignments = conn.execute(
-        "SELECT canvas_id, name, points_possible, published, assignment_group "
-        "FROM canvas_assignments ORDER BY assignment_group, name"
-    ).fetchall()
-
-    # Fetch students ordered by sortable_name
-    students = conn.execute(
-        "SELECT canvas_id, sortable_name FROM canvas_students ORDER BY sortable_name"
-    ).fetchall()
-
-    # Fetch all grades into a lookup: (user_id, assignment_id) -> posted_grade
-    grades_raw = conn.execute(
-        "SELECT canvas_user_id, canvas_assignment_id, posted_grade FROM canvas_grades"
-    ).fetchall()
-    grade_map: dict[tuple[int, int], str] = {
-        (int(r[0]), int(r[1])): r[2] for r in grades_raw
-    }
+    data = load_canvas_gradebook_data(conn)
 
     # Build column defs
     col_defs: list[dict[str, Any]] = [
@@ -291,27 +307,32 @@ def build_gradebook_view(
 
     # Group assignments by assignment_group for column groups
     groups: dict[str, list[dict[str, Any]]] = {}
-    for a_id, a_name, pts, published, group in assignments:
-        field = f"_a{a_id}"
-        subtitle = "Unpublished" if not published else f"Out of {pts:g}"
+    for assignment in data.assignments:
+        field = f"_a{assignment.canvas_id}"
+        subtitle = (
+            "Unpublished"
+            if not assignment.published
+            else f"Out of {assignment.points_possible:g}"
+        )
         child: dict[str, Any] = {
-            "headerName": a_name,
+            "headerName": assignment.name,
             "field": field,
             "minWidth": 90,
             "sortable": True,
             "filter": False,
             "resizable": True,
             "editable": True,
-            "headerTooltip": f"{a_name} — {subtitle}",
+            "cellEditor": "agNumberCellEditor",
+            "headerTooltip": f"{assignment.name} — {subtitle}",
             "wrapHeaderText": True,
             "autoHeaderHeight": True,
             ":cellClassRules": {"cell-pending": PENDING_CELL_RULE},
         }
-        if not published:
+        if not assignment.published:
             child["cellStyle"] = {"opacity": "0.45"}
         else:
             child["cellStyle"] = {"backgroundColor": "rgba(59, 130, 246, 0.08)"}
-        groups.setdefault(group or "Ungrouped", []).append(child)
+        groups.setdefault(assignment.assignment_group or "Ungrouped", []).append(child)
 
     for group_name, children in groups.items():
         if len(groups) > 1:
@@ -329,13 +350,16 @@ def build_gradebook_view(
 
     # Build row data: one row per student
     row_data: list[dict[str, Any]] = []
-    for s_id, s_name in students:
+    for student in data.students:
         row: dict[str, Any] = {
-            "_student_name": s_name,
-            "_canvas_user_id": int(s_id),
+            "_student_name": student.sortable_name,
+            "_canvas_user_id": student.canvas_id,
         }
-        for a_id, *_rest in assignments:
-            row[f"_a{a_id}"] = grade_map.get((int(s_id), int(a_id)), "")
+        for assignment in data.assignments:
+            row[f"_a{assignment.canvas_id}"] = data.grades.get(
+                (student.canvas_id, assignment.canvas_id),
+                "",
+            )
         row_data.append(row)
 
     return row_data, col_defs
@@ -347,7 +371,7 @@ def build_gradebook_view(
 
 
 def build_gh_gradebook_view(
-    conn: duckdb.DuckDBPyConnection,
+    conn: sqlite_utils.Database,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Build pivoted GH gradebook: students as rows, assignments as columns.
 
@@ -383,15 +407,15 @@ def build_gh_gradebook_view(
         "COALESCE("
         "  cs.sortable_name, "
         "  CASE WHEN gs.name LIKE '% %' "
-        "    THEN split_part(gs.name, ' ', -1) "
+        "    THEN substr(gs.name, instr(gs.name, ' ') + 1) "
         "      || ', ' "
-        "      || regexp_replace(gs.name, '\\s+\\S+$', '') "
+        "      || substr(gs.name, 1, instr(gs.name, ' ') - 1) "
         "    ELSE gs.name END"
         ") AS display_name "
         "FROM gh_students gs "
         "LEFT JOIN students s ON gs.github_username = s.github_username "
         "LEFT JOIN canvas_students cs ON s.canvas_id = cs.canvas_id "
-        "WHERE gs.excluded = false "
+        "WHERE gs.excluded = 0 "
         "ORDER BY display_name"
     ).fetchall()
 
@@ -446,7 +470,7 @@ def build_gh_gradebook_view(
         for slug, _title, _deadline in assignments:
             field = f"_a{slug}"
             sub = sub_map.get((handle, slug))
-            if sub and sub[0]:  # submitted
+            if sub and sub[1]:  # has commits
                 commit_count, after = sub[1], sub[2]
                 before = commit_count - after
                 row[field] = f"{before}/{after}"

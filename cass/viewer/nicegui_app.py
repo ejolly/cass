@@ -4,13 +4,14 @@ from __future__ import annotations
 
 __docformat__ = "google"
 
+from pathlib import Path
+
 from nicegui import ui
 
-from ..config import config_file_path
+from ..actions.config import config_file_path
 from ..db import DB_FILENAME
 from ..db import get_tables as get_tables
 from ..db import is_editable as is_editable
-from ..db import reset as db_reset
 from .actions import pending_count as pending_count
 from .actions import track_change as track_change
 
@@ -31,19 +32,16 @@ __all__ = [
 
 def _detect_state() -> str:
     """Return 'setup', 'pull', or 'ready' based on config/db presence."""
-    from ..db import is_remote
-
     cfg_path = config_file_path()
     if cfg_path is None:
         return "setup"
 
     # Config exists — check database
-    if is_remote():
-        return "ready"
-
-    from ..config import get_config
+    from ..actions.config import get_config
 
     cfg = get_config()
+    if getattr(cfg, "classroom_needs_resolution", False):
+        return "setup"
     db_file = cfg.root / DB_FILENAME
     if not db_file.exists():
         return "pull"
@@ -51,7 +49,7 @@ def _detect_state() -> str:
     return "ready"
 
 
-def start_nicegui_server(port: int = 0) -> None:
+def start_nicegui_server(port: int = 0, *, project_root: Path | None = None) -> None:
     """Start the NiceGUI viewer, open the browser, block until Ctrl+C.
 
     Args:
@@ -80,7 +78,7 @@ def start_nicegui_server(port: int = 0) -> None:
 
     @ui.page("/view")
     def view_page() -> None:  # pyright: ignore[reportUnusedFunction]
-        _render_viewer()
+        _render_viewer(project_root)
 
     ui.run(  # pyright: ignore[reportUnknownMemberType]
         title="cass viewer",
@@ -92,13 +90,10 @@ def start_nicegui_server(port: int = 0) -> None:
     )
 
 
-def _render_viewer() -> None:
+def _render_viewer(project_root: Path | None = None) -> None:
     """Render the main table viewer using the class-based ViewerPage."""
-    import duckdb
-
-    from ..db import db_path
+    from ..db import get_db
     from .page import ViewerPage
 
-    db_reset()
-    conn = duckdb.connect(db_path())
-    ViewerPage(conn)
+    conn = get_db(project_root)
+    ViewerPage(conn, project_root=project_root)

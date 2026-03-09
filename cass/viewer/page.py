@@ -4,13 +4,20 @@ from __future__ import annotations
 
 __docformat__ = "google"
 
-import duckdb
+from pathlib import Path
+
+import sqlite_utils
 from nicegui import ui
 
-from ..db import get_pending_changes, get_tables
+from ..db import (
+    CANVAS_PUSHABLE,
+    get_pending_changes,
+    get_table_capability,
+    get_tables,
+    is_editable,
+)
 from .actions import pending_count
 from .config import (
-    CANVAS_PUSHABLE,
     PendingChanges,
     display_name,
     group_tables,
@@ -26,21 +33,50 @@ class ViewerPage:
     All UI state lives as instance attributes instead of dict-based refs.
     """
 
-    def __init__(self, conn: duckdb.DuckDBPyConnection) -> None:
-        self._init_state(conn)
+    def __init__(
+        self,
+        conn: sqlite_utils.Database,
+        *,
+        project_root: Path | None = None,
+    ) -> None:
+        self._init_state(conn, project_root=project_root)
         self._build()
 
-    def _init_state(self, conn: duckdb.DuckDBPyConnection) -> None:
-        """Initialize data and UI state (separated for testability)."""
-        self.conn = conn
-        self.tables = get_tables(conn)
-        self.groups = group_tables(self.tables)
-        self.pending: PendingChanges = get_pending_changes(conn)
+    @property
+    def conn(self) -> sqlite_utils.Database:
+        """Return a live DB handle for the current viewer session."""
+        if self._project_root is None:
+            return self._conn
+        try:
+            self._conn.execute("SELECT 1").fetchone()
+        except Exception:
+            from ..db import get_db
 
-        self.current_table: str = next(
-            (t["name"] for t in self.tables if t["name"] == "canvas_grades"),
-            self.tables[0]["name"] if self.tables else "",
+            self._conn = get_db(self._project_root)
+        return self._conn
+
+    def _init_state(
+        self,
+        conn: sqlite_utils.Database,
+        *,
+        project_root: Path | None = None,
+    ) -> None:
+        """Initialize data and UI state (separated for testability)."""
+        self._conn = conn
+        self._project_root = project_root
+        live_conn = self.conn
+        self.tables = get_tables(live_conn)
+        self.has_classroom = self._has_classroom_config()
+        self.has_classroom_url = self._has_classroom_url_config()
+        self.groups = group_tables(
+            self.tables,
+            has_classroom=self.has_classroom,
         )
+        self.pending: PendingChanges = get_pending_changes(live_conn)
+        self.has_canvas_assignments = any(
+            t["name"] == "canvas_assignments" for t in self.tables
+        )
+        self.current_table = self._choose_initial_table()
 
         # UI refs — set during _build() by components
         self.pending_badge: ui.badge | None = None
@@ -76,12 +112,92 @@ class ViewerPage:
             pushable = self.current_table in CANVAS_PUSHABLE
             self.push_btn.set_visibility(has_pending and pushable)
 
+    def _choose_initial_table(self) -> str:
+        """Pick the initial table for the viewer."""
+        if not self.tables:
+            return ""
+
+        if any(table["name"] == "canvas_grades" for table in self.tables):
+            return "canvas_grades"
+
+        ranked = sorted(
+            self.tables,
+            key=lambda table: get_table_capability(table["name"]).viewer_rank,
+        )
+        return ranked[0]["name"]
+
+    def _row_count(self, table: dict[str, str]) -> int:
+        """Return the number of rows in a visible table or view."""
+        return self.conn.table(table["name"]).count
+
+    def _has_classroom_config(self) -> bool:
+        """Return whether GitHub Classroom is configured for this project."""
+        from ..db.core import _has_classroom_config
+
+        return _has_classroom_config(self._project_root)
+
+    def _has_classroom_url_config(self) -> bool:
+        """Return whether a GitHub Classroom URL has been saved."""
+        from ..db.core import _has_classroom_url_config
+
+        return _has_classroom_url_config(self._project_root)
+
+    def _empty_state_message(self, table_name: str, is_gradebook: bool) -> str:
+        """Explain why an empty table is currently blank."""
+        if table_name == "gh_gradebook":
+            if self.has_classroom_url and not self.has_classroom:
+                return (
+                    "GitHub Classroom URL is saved, but the gh-classroom ID is "
+                    "still unresolved. Run cass init after fixing gh auth or "
+                    "Classroom access, then run cass pull."
+                )
+            if not self.has_classroom:
+                return (
+                    "No GitHub Classroom data is available. Add a [classroom] "
+                    "section to cass.toml and run cass pull."
+                )
+            return (
+                "No GitHub Classroom gradebook rows yet. Run cass pull to load "
+                "roster, assignments, and submissions."
+            )
+        if table_name.startswith("gh_"):
+            if self.has_classroom_url and not self.has_classroom:
+                return (
+                    "GitHub Classroom URL is saved, but the gh-classroom ID is "
+                    "still unresolved. Run cass init after fixing gh auth or "
+                    "Classroom access, then run cass pull."
+                )
+            if not self.has_classroom:
+                return (
+                    "No GitHub Classroom data is available. Add a [classroom] "
+                    "section to cass.toml and run cass pull."
+                )
+            return (
+                "No GitHub Classroom rows are available yet. Run cass pull to "
+                "load the latest roster, assignments, and submissions."
+            )
+        capability = get_table_capability(table_name)
+        if capability.editable:
+            if is_gradebook:
+                return (
+                    "No gradebook rows yet. Run cass pull to load Canvas roster "
+                    "and assignments."
+                )
+            return (
+                "No Canvas-managed rows yet. Run cass pull to load data into this "
+                "working table."
+            )
+        if is_editable(self.conn, table_name):
+            return "No local rows are available in this table yet."
+        return "No rows are available in this table yet."
+
     def load_table(self, table_name: str) -> None:
         """Load a table into the grid area."""
         from .components.grid_panel import GridPanel
 
         old = self.current_table
         self.current_table = table_name
+        conn = self.conn
 
         # Update sidebar active states
         if old in self.sidebar_items:
@@ -104,11 +220,15 @@ class ViewerPage:
             with self.grid_container:
                 row_data, col_defs = GridPanel.build_grid(
                     self.grid_container,
-                    self.conn,
+                    conn,
                     table_name,
                     self.pending,
                     self.update_pending_display,
                 )
+                if not row_data:
+                    ui.label(
+                        self._empty_state_message(table_name, is_canvas_gb)
+                    ).classes("text-sm text-grey-6 px-4 pb-3")
 
             # Update metadata label
             if self.meta_label is not None:

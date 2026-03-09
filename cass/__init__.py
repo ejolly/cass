@@ -1,45 +1,28 @@
-"""cass — Classroom Assignment Grading CLI.
+"""cass — Classroom Assignment Sync CLI.
 
-A CLI toolkit for grading assignments with **GitHub Classroom**,
-**Canvas LMS**, or both.  Data is stored in a per-project DuckDB
-database (`cass.duckdb`).
+A workflow-oriented CLI for synchronizing local grading state with
+Canvas LMS and GitHub Classroom. Local data lives in a per-project
+SQLite database (`cass.db`).
 
 Install: `uv tool install cass` or `uvx cass`.
 
 ---
 
-## Commands
+## Top-level Commands
 
 | Command | Description |
 |---------|-------------|
-| `cass` | Project status dashboard (default) |
+| `cass status` | Show local data and Canvas sync status |
 | `cass init` | Initialize a new project or check setup |
 | `cass pull` | Fetch from APIs and update the local database |
-| `cass students` | Show the student roster |
-| `cass assignments` | Show assignment metadata |
-| `cass submissions` | View submission status |
-| `cass fetch` | Download student submission files |
-| `cass drop` | Delete the local database |
+| `cass push` | Preview and push pending local changes to Canvas |
+| `cass revert` | Revert local changes since the last Canvas sync |
+| `cass query` | Query curated datasets, with raw SQL as an escape hatch |
+| `cass pull-repos` | Download or update student submission repos |
+| `cass delete` | Delete the local database |
 | `cass backup` | Save a timestamped copy of the database |
 | `cass restore` | Replace the current database with a backup |
-| `cass query` | Run a DuckDB SQL query (or interactive REPL) |
-| `cass export` | Export a database table to CSV or markdown |
-| `cass import` | Import a CSV file into the database |
 | `cass view` | Open the database in a browser-based viewer |
-
-## Gradebook Commands (`cass gradebook`)
-
-| Command | Description |
-|---------|-------------|
-| `cass gradebook` | Show the gradebook as a student x assignment matrix |
-| `cass gradebook push` | Sync grades to Canvas LMS (dry-run by default) |
-
-## Database Commands (`cass db`)
-
-| Command | Description |
-|---------|-------------|
-| `cass db` | Interactive DuckDB REPL |
-| `cass db clean` | Clear API cache for lean git commits |
 
 ## Canvas Commands (`cass canvas`)
 
@@ -47,7 +30,7 @@ Install: `uv tool install cass` or `uvx cass`.
 |---------|-------------|
 | `cass canvas` | Course overview with resource counts |
 | `cass canvas people` | Show course roster with roles and emails |
-| `cass canvas sync` | Sync cass.toml declarations to Canvas |
+| `cass canvas sync` | Sync `cass.toml` declarations to Canvas |
 
 ### Modules (`cass canvas modules`)
 

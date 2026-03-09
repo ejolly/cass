@@ -6,8 +6,8 @@ __docformat__ = "google"
 
 import csv
 from pathlib import Path
+from typing import Any
 
-import duckdb
 from rich.console import Console
 from rich.table import Table
 
@@ -15,10 +15,10 @@ console = Console()
 
 
 def render_table(
-    relation: duckdb.DuckDBPyRelation,
+    relation: Any,
     title: str | None = None,
 ) -> None:
-    """Print a DuckDB relation as a Rich table."""
+    """Print a query result as a Rich table."""
     columns = relation.columns
     rows = relation.fetchall()
 
@@ -53,11 +53,11 @@ def render_list(
 
 def write_csv_file(
     path: str,
-    relation: duckdb.DuckDBPyRelation | None = None,
+    relation: Any | None = None,
     headers: list[str] | None = None,
     rows: list[list[str]] | None = None,
 ) -> None:
-    """Write a DuckDB relation or headers/rows to CSV."""
+    """Write a query result or headers/rows to CSV."""
     if relation is not None:
         columns = relation.columns
         data = relation.fetchall()
@@ -102,9 +102,7 @@ def save_markdown(
     console.print(f"Saved to {path}")
 
 
-def save_relation_markdown(
-    path: str, title: str, relation: duckdb.DuckDBPyRelation
-) -> None:
+def save_relation_markdown(path: str, title: str, relation: Any) -> None:
     columns = relation.columns
     rows = [
         [str(v) if v is not None else "" for v in row] for row in relation.fetchall()
