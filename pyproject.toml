@@ -47,6 +47,12 @@ dev = [
     "pytest-xdist>=3.8.0",
 ]
 
+[[tool.uv.index]]
+name = "testpypi"
+url = "https://test.pypi.org/simple/"
+publish-url = "https://test.pypi.org/legacy/"
+explicit = true
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -126,3 +132,7 @@ cmd = "python tests/seed_testdb.py"
 [tool.poe.tasks.install]
 help = "Install cass as a global CLI tool"
 cmd = "uv tool install . --force --reinstall"
+
+[tool.poe.tasks.release]
+help = "Release to PyPI: [pypi|testpypi] [patch|minor|major]"
+cmd = "python scripts/release.py"

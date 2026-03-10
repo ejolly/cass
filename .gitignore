@@ -24,3 +24,6 @@ dev.py
 .canvastoken
 *.db
 tests/testdb/
+dist/
+.env.*
+!.env.example
