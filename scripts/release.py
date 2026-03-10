@@ -35,8 +35,8 @@ DIST_DIR = PROJECT_ROOT / "dist"
 
 VERSION_RE = re.compile(r'^version\s*=\s*"([^"]+)"', re.MULTILINE)
 
-PYPI_URL = "https://pypi.org/pypi/cass/json"
-TESTPYPI_URL = "https://test.pypi.org/pypi/cass/json"
+PYPI_URL = "https://pypi.org/pypi/cassroom/json"
+TESTPYPI_URL = "https://test.pypi.org/pypi/cassroom/json"
 
 console = Console()
 

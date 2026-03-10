@@ -17,15 +17,30 @@ gh auth status
 
 # Login if needed
 gh auth login
-
-# Install cass as a CLI tool
-uv tool git+https://github.com/ejolly/cass.git
 ```
 
-To update to the latest version:
+### Stable release (recommended)
 
 ```bash
-uv tool git+https://github.com/ejolly/cass.git --reinstall
+uv tool install cassroom
+```
+
+To update:
+
+```bash
+uv tool install cassroom --upgrade
+```
+
+### From GitHub (latest)
+
+```bash
+uv tool install git+https://github.com/ejolly/cass.git
+```
+
+To update:
+
+```bash
+uv tool install git+https://github.com/ejolly/cass.git --reinstall
 ```
 
 After install, `cass` is available globally.
