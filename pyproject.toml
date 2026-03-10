@@ -1,6 +1,6 @@
 [project]
-name = "cass"
-version = "0.2.0"
+name = "cassroom"
+version = "0.1.1"
 description = "CLI grading toolkit for GitHub Classroom and Canvas LMS — track submissions, deadlines, and sync grades"
 requires-python = ">=3.11"
 license = "MIT"
