@@ -77,13 +77,18 @@ _LINK_JS = """
 _DATE_LINK_JS = """
 (params) => {
     if (!params.value) return '';
+    const d = new Date(params.value);
+    const label = isNaN(d) ? params.value : d.toLocaleDateString('en-US', {
+        month: 'short', day: 'numeric', year: 'numeric',
+        hour: 'numeric', minute: '2-digit'
+    });
     const url = params.data && params.data.commit_url;
     if (url) {
         return '<a href="' + url + '" target="_blank" '
             + 'style="color:#60a5fa;text-decoration:underline">'
-            + params.value + '</a>';
+            + label + '</a>';
     }
-    return params.value;
+    return label;
 }
 """.strip()
 
