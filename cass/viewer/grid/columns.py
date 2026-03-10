@@ -468,13 +468,16 @@ def build_gh_gradebook_view(
             "_student_name": name,
             "_github_username": handle,
         }
-        for slug, _title, _deadline in assignments:
+        for slug, _title, deadline in assignments:
             field = f"_a{slug}"
             sub = sub_map.get((handle, slug))
             if sub and sub[1]:  # has commits
                 commit_count, after = sub[1], sub[2]
-                before = commit_count - after
-                row[field] = f"{before}/{after}"
+                if deadline:
+                    before = commit_count - after
+                    row[field] = f"{before}/{after}"
+                else:
+                    row[field] = str(commit_count)
             else:
                 row[field] = ""
         row_data.append(row)

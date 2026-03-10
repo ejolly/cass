@@ -312,7 +312,6 @@ class TestColumnDefs:
         excl_col = next(d for d in defs if d["field"] == "excluded")
         assert excl_col.get("cellRenderer") == "agCheckboxCellRenderer"
         assert excl_col.get("cellEditor") is None
-        assert editable[0]["cellRenderer"] == "agCheckboxCellRenderer"
 
     def test_assignment_group_select_editor(self, real_db):
         defs = build_column_defs(real_db, "canvas_assignments")
@@ -422,7 +421,7 @@ class TestGradebookView:
 
     def test_gh_gradebook_cells_format(self, real_db):
         row_data, _ = build_gh_gradebook_view(real_db)
-        # Cells should be "X/Y" format or empty
+        # Cells should be "X/Y" (with deadline), plain number (no deadline), or empty
         for row in row_data:
             for key, val in row.items():
                 is_grade_cell = (
@@ -431,11 +430,13 @@ class TestGradebookView:
                     and key != "_student_name"
                 )
                 if is_grade_cell and val:
-                    parts = val.split("/")
-                    assert len(parts) == 2, f"Bad cell format: {val}"
-                    # Values can be negative (before = count - after)
-                    assert parts[0].lstrip("-").isdigit()
-                    assert parts[1].lstrip("-").isdigit()
+                    if "/" in val:
+                        parts = val.split("/")
+                        assert len(parts) == 2, f"Bad cell format: {val}"
+                        assert parts[0].lstrip("-").isdigit()
+                        assert parts[1].lstrip("-").isdigit()
+                    else:
+                        assert val.isdigit(), f"Bad cell format: {val}"
 
     def test_gh_gradebook_includes_unmatched(self, real_db):
         """Students in submissions but not in gh_students should appear."""

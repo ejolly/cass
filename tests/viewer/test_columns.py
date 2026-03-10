@@ -423,6 +423,30 @@ class TestGHGradebook:
         # Bob didn't submit hw-02
         assert bob[hw02_field] == ""
 
+    def test_gradebook_cells_no_deadline_shows_total(self, gradebook_db):
+        """Assignment without deadline shows plain commit count, not X/Y."""
+        # Add an assignment with no deadline and a submission
+        db.save_gh_assignments(
+            [GHAssignment(slug="wk01-lab", gh_id=3, title="Week 01 Lab")]
+        )
+        db.save_gh_submissions(
+            [
+                GHSubmission(
+                    github_username="alice-gh",
+                    assignment_slug="wk01-lab",
+                    submitted=True,
+                    commit_count=7,
+                    commits_after_deadline=0,
+                ),
+            ]
+        )
+        row_data, col_defs = build_gh_gradebook_view(gradebook_db)
+        alice = next(r for r in row_data if r["_student_name"] == "Smith, Alice")
+        wk01_field = next(
+            c["field"] for c in col_defs if c.get("headerName") == "Week 01 Lab"
+        )
+        assert alice[wk01_field] == "7"
+
     def test_gradebook_readonly(self, gradebook_db):
         _row_data, col_defs = build_gh_gradebook_view(gradebook_db)
         for col in col_defs:
