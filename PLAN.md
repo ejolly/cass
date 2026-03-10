@@ -10,9 +10,10 @@ Full rewrite of cass (excluding viewer) from Python to TypeScript, using Bun as 
 | CLI framework | Typer + Rich | cac |
 | Shell/subprocess | subprocess | zx |
 | HTTP client | httpx | ky (Canvas), `gh api` via zx (GitHub) |
-| Database | sqlite-utils | drizzle-orm + drizzle-kit (SQLite via bun:sqlite) |
+| Database | sqlite-utils | kysely (typed query builder, bun:sqlite dialect) |
+| Migrations | sqlite-utils | kysely-ctl (plain SQL migration files) |
 | Schema/validation | msgspec.Struct | zod |
-| Serialization | msgspec | zod + native JSON |
+| Pattern matching | _(none)_ | ts-pattern (exhaustive dispatch) |
 | Config | tomllib (stdlib) | smol-toml |
 | Output formatting | Rich tables/panels | @clack/prompts + chalk + cli-table3 |
 | Task runner | poethepoet | bun scripts (package.json) |
@@ -36,23 +37,89 @@ const CanvasFile = z.object({
 type CanvasFile = z.infer<typeof CanvasFile>  // no separate type definition needed
 ```
 
-### Drizzle relational queries replace hand-built JOINs
-The Python `queries.py` has ~200 lines of manual SQL string builders for enriched datasets (submissions with student names, gradebook JOINs, etc.). Drizzle's relational API handles this declaratively:
-```ts
-const submissions = await db.query.canvasSubmissions.findMany({
-  with: { student: true, assignment: true },
-  where: gt(canvasSubmissions.score, 0),
-})
-```
-The gradebook pivot is still manual, but the JOIN builders disappear.
+### Kysely: typed query builder that handles both static and dynamic SQL
+The Python version uses sqlite-utils (dynamic) but needs manual SQL strings for JOINs and enriched queries (~200 lines in `queries.py`). Drizzle would require raw SQL escape hatches for ~40% of the DB layer (introspection, dynamic WHERE/ORDER, shadow diffs). Kysely is a typed query builder — not an ORM — that handles both cases natively:
 
-### Drizzle diffs replace row-by-row shadow table comparison
-Python `sync.py` copies tables and compares row-by-row. Drizzle expresses the diff as a single query:
+**Static CRUD stays typed:**
 ```ts
-const pending = await db.select()
-  .from(canvasGrades)
-  .leftJoin(canvasGradesSynced, eq(canvasGrades.id, canvasGradesSynced.id))
-  .where(ne(canvasGrades.score, canvasGradesSynced.score))
+await db.insertInto('ghStudents')
+  .values({ githubUsername: s.login, githubId: s.id, name: s.name })
+  .onConflict(oc => oc.column('githubUsername').doUpdateSet({ name: s.name }))
+  .execute()
+```
+
+**Dynamic queries stay typed too (no raw SQL escape hatch needed):**
+```ts
+let query = db.selectFrom('canvasSubmissions as cs')
+  .innerJoin('students as s', 's.canvasId', 'cs.canvasUserId')
+  .innerJoin('assignments as a', 'a.canvasAssignmentId', 'cs.canvasAssignmentId')
+  .select(['s.name', 'a.title', 'cs.score'])
+if (where) query = query.where(sql.raw(where))  // CLI --where passthrough
+if (order) query = query.orderBy(sql.raw(order))
+if (limit) query = query.limit(limit)
+```
+
+**Shadow table diffs — typed JOINs instead of row-by-row comparison:**
+```ts
+const pending = await db.selectFrom('canvasGrades as g')
+  .leftJoin('_canvasGradesSynced as s', join =>
+    join.onRef('g.canvasUserId', '=', 's.canvasUserId')
+        .onRef('g.canvasAssignmentId', '=', 's.canvasAssignmentId'))
+  .where(({ or, cmpr }) => or([
+    cmpr('g.postedGrade', '!=', ref('s.postedGrade')),
+    cmpr('s.canvasUserId', 'is', null),
+  ]))
+  .selectAll('g')
+  .execute()
+```
+
+**Dynamic introspection — `updateTable()` accepts variable table names:**
+```ts
+await db.updateTable(tableName)
+  .set({ [column]: value })
+  .where(pkCol, '=', pkValue)
+  .execute()
+```
+
+### ts-pattern: exhaustive dispatch replaces untyped dict branching
+The Python codebase has dense dispatch patterns using `.get()` chains, dict lookups, and if/elif cascades without compile-time exhaustiveness. ts-pattern provides exhaustive matching with `.exhaustive()`:
+
+**Push result rendering** — replaces 30 lines of nested `result.get("ok")` / `result.get("action")` / `result.get("canvas_id")`:
+```ts
+type PushResult =
+  | { ok: true; action: 'posted_to_students' }
+  | { ok: true; canvasAssignmentId: number; count: number }
+  | { ok: false; error: string; canvasId?: number }
+
+match(result)
+  .with({ ok: true, action: 'posted_to_students' }, () => log('grades now visible'))
+  .with({ ok: true, canvasAssignmentId: P.number }, r => log(`${r.canvasAssignmentId}: ${r.count} grades`))
+  .with({ ok: false }, r => failures.push(`${r.canvasId}: ${r.error}`))
+  .exhaustive()
+```
+
+**Dataset query dispatch** — ensures adding a dataset forces handling everywhere:
+```ts
+type Dataset = 'students' | 'assignments' | 'submissions' | 'gradebook'
+match(dataset)
+  .with('students', 'assignments', () => renderTable(...))
+  .with('submissions', () => renderQuery(...))
+  .with('gradebook', () => renderMatrix(...))
+  .exhaustive()  // compile error if a new dataset is added but not handled
+```
+
+**Config state machine** — replaces boolean combo checks in `init`:
+```ts
+type ConfigState =
+  | { tag: 'configured'; ghId: number }
+  | { tag: 'pending'; url: string; urlId: string }
+  | { tag: 'missing' }
+
+match(classroomState)
+  .with({ tag: 'configured' }, s => log(`Classroom ${s.ghId} ready`))
+  .with({ tag: 'pending' }, s => resolveClassroom(s.url))
+  .with({ tag: 'missing' }, () => promptClassroomUrl())
+  .exhaustive()
 ```
 
 ### `gh api --paginate` eliminates the GitHub client
@@ -78,12 +145,11 @@ await Promise.all(repos.map(r => limit(() => $`git clone ${r.url} ${r.dest}`)))
 
 ### What stays roughly the same size
 - TOML config loading — similar complexity either way
-- Gradebook matrix pivot — manual regardless of ORM
+- Gradebook matrix pivot — manual regardless of query builder
 - Canvas subcommand surface area — 30+ commands is 30+ commands
-- Introspection / dynamic table ops — actually harder in drizzle (drop to raw `bun:sqlite` for `cass query --sql`)
 
 ### Expected result
-~60-70% of the Python line count for equivalent functionality. Biggest wins in API clients and schema definitions. DB layer and canvas CRUD stay similar.
+~55-65% of the Python line count for equivalent functionality. Biggest wins in API clients, schema definitions, and dispatch logic. DB layer is tighter thanks to kysely handling both static and dynamic cases without escape hatches.
 
 ## Directory Structure (target)
 
@@ -96,13 +162,12 @@ cass/
 │   │   ├── canvas.ts         # Canvas subcommands
 │   │   └── report.ts         # Reporting helpers
 │   ├── db/
-│   │   ├── connection.ts     # bun:sqlite connection (lazy singleton)
-│   │   ├── schema.ts         # drizzle table definitions + zod domain types
-│   │   ├── migrate.ts        # drizzle-kit migrations
-│   │   ├── catalog.ts        # Table capabilities metadata
-│   │   ├── queries.ts        # Drizzle relational queries (replaces manual JOINs)
-│   │   ├── sync.ts           # Change tracking via drizzle diff queries
-│   │   ├── introspection.ts  # Raw bun:sqlite for dynamic table ops
+│   │   ├── connection.ts     # bun:sqlite + kysely setup (lazy singleton)
+│   │   ├── schema.ts         # kysely Database interface + zod domain types
+│   │   ├── catalog.ts        # Table capabilities (typed with ts-pattern dispatch)
+│   │   ├── queries.ts        # Kysely typed queries (JOINs, enriched datasets)
+│   │   ├── sync.ts           # Change tracking via kysely diff JOINs
+│   │   ├── introspection.ts  # Dynamic table ops via kysely (updateTable, etc.)
 │   │   ├── views.ts          # Gradebook matrix pivot
 │   │   └── cache.ts          # Request-level caching
 │   ├── apis/
@@ -130,51 +195,63 @@ cass/
 │   ├── apis/
 │   ├── actions/
 │   └── fixtures/
-├── drizzle/                  # Generated migration files
+├── migrations/               # Plain SQL migration files (kysely-ctl)
 ├── package.json
 ├── tsconfig.json
 ├── biome.json
-├── drizzle.config.ts
 └── CLAUDE.md
 ```
 
-Note: no `utils/async.ts` — native `Promise.all` + `p-limit` replaces the custom `gather_bounded()` helper.
+Notes:
+- No `utils/async.ts` — native `Promise.all` + `p-limit` replaces `gather_bounded()`
+- No `drizzle/` or `drizzle.config.ts` — kysely uses plain SQL migrations via `kysely-ctl`
+- No `introspection.ts` escape hatch to raw `bun:sqlite` — kysely handles dynamic table/column refs natively
 
 ## Migration Phases
 
 ### Phase 0: Project Scaffolding
 - [ ] Initialize bun project (`bun init`)
-- [ ] Install dependencies: `cac`, `zx`, `drizzle-orm`, `drizzle-kit`, `zod`, `ky`, `chalk`, `cli-table3`, `@clack/prompts`, `smol-toml`, `p-limit`
-- [ ] Dev dependencies: `@types/bun`, `biome`, `typescript`
+- [ ] Install dependencies: `cac`, `zx`, `kysely`, `kysely-bun-sqlite`, `zod`, `ts-pattern`, `ky`, `chalk`, `cli-table3`, `@clack/prompts`, `smol-toml`, `p-limit`
+- [ ] Dev dependencies: `@types/bun`, `biome`, `typescript`, `kysely-ctl`
 - [ ] Configure `tsconfig.json` (strict, ESNext, bundler module resolution)
 - [ ] Configure `biome.json` (format + lint rules mirroring current ruff config)
-- [ ] Set up `package.json` scripts: `dev`, `build`, `lint`, `test`, `typecheck`
+- [ ] Set up `package.json` scripts: `dev`, `build`, `lint`, `test`, `typecheck`, `migrate`
 - [ ] Add `bin` entry to package.json for `cass` CLI
 - [ ] Stub out directory structure with empty files
 
 ### Phase 1: Database Layer (`src/db/`)
 Foundation — everything else depends on it.
 
-- [ ] **schema.ts** — Drizzle table definitions matching SQLite v15 + zod domain types:
-  - `meta`, `students`, `assignments`
-  - `canvas_students`, `canvas_assignments`, `canvas_submissions`, `canvas_grades`
-  - `_canvas_assignments_synced`, `_canvas_grades_synced`
-  - `gh_students`, `gh_assignments`, `gh_submissions`
-  - Drizzle `relations()` declarations for relational queries
-  - Proper indexes and constraints
-- [ ] **connection.ts** — Lazy singleton using `bun:sqlite` + drizzle
+- [ ] **schema.ts** — Kysely `Database` interface + zod domain types:
+  - TypeScript interfaces for all tables matching SQLite v15:
+    `Meta`, `Students`, `Assignments`, `CanvasStudents`, `CanvasAssignments`, `CanvasSubmissions`, `CanvasGrades`, `CanvasAssignmentsSynced`, `CanvasGradesSynced`, `GHStudents`, `GHAssignments`, `GHSubmissions`
+  - Aggregate `Database` interface mapping table names → row types (kysely pattern)
+  - Zod schemas for domain types where runtime validation is needed
+- [ ] **connection.ts** — Lazy singleton using `bun:sqlite` + kysely
   - `dbPath()` — Locate `cass.db` relative to `cass.toml`
-  - `getDb()` — Lazy-loaded drizzle instance
-  - `initSchema()` — Run migrations or push schema
+  - `getDb()` — Lazy-loaded `Kysely<Database>` instance
+  - `initSchema()` — Run migrations via kysely-ctl
   - `reset()` — Close connection for delete/restore
-- [ ] **migrate.ts** — drizzle-kit migration setup
-- [ ] **catalog.ts** — Port `TABLE_CAPABILITIES` and `CANVAS_PUSHABLE` maps
-- [ ] **queries.ts** — Drizzle relational queries replacing manual SQL builders:
+- [ ] **migrations/** — Plain SQL files for schema v1 (matching Python v15)
+- [ ] **catalog.ts** — `TABLE_CAPABILITIES` and `CANVAS_PUSHABLE` as typed const maps. Use ts-pattern for capability dispatch:
+  ```ts
+  const canEdit = (table: TableName) => match(table)
+    .with('canvas_grades', 'canvas_assignments', () => true)
+    .with('gh_students', () => true)  // only 'excluded' column
+    .otherwise(() => false)
+  ```
+- [ ] **queries.ts** — Kysely typed queries replacing manual SQL builders:
   - `students`, `assignments`, `submissions`, `gradebook` datasets
-  - Use `db.query.*.findMany({ with: { ... } })` instead of hand-built JOINs
-- [ ] **sync.ts** — Change tracking via drizzle diff queries:
-  - `snapshotCanvasSynced()`, `getPendingChanges()` (LEFT JOIN + WHERE ne), `canvasPreview()`, `canvasApply()`, `revertChanges()`
-- [ ] **introspection.ts** — Raw `bun:sqlite` for dynamic table ops (inspect any table, update any cell)
+  - Enriched queries as kysely `.selectFrom().innerJoin()` chains (type-safe, no raw SQL)
+  - Dataset dispatch via ts-pattern `.exhaustive()`
+- [ ] **sync.ts** — Change tracking via kysely LEFT JOIN + WHERE:
+  - `snapshotCanvasSynced()` — `INSERT INTO ... SELECT FROM` via kysely
+  - `getPendingChanges()` — LEFT JOIN synced table, WHERE fields differ
+  - `canvasPreview()`, `canvasApply()`, `revertChanges()`
+  - Push result types as discriminated unions, rendered with ts-pattern
+- [ ] **introspection.ts** — Dynamic table ops via kysely:
+  - `updateTable(name)` for variable table names
+  - `sql.raw()` for the `cass query --sql` escape hatch only
 - [ ] **views.ts** — Gradebook matrix pivot (manual, same as Python)
 - [ ] **cache.ts** — Request caching with TTL
 - [ ] Tests for all db modules
@@ -187,25 +264,27 @@ Each schema = runtime validator + static type + field transforms. No separate ty
   - `CanvasAssignmentResponse`, `CanvasModule`, `CanvasModuleItem`
   - `CanvasQuiz`, `CanvasFolder`, `CanvasFile` (`.transform()` for `content-type` → `contentType`)
   - `CanvasAnnouncement`, `CanvasUser`, `CanvasEnrollment`, `CanvasTab`
+  - `CanvasProgress` with workflow_state as `z.enum(['queued', 'running', 'completed', 'failed'])`
 - [ ] **GitHub schemas** — Single zod definition per API type:
   - `GHStudentInfo`, `GHAssignmentResponse`, `GHAcceptedAssignment`
   - `GHRepository`, `GHStudentRef`, `GHStarterCodeRepo`, `GHCommit`
-- [ ] **Domain schemas** — zod versions of `db/schema.py` internal types (if not already covered by drizzle `$inferSelect` types)
+- [ ] **Domain schemas** — zod versions of `db/schema.py` internal types (if not already covered by kysely `Selectable<T>` types)
 
 ### Phase 3: API Clients (`src/apis/`)
 
 - [ ] **Canvas client** (`apis/canvas/client.ts`):
-  - ky instance with retry hooks + rate-limit throttle (replaces ~80 lines of manual retry/backoff):
-    ```ts
-    const canvas = ky.create({
-      prefixUrl, headers: { Authorization: `Bearer ${token}` },
-      retry: { limit: 3, backoffLimit: 8000 },
-      hooks: { afterResponse: [throttleOnRateLimit] },
-    })
-    ```
+  - ky instance with retry hooks + rate-limit throttle (replaces ~80 lines of manual retry/backoff)
   - Pagination helper (~15 lines, Canvas `Link` header parsing)
   - Methods: `getCourse()`, `listStudents()`, `listAssignments()`, `listSubmissions()`, `pushGrade()`, `listModules()`, `createModule()`, `publish()`, `unpublish()`, `deleteModule()`, `listUsers()`, `listFiles()`, `uploadFile()`, `listQuizzes()`, `listAnnouncements()`, `listTabs()`, etc.
-  - All responses piped through zod `.parse()` (replaces `msgspec.convert()`)
+  - All responses piped through zod `.parse()`
+  - `waitForProgress()` uses ts-pattern to match on `workflowState`:
+    ```ts
+    match(progress.workflowState)
+      .with('completed', () => progress)
+      .with('failed', () => { throw new Error(progress.message) })
+      .with('queued', 'running', () => sleep(1000))
+      .exhaustive()
+    ```
 - [ ] **Canvas matching** (`apis/canvas/matching.ts`):
   - `fetchStudents()`, `fetchStudentsWithSections()`, `fetchCanvasAssignments()`, `fetchCanvasSubmissions()`, `fetchCourseName()`, `pushGrade()`
 - [ ] **Canvas sync/egrades** — Port as needed
@@ -217,11 +296,7 @@ Each schema = runtime validator + static type + field transforms. No separate ty
 - [ ] **GitHub classroom** (`apis/github/classroom.ts`):
   - `fetchAssignments()`, `fetchRoster()`, `fetchSubmissions()`, `buildRepoMap()`, `resolveGhId()`
 - [ ] **GitHub fetch** (`apis/github/fetch.ts`):
-  - Repo cloning via zx + `p-limit` (replaces `gather_bounded`):
-    ```ts
-    const limit = pLimit(10)
-    await Promise.all(repos.map(r => limit(() => $`git clone ${r.url} ${r.dest}`)))
-    ```
+  - Repo cloning via zx + `p-limit`
   - `sanitizeStudentDir()`
 - [ ] **GitHub service** (`apis/github/service.ts`)
 - [ ] Tests for API layer (mock ky/zx responses)
@@ -231,11 +306,14 @@ Each schema = runtime validator + static type + field transforms. No separate ty
 - [ ] **config.ts** — smol-toml parsing + zod validated config:
   - `getConfig()` singleton, `updateConfig()`, `parseCanvasCourseUrl()`
   - Walk-up directory search for `cass.toml`
+  - Config state as discriminated union for ts-pattern matching in `init`
 - [ ] **pull.ts** — Pull orchestration:
   - `pullStudents()`, `pullAssignments()`, `pullSubmissions()`
   - Uses `p-limit` for concurrent GitHub fetching
+  - Pull mode as tagged union (`{ mode: 'all' } | { mode: 'students' } | ...`) instead of boolean flags
 - [ ] **matching.ts** — Port `slugify()`, `slugMatch()`
 - [ ] **doctor.ts** — Prerequisite checks (gh CLI, Canvas token, config)
+  - Check results as discriminated union (ok | warn | error) with ts-pattern rendering
 - [ ] Tests for actions
 
 ### Phase 5: CLI Layer (`src/cli/`)
@@ -260,9 +338,9 @@ Each schema = runtime validator + static type + field transforms. No separate ty
   - `status` — Show sync overview
   - `init` — Interactive setup (@clack/prompts for text input, confirm, select)
   - `pull` — Fetch APIs → DB (with `--students`, `--assignments`, `--submissions`, `--limit`)
-  - `push` — Preview + push Canvas changes (with `--yes`)
+  - `push` — Preview + push Canvas changes (with `--yes`). Render results with ts-pattern `.exhaustive()`
   - `revert` — Revert pending changes (with `--yes`)
-  - `query <dataset>` — Query datasets (with `--where`, `--order`, `--limit`, `--sql`)
+  - `query <dataset>` — Query datasets (with `--where`, `--order`, `--limit`, `--sql`). Dataset dispatch via ts-pattern
   - `pull-repos` — Clone/update repos (with `-a`, `-s`, `-n`)
   - `delete` — Delete DB (with `--yes`)
   - `backup` — Timestamped backup (with `--tag`, `--list`)
@@ -296,34 +374,31 @@ Each schema = runtime validator + static type + field transforms. No separate ty
 All commands are flat with hyphen-separated names. Examples:
 ```ts
 cli.command('status', 'Show project sync status')
-cli.command('init', 'Initialize local setup')
-cli.command('pull', 'Fetch from APIs and update DB')
-cli.command('canvas', 'Canvas course overview')
-cli.command('canvas-people', 'Show course roster')
-cli.command('canvas-modules', 'List modules')
 cli.command('canvas-modules-create <name>', 'Create a module')
-cli.command('canvas-modules-publish <id>', 'Publish a module')
-cli.command('canvas-assignments', 'List assignments')
-cli.command('canvas-assignments-create <name>', 'Create an assignment')
-// etc.
 ```
 Group related commands via description prefixes for readability in `--help`.
 
-### drizzle + bun:sqlite
-Drizzle has a `bun-sqlite` driver. Schema is defined in TypeScript (not SQL), and drizzle-kit generates migrations. Relational queries (`db.query.*.findMany({ with })`) replace manual JOIN builders from the Python version.
+### kysely over drizzle
+Kysely is a typed query builder (not an ORM). It's a better fit than drizzle because:
+1. **No escape hatch needed** — dynamic WHERE/ORDER (`cass query --where`), variable table/column names (`updateTable(name)`), and shadow table diffs all work within kysely's typed API
+2. **Closer to sqlite-utils** — both are query builders, not ORMs. The migration is more natural
+3. **Plain SQL migrations** — `kysely-ctl` uses `.sql` files, simpler than drizzle-kit's codegen
+4. **Type safety on dynamic ops** — `updateTable(tableName)` is typed via the `Database` interface; drizzle would need raw `bun:sqlite` for these
+5. **Trade-off**: no drizzle-style `findMany({ with })` relational sugar. Kysely JOINs are explicit (~2 extra lines per query) but give full control over SELECT lists
 
-For introspection-heavy code (dynamic table inspection, cell updates, `cass query --sql`), drop to raw `bun:sqlite` alongside drizzle's typed queries.
+### ts-pattern for dispatch
+Three high-value areas:
+1. **Push/pull result types** — Discriminated unions + `.exhaustive()` replace 30+ lines of nested `.get()` chains
+2. **Dataset query dispatch** — Compile-time guarantee that all datasets are handled
+3. **Config state machine** — `init` command's 3-state flow (configured/pending/missing) becomes explicit and exhaustive
+
+Also used in: table capability dispatch (catalog), Canvas workflow state polling, doctor check rendering, change-tracking column handling.
 
 ### zod: unified type + validation
 `z.infer<typeof Schema>` gives you the static type for free. `.transform()` handles field renames. `.parse()` replaces `msgspec.convert()`. No separate type definitions needed — each API response is one zod object.
 
 ### GitHub API via `gh api`
-All GitHub calls go through zx:
-```ts
-const result = await $`gh api /classrooms/${id}/assignments --paginate`
-const data = GHAssignmentSchema.array().parse(JSON.parse(result.stdout))
-```
-This keeps auth simple (gh handles it) and avoids token management entirely. Eliminates ~130 lines of custom client code.
+All GitHub calls go through zx. `gh` handles pagination, auth, and rate limiting. Eliminates ~130 lines of custom client code.
 
 ### Canvas client via ky hooks
 ky's built-in retry + custom `afterResponse` hook for rate-limit throttling replaces ~80 lines of manual retry/backoff. Only the pagination helper (Canvas `Link` header) needs custom code (~15 lines).
@@ -333,10 +408,14 @@ ky's built-in retry + custom `afterResponse` hook for rate-limit throttling repl
 
 ## Resolved Decisions
 
-1. **cac with flat commands** — Canvas subcommands become flat: `cass canvas-modules-create`, `cass canvas-assignments-publish`, etc. Keep cac for its simplicity. Group related commands via help text/descriptions.
+1. **cac with flat commands** — Canvas subcommands become flat: `cass canvas-modules-create`, `cass canvas-assignments-publish`, etc.
 
-2. **Clean DB break** — No backward compatibility with Python-created `cass.db`. Users re-run `cass pull` after switching. Drizzle owns the schema from the start.
+2. **Clean DB break** — No backward compatibility with Python-created `cass.db`. Users re-run `cass pull` after switching. Kysely owns the schema from the start.
 
 3. **Config compatibility** — `cass.toml` format stays the same. The TS version reads the same config file.
 
 4. **Package name** — Keep `cass`. The branch is the boundary.
+
+5. **kysely over drizzle** — Typed query builder fits better than ORM for a codebase with significant dynamic SQL needs.
+
+6. **ts-pattern** — Added for exhaustive dispatch on result types, dataset routing, and config state machines.
