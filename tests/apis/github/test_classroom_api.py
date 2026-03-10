@@ -209,6 +209,73 @@ async def test_fetch_submissions_combines_grades_and_accepted(
 
 
 @pytest.mark.asyncio
+async def test_fetch_submissions_with_deadline(classroom_config, db_conn):
+    """When a deadline is provided, commits after deadline are counted via REST API."""
+    from datetime import UTC, datetime
+
+    from cass.db.schema import Student
+
+    deadline = datetime(2025, 1, 10, 23, 59, 0, tzinfo=UTC)
+
+    # Commits after the deadline for alice's repo
+    after_deadline_commits = [
+        {
+            "sha": "aaa111",
+            "commit": {"committer": {"date": "2025-01-12T10:00:00Z"}},
+        },
+        {
+            "sha": "aaa222",
+            "commit": {"committer": {"date": "2025-01-11T08:30:00Z"}},
+        },
+    ]
+    # Commit before deadline (for until= query)
+    before_deadline_commits = [
+        {
+            "sha": "bbb111",
+            "commit": {"committer": {"date": "2025-01-09T15:00:00Z"}},
+        },
+    ]
+
+    def _route(endpoint: str, **_kwargs: object) -> object:
+        if "/classrooms/" in endpoint and "/assignments" in endpoint:
+            return ASSIGNMENTS_JSON
+        if "/assignments/918460/grades" in endpoint:
+            return GRADES_918460
+        if "/assignments/918460/accepted_assignments" in endpoint:
+            return ACCEPTED_918460
+        # REST API commit queries for alice's repo
+        if "/repos/my-org/wk01-lab-alice-gh/commits" in endpoint:
+            if "since=" in endpoint:
+                return after_deadline_commits
+            if "until=" in endpoint:
+                return before_deadline_commits
+        # bob's repo: no late commits
+        if "/repos/my-org/wk01-lab-bob-gh/commits" in endpoint:
+            if "since=" in endpoint:
+                return []
+            if "until=" in endpoint:
+                return before_deadline_commits
+        return []
+
+    client = AsyncMock()
+    client.get_cached = AsyncMock(side_effect=_route)
+
+    roster = [
+        Student(canvas_id=1, github_username="alice-gh", name="Alice Smith"),
+        Student(canvas_id=2, github_username="bob-gh", name="Bob Jones"),
+    ]
+    subs = await classroom.fetch_submissions(client, "wk01-lab", deadline, roster)
+
+    alice = next(s for s in subs if s.github_username == "alice-gh")
+    assert alice.commits_after_deadline == 2
+    assert alice.last_commit_at == "2025-01-12T10:00:00Z"
+    assert alice.last_commit_sha == "aaa111"
+
+    bob = next(s for s in subs if s.github_username == "bob-gh")
+    assert bob.commits_after_deadline == 0
+
+
+@pytest.mark.asyncio
 async def test_fetch_submissions_student_not_in_grades(
     mock_client, classroom_config, db_conn
 ):
