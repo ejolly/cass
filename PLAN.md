@@ -8,14 +8,17 @@ Full rewrite of cass (excluding viewer) from Python to TypeScript, using Bun as 
 |---|---|---|
 | Runtime | CPython 3.12 | Bun |
 | CLI framework | Typer + Rich | cac |
-| Shell/subprocess | subprocess | zx |
-| HTTP client | httpx | ky (Canvas), `gh api` via zx (GitHub) |
+| Shell/subprocess | subprocess | Bun.$ (native shell API) |
+| HTTP client | httpx | ky (Canvas), `gh api` via Bun.$ (GitHub) |
 | Database | sqlite-utils | kysely (typed query builder, bun:sqlite dialect) |
 | Migrations | sqlite-utils | kysely-ctl (plain SQL migration files) |
 | Schema/validation | msgspec.Struct | zod |
 | Pattern matching | _(none)_ | ts-pattern (exhaustive dispatch) |
 | Config | tomllib (stdlib) | smol-toml |
-| Output formatting | Rich tables/panels | @clack/prompts + chalk + cli-table3 |
+| Terminal output | Rich tables/panels | consola (logs, spinners, boxes) + cli-table3 (tables) |
+| Interactive prompts | Rich.prompt | @clack/prompts (text, confirm, select) |
+| CSV | csv (stdlib) | papaparse (parse + stringify) |
+| File I/O | pathlib, shutil | Bun.file(), Bun.write() (native) |
 | Task runner | poethepoet | bun scripts (package.json) |
 | Linting | ruff | biome (format + lint) |
 | Type checking | basedpyright + ty | tsc --noEmit (strict) |
@@ -122,8 +125,36 @@ match(classroomState)
   .exhaustive()
 ```
 
+### Bun.$ replaces zx — zero-dep shell execution
+Bun ships a native shell template literal API identical in DX to zx, without the transitive dependency tree (node-fetch, globby, yaml, etc.):
+```ts
+import { $ } from 'bun'
+await $`gh api /classrooms/${id}/assignments --paginate`
+await $`git clone ${url} ${dest}`
+const isAvailable = await $`which gh`.quiet().then(() => true, () => false)
+```
+
+### Bun.file() / Bun.write() replace fs
+Native file I/O built into the runtime. Backup/restore becomes a one-liner zero-copy file operation:
+```ts
+const config = await Bun.file('cass.toml').text()
+await Bun.write('cass.db.bak', Bun.file('cass.db'))  // zero-copy backup
+```
+
+### consola consolidates terminal output
+Replaces chalk + manual console.log + spinner libraries with a single package that handles colored output, log levels, spinners, and box formatting:
+```ts
+import { consola } from 'consola'
+consola.info('Pulling students...')
+consola.success(`Saved ${count} students`)
+consola.warn('No Canvas token found')
+consola.start('Fetching submissions...')  // spinner
+consola.box('Course: CS 101\nStudents: 45')  // Rich-style panel
+```
+cli-table3 is kept for dense tabular output (`cass query`, canvas list commands).
+
 ### `gh api --paginate` eliminates the GitHub client
-The Python GitHub client (~150 lines) has async pagination with Link header parsing, bounded concurrency via `gather_bounded()`, and manual token management. All of this goes away — `gh` handles pagination, auth, and rate limiting natively. The entire client becomes ~20 lines of zx wrappers.
+The Python GitHub client (~150 lines) has async pagination with Link header parsing, bounded concurrency via `gather_bounded()`, and manual token management. All of this goes away — `gh` handles pagination, auth, and rate limiting natively. The entire client becomes ~20 lines of Bun.$ wrappers.
 
 ### ky hooks replace hand-rolled Canvas retry/throttle
 The Python Canvas client has ~80 lines of retry logic, rate-limit detection, and exponential backoff. ky has this built in:
@@ -142,6 +173,9 @@ Only the pagination helper (~15 lines for Canvas `Link` headers) needs custom co
 const limit = pLimit(10)
 await Promise.all(repos.map(r => limit(() => $`git clone ${r.url} ${r.dest}`)))
 ```
+
+### papaparse handles CSV in both directions
+Python's stdlib `csv` has no TS equivalent. Many canvas commands export `--csv` and `egrades.ts` imports CSV. papaparse handles both parse and stringify with proper quoting/escaping (Canvas data has commas in names).
 
 ### What stays roughly the same size
 - TOML config loading — similar complexity either way
@@ -175,21 +209,21 @@ cass/
 │   │   │   ├── client.ts     # ky instance with retry hooks + pagination helper
 │   │   │   ├── schema.ts     # zod schemas (type + validation + transforms)
 │   │   │   ├── matching.ts   # Roster & submission fetching
-│   │   │   ├── egrades.ts    # Gradebook CSV import/export
+│   │   │   ├── egrades.ts    # Gradebook CSV via papaparse
 │   │   │   └── sync.ts       # Grade push workflow
 │   │   └── github/
-│   │       ├── client.ts     # Thin zx wrappers over `gh api --paginate`
+│   │       ├── client.ts     # Thin Bun.$ wrappers over `gh api --paginate`
 │   │       ├── schema.ts     # zod schemas for GitHub API responses
 │   │       ├── classroom.ts  # Classroom integration
 │   │       ├── service.ts    # Higher-level operations
-│   │       └── fetch.ts      # Repo cloning via zx + p-limit concurrency
+│   │       └── fetch.ts      # Repo cloning via Bun.$ + p-limit concurrency
 │   ├── actions/
 │   │   ├── config.ts         # smol-toml + zod validated config
 │   │   ├── pull.ts           # Pull orchestration
 │   │   ├── matching.ts       # Slug/name normalization
 │   │   └── doctor.ts         # Prerequisite checks
 │   └── utils/
-│       └── format.ts         # chalk + cli-table3 output helpers
+│       └── csv.ts            # papaparse wrappers for --csv export + egrades import
 ├── tests/
 │   ├── db/
 │   ├── apis/
@@ -204,15 +238,17 @@ cass/
 
 Notes:
 - No `utils/async.ts` — native `Promise.all` + `p-limit` replaces `gather_bounded()`
-- No `drizzle/` or `drizzle.config.ts` — kysely uses plain SQL migrations via `kysely-ctl`
-- No `introspection.ts` escape hatch to raw `bun:sqlite` — kysely handles dynamic table/column refs natively
+- No `utils/format.ts` — consola handles all terminal output formatting
+- `utils/csv.ts` — thin papaparse wrappers shared by CLI `--csv` export and `egrades.ts` import
+- File I/O uses `Bun.file()` / `Bun.write()` directly — no fs imports needed
+- Shell commands use `Bun.$` — no zx dependency
 
 ## Migration Phases
 
 ### Phase 0: Project Scaffolding
 - [ ] Initialize bun project (`bun init`)
-- [ ] Install dependencies: `cac`, `zx`, `kysely`, `kysely-bun-sqlite`, `zod`, `ts-pattern`, `ky`, `chalk`, `cli-table3`, `@clack/prompts`, `smol-toml`, `p-limit`
-- [ ] Dev dependencies: `@types/bun`, `biome`, `typescript`, `kysely-ctl`
+- [ ] Install dependencies: `cac`, `kysely`, `kysely-bun-sqlite`, `zod`, `ts-pattern`, `ky`, `consola`, `cli-table3`, `@clack/prompts`, `smol-toml`, `p-limit`, `papaparse`
+- [ ] Dev dependencies: `@types/bun`, `@types/papaparse`, `biome`, `typescript`, `kysely-ctl`
 - [ ] Configure `tsconfig.json` (strict, ESNext, bundler module resolution)
 - [ ] Configure `biome.json` (format + lint rules mirroring current ruff config)
 - [ ] Set up `package.json` scripts: `dev`, `build`, `lint`, `test`, `typecheck`, `migrate`
@@ -228,7 +264,7 @@ Foundation — everything else depends on it.
   - Aggregate `Database` interface mapping table names → row types (kysely pattern)
   - Zod schemas for domain types where runtime validation is needed
 - [ ] **connection.ts** — Lazy singleton using `bun:sqlite` + kysely
-  - `dbPath()` — Locate `cass.db` relative to `cass.toml`
+  - `dbPath()` — Locate `cass.db` relative to `cass.toml` (walk-up via `Bun.file().exists()`)
   - `getDb()` — Lazy-loaded `Kysely<Database>` instance
   - `initSchema()` — Run migrations via kysely-ctl
   - `reset()` — Close connection for delete/restore
@@ -287,25 +323,31 @@ Each schema = runtime validator + static type + field transforms. No separate ty
     ```
 - [ ] **Canvas matching** (`apis/canvas/matching.ts`):
   - `fetchStudents()`, `fetchStudentsWithSections()`, `fetchCanvasAssignments()`, `fetchCanvasSubmissions()`, `fetchCourseName()`, `pushGrade()`
-- [ ] **Canvas sync/egrades** — Port as needed
-- [ ] **GitHub client** (`apis/github/client.ts`) — ~20 lines of zx wrappers replacing ~150 lines:
+- [ ] **Canvas egrades** (`apis/canvas/egrades.ts`):
+  - CSV import/export via papaparse (shared `utils/csv.ts` wrappers)
+- [ ] **Canvas sync** — Port as needed
+- [ ] **GitHub client** (`apis/github/client.ts`) — ~20 lines of Bun.$ wrappers replacing ~150 lines:
   - `ghApi(path)` — `await $\`gh api ${path} --paginate\`` + zod parse
-  - `checkAvailable()` — `which gh`
-  - `checkAuth()` — `gh auth status`
+  - `checkAvailable()` — `await $\`which gh\`.quiet()`
+  - `checkAuth()` — `await $\`gh auth status\``
   - No manual pagination, no token management, no retry logic
 - [ ] **GitHub classroom** (`apis/github/classroom.ts`):
   - `fetchAssignments()`, `fetchRoster()`, `fetchSubmissions()`, `buildRepoMap()`, `resolveGhId()`
 - [ ] **GitHub fetch** (`apis/github/fetch.ts`):
-  - Repo cloning via zx + `p-limit`
+  - Repo cloning via Bun.$ + `p-limit`:
+    ```ts
+    const limit = pLimit(10)
+    await Promise.all(repos.map(r => limit(() => $`git clone ${r.url} ${r.dest}`)))
+    ```
   - `sanitizeStudentDir()`
 - [ ] **GitHub service** (`apis/github/service.ts`)
-- [ ] Tests for API layer (mock ky/zx responses)
+- [ ] Tests for API layer (mock ky responses, Bun.$ with `$.throws(false)`)
 
 ### Phase 4: Actions Layer (`src/actions/`)
 
 - [ ] **config.ts** — smol-toml parsing + zod validated config:
   - `getConfig()` singleton, `updateConfig()`, `parseCanvasCourseUrl()`
-  - Walk-up directory search for `cass.toml`
+  - Walk-up directory search via `Bun.file(path).exists()`
   - Config state as discriminated union for ts-pattern matching in `init`
 - [ ] **pull.ts** — Pull orchestration:
   - `pullStudents()`, `pullAssignments()`, `pullSubmissions()`
@@ -335,16 +377,16 @@ Each schema = runtime validator + static type + field transforms. No separate ty
   cli.parse()
   ```
 - [ ] Port root commands:
-  - `status` — Show sync overview
+  - `status` — Show sync overview (consola.box for summary panel)
   - `init` — Interactive setup (@clack/prompts for text input, confirm, select)
-  - `pull` — Fetch APIs → DB (with `--students`, `--assignments`, `--submissions`, `--limit`)
+  - `pull` — Fetch APIs → DB (with `--students`, `--assignments`, `--submissions`, `--limit`). consola.start/success for progress
   - `push` — Preview + push Canvas changes (with `--yes`). Render results with ts-pattern `.exhaustive()`
   - `revert` — Revert pending changes (with `--yes`)
-  - `query <dataset>` — Query datasets (with `--where`, `--order`, `--limit`, `--sql`). Dataset dispatch via ts-pattern
+  - `query <dataset>` — Query datasets (with `--where`, `--order`, `--limit`, `--sql`). Dataset dispatch via ts-pattern. cli-table3 for output
   - `pull-repos` — Clone/update repos (with `-a`, `-s`, `-n`)
   - `delete` — Delete DB (with `--yes`)
-  - `backup` — Timestamped backup (with `--tag`, `--list`)
-  - `restore <file>` — Restore from backup (with `--yes`)
+  - `backup` — `Bun.write(backupPath, Bun.file(dbPath))` (with `--tag`, `--list`)
+  - `restore <file>` — `Bun.write(dbPath, Bun.file(backupPath))` (with `--yes`)
   - Global: `--no-cache`, `--ttl`, `--version`
 - [ ] **canvas.ts** — All canvas flat commands:
   - `canvas` (course overview), `canvas-people`, `canvas-modules`, `canvas-modules-create`, `canvas-modules-publish`, `canvas-modules-unpublish`, `canvas-modules-delete`, `canvas-modules-add-item`
@@ -354,9 +396,9 @@ Each schema = runtime validator + static type + field transforms. No separate ty
   - `canvas-announcements`, `canvas-announcements-create`, `canvas-announcements-update`, `canvas-announcements-delete`
   - `canvas-tabs`, `canvas-tabs-show`, `canvas-tabs-hide`
   - `canvas-sync` (with `--push`, `--force`)
-  - All list commands: `--csv`, `--save` export options
+  - All list commands: `--csv` (papaparse stringify), `--save` (Bun.write) export options
 - [ ] **report.ts** — Reporting helpers
-- [ ] Output: chalk for colors, cli-table3 for tables, @clack/prompts for interactive prompts
+- [ ] Output: consola for logs/spinners/boxes, cli-table3 for dense tables, @clack/prompts for interactive input
 
 ### Phase 6: Testing & Polish
 
@@ -394,11 +436,23 @@ Three high-value areas:
 
 Also used in: table capability dispatch (catalog), Canvas workflow state polling, doctor check rendering, change-tracking column handling.
 
+### Bun.$ over zx
+Bun's native shell API has identical DX to zx (`$\`command\``) but zero dependencies. zx pulls in node-fetch, globby, yaml, and other transitive deps that aren't needed. Same template literal syntax, same `.quiet()`, same error handling.
+
+### consola over chalk
+consola consolidates colored output, log levels, spinners, and box formatting into one package. Replaces chalk + manual console.log + spinner libraries. cli-table3 is kept alongside for dense tabular output (`cass query`, canvas list commands). @clack/prompts handles interactive input (text, confirm, select).
+
+### Bun.file() / Bun.write() over fs
+Native Bun file I/O for config reading, backup/restore (zero-copy `Bun.write(dest, Bun.file(src))`), and `--save` exports. No `fs` or `node:fs` imports needed.
+
+### papaparse for CSV
+Canvas data has commas in names, so proper CSV quoting is needed. papaparse handles both parse (egrades import) and stringify (`--csv` export) in one dep. Shared via `utils/csv.ts`.
+
 ### zod: unified type + validation
 `z.infer<typeof Schema>` gives you the static type for free. `.transform()` handles field renames. `.parse()` replaces `msgspec.convert()`. No separate type definitions needed — each API response is one zod object.
 
 ### GitHub API via `gh api`
-All GitHub calls go through zx. `gh` handles pagination, auth, and rate limiting. Eliminates ~130 lines of custom client code.
+All GitHub calls go through Bun.$. `gh` handles pagination, auth, and rate limiting. Eliminates ~130 lines of custom client code.
 
 ### Canvas client via ky hooks
 ky's built-in retry + custom `afterResponse` hook for rate-limit throttling replaces ~80 lines of manual retry/backoff. Only the pagination helper (Canvas `Link` header) needs custom code (~15 lines).
@@ -419,3 +473,11 @@ ky's built-in retry + custom `afterResponse` hook for rate-limit throttling repl
 5. **kysely over drizzle** — Typed query builder fits better than ORM for a codebase with significant dynamic SQL needs.
 
 6. **ts-pattern** — Added for exhaustive dispatch on result types, dataset routing, and config state machines.
+
+7. **Bun.$ over zx** — Native shell API, identical DX, zero transitive deps.
+
+8. **consola over chalk** — Single package for logs, spinners, boxes. cli-table3 kept for tabular data.
+
+9. **papaparse** — CSV parse + stringify for `--csv` exports and egrades import. Canvas data needs proper quoting.
+
+10. **Bun.file() / Bun.write()** — Native file I/O for config, backups, exports. No fs imports.
