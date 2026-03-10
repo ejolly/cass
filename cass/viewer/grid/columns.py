@@ -249,9 +249,7 @@ def build_column_defs(conn: sqlite_utils.Database, table: str) -> list[dict[str,
             }
 
         if col_is_editable:
-            is_bool = "BOOL" in col_types.get(name, "")
-            if not is_bool:
-                col_def["editable"] = True
+            col_def["editable"] = True
             col_def[":cellClassRules"] = {
                 "cell-pending": PENDING_CELL_RULE,
             }
