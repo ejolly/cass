@@ -227,9 +227,8 @@ def build_column_defs(conn: sqlite_utils.Database, table: str) -> list[dict[str,
                 if "TIMESTAMP" in dtype:
                     col_def["cellEditorParams"] = {"includeTime": True}
             elif "BOOL" in dtype:
-                col_def["cellEditor"] = "agCheckboxCellEditor"
                 col_def["cellRenderer"] = "agCheckboxCellRenderer"
-                col_def["singleClickEdit"] = True
+                # Toggle handled by JS onCellClicked — no editor needed
             elif any(t in dtype for t in ("INT", "DOUBLE", "FLOAT", "REAL")):
                 col_def["cellEditor"] = "agNumberCellEditor"
             # Select editor for assignment_group on canvas_assignments
@@ -250,7 +249,9 @@ def build_column_defs(conn: sqlite_utils.Database, table: str) -> list[dict[str,
             }
 
         if col_is_editable:
-            col_def["editable"] = True
+            is_bool = "BOOL" in col_types.get(name, "")
+            if not is_bool:
+                col_def["editable"] = True
             col_def[":cellClassRules"] = {
                 "cell-pending": PENDING_CELL_RULE,
             }

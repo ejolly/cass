@@ -14,6 +14,7 @@ from .columns import (
     sanitize,
 )
 from .handlers import (
+    attach_checkbox_toggle,
     attach_date_autocommit,
     attach_edit_handler,
     attach_gradebook_edit_handler,
@@ -38,6 +39,7 @@ from .utils import (
 __all__ = [
     "_grid_to_markdown",
     "apply_search",
+    "attach_checkbox_toggle",
     "attach_date_autocommit",
     "attach_edit_handler",
     "attach_gradebook_edit_handler",

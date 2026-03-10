@@ -37,6 +37,24 @@ def attach_date_autocommit(grid: ui.aggrid) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Boolean checkbox toggle (bypasses edit mode for reliable single-click)
+# ---------------------------------------------------------------------------
+
+_CHECKBOX_TOGGLE_JS = """
+(params) => {
+    if (params.colDef.cellRenderer === 'agCheckboxCellRenderer') {
+        params.node.setDataValue(params.colDef.field, params.value ? 0 : 1);
+    }
+}
+""".strip()
+
+
+def attach_checkbox_toggle(grid: ui.aggrid) -> None:
+    """Toggle boolean cells on single click via JS, bypassing edit mode."""
+    grid.options[":onCellClicked"] = _CHECKBOX_TOGGLE_JS  # pyright: ignore[reportUnknownMemberType]
+
+
+# ---------------------------------------------------------------------------
 # Regular table edit handler
 # ---------------------------------------------------------------------------
 

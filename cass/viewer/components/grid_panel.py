@@ -10,6 +10,7 @@ from nicegui import ui
 
 from ...db import get_primary_keys, is_editable
 from ..grid import (
+    attach_checkbox_toggle,
     attach_date_autocommit,
     attach_edit_handler,
     attach_gradebook_edit_handler,
@@ -103,6 +104,9 @@ class GridPanel:
                 pending,
                 update_pending_display,
             )
+
+        if editable_flag:
+            attach_checkbox_toggle(grid)
 
         if is_canvas_gb or editable_flag:
             attach_date_autocommit(grid)
