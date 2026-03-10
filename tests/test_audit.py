@@ -477,10 +477,13 @@ class TestBuildColumnDefs:
         name_col = next(d for d in defs if d["field"] == "name")
         assert name_col.get("editable") is True
 
-    def test_canvas_assignments_bool_editor(self, col_db):
+    def test_canvas_assignments_bool_renderer(self, col_db):
         defs = build_column_defs(col_db, "canvas_assignments")
         pub_col = next(d for d in defs if d["field"] == "published")
-        assert pub_col.get("cellEditor") == "agCheckboxCellEditor"
+        assert pub_col.get("cellRenderer") == "agCheckboxCellRenderer"
+        # Bool columns are toggled via JS onCellClicked, not AG Grid edit mode
+        assert pub_col.get("editable") is None
+        assert pub_col.get("cellEditor") is None
 
     def test_canvas_assignments_number_editor(self, col_db):
         defs = build_column_defs(col_db, "canvas_assignments")

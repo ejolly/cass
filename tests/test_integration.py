@@ -290,7 +290,8 @@ class TestColumnDefs:
         editable_fields = [d["field"] for d in defs if d.get("editable")]
         assert "name" in editable_fields
         assert "points_possible" in editable_fields
-        assert "published" in editable_fields
+        # published is bool — toggled via JS click, not AG Grid edit mode
+        assert "published" not in editable_fields
 
     def test_pk_columns_not_editable(self, real_db):
         defs = build_column_defs(real_db, "canvas_assignments")
@@ -303,12 +304,14 @@ class TestColumnDefs:
         editable = [d for d in defs if d.get("editable")]
         assert len(editable) == 0
 
-    def test_gh_students_only_excluded_editable(self, real_db):
+    def test_gh_students_excluded_checkbox(self, real_db):
         defs = build_column_defs(real_db, "gh_students")
+        # Bool columns are toggled via JS click, not AG Grid edit mode
         editable = [d for d in defs if d.get("editable")]
-        assert len(editable) == 1
-        assert editable[0]["field"] == "excluded"
-        assert editable[0]["cellEditor"] == "agCheckboxCellEditor"
+        assert len(editable) == 0
+        excl_col = next(d for d in defs if d["field"] == "excluded")
+        assert excl_col.get("cellRenderer") == "agCheckboxCellRenderer"
+        assert excl_col.get("cellEditor") is None
         assert editable[0]["cellRenderer"] == "agCheckboxCellRenderer"
 
     def test_assignment_group_select_editor(self, real_db):

@@ -617,16 +617,18 @@ class TestColumnDefs:
         editable_fields = [c["field"] for c in editable_cols]
         assert "name" in editable_fields
         assert "points_possible" in editable_fields
-        assert "published" in editable_fields
+        # published is bool — toggled via JS click, not AG Grid edit mode
+        assert "published" not in editable_fields
         assert "due_at" in editable_fields
 
         # points_possible should have number editor
         pts_col = next(c for c in editable_cols if c["field"] == "points_possible")
         assert pts_col.get("cellEditor") == "agNumberCellEditor"
 
-        # published should have checkbox editor
-        pub_col = next(c for c in editable_cols if c["field"] == "published")
-        assert pub_col.get("cellEditor") == "agCheckboxCellEditor"
+        # published should have checkbox renderer (no editor — toggled via JS)
+        pub_col = next(c for c in visible if c["field"] == "published")
+        assert pub_col.get("cellRenderer") == "agCheckboxCellRenderer"
+        assert pub_col.get("cellEditor") is None
 
         # due_at is TEXT in schema — editable but no special editor
         due_col = next(c for c in editable_cols if c["field"] == "due_at")
