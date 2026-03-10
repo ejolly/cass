@@ -617,8 +617,7 @@ class TestColumnDefs:
         editable_fields = [c["field"] for c in editable_cols]
         assert "name" in editable_fields
         assert "points_possible" in editable_fields
-        # published is bool — toggled via JS click, not AG Grid edit mode
-        assert "published" not in editable_fields
+        assert "published" in editable_fields
         assert "due_at" in editable_fields
 
         # points_possible should have number editor
