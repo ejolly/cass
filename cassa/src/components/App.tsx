@@ -78,7 +78,7 @@ export function App(props: AppProps) {
       if (key.name === "escape") {
         setActiveModal(null)
         setModalConfirmRef(null)
-      } else if (key.name === "enter" && modalConfirmRef) {
+      } else if (key.name === "return" && modalConfirmRef) {
         modalConfirmRef()
       }
       return
@@ -86,9 +86,11 @@ export function App(props: AppProps) {
 
     // ─── Editing cell: Enter commits, Escape cancels ──────────
     if (editingCell()) {
-      if (key.name === "enter") {
+      if (key.name === "return") {
+        key.preventDefault()
         commitEdit(props.db)
       } else if (key.name === "escape") {
+        key.preventDefault()
         setEditingCell(null)
       }
       return
@@ -118,7 +120,7 @@ export function App(props: AppProps) {
           break
         case "l":
         case "right":
-        case "enter":
+        case "return":
           {
             const table = FLAT_TABLES[sidebarCursor()]
             if (table) {
@@ -170,7 +172,7 @@ export function App(props: AppProps) {
           cycleSortOnCurrentColumn(td)
           break
 
-        case "enter":
+        case "return":
           beginEdit(td)
           break
 
