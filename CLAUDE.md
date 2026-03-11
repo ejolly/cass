@@ -1,12 +1,12 @@
 # CLAUDE.md — cass
 
-CLI grading toolkit for GitHub Classroom and Canvas LMS. TypeScript + Bun runtime. SQLite storage. NiceGUI browser viewer (Python, separate).
+CLI grading toolkit for GitHub Classroom and Canvas LMS. TypeScript + Bun runtime. SQLite storage. Binary: `cassa`.
 
 ## Architecture
 
 CLI (`src/cli/`) is a thin interface over a shared functional core.
 **Never** put business logic, data transforms, queries, or API calls in CLI code.
-Always use existing models (`db/schema.ts`, `apis/*/schema.ts`), operations (`db/`, `apis/`, `actions/`), and catalog metadata (`db/catalog.ts`). No ad-hoc objects, raw SQL in interfaces, or one-off data wrangling — if it doesn't exist in core, add it there first.
+Use existing models (`db/schema.ts`, `apis/*/schema.ts`), operations (`db/`, `apis/`, `actions/`), and catalog metadata (`db/catalog.ts`). If it doesn't exist in core, add it there first.
 
 ```
 CLI (src/cli/)  →  actions/  →  db/     →  SQLite (bun:sqlite)
@@ -29,17 +29,47 @@ bun run build              # compile to dist/cassa
 
 **Always run `bun run lint && bun run typecheck && bun test` before finishing work.**
 
-Binary name: `cassa` (avoids conflict with Python `cass`).
-
 ## Style
 
-- Zod schemas for API response types; TypeScript interfaces for internal types
-- API types: `Canvas`/`GH`-prefixed Zod schemas. Domain types: unprefixed Kysely interfaces
-- Error handling: `process.exit(1)` (fatal), `throw Error` (logic), `consola.error` (display)
+### Functions
+- Top-level: always `function` keyword declarations, never arrow assignments
+- Arrows only for inline callbacks (`.map()`, `.filter()`, `.find()`)
+- All exports are named — no default exports
+- Pure by default: core functions (`db/`, `actions/`, `apis/`) must not call `consola` or do I/O. Accept `onProgress?: ProgressFn` callbacks for reporting
+
+### Data Flow
+- `const` by default; `let` only when reassignment is unavoidable; never `var`
+- Prefer `.map()` / `.filter()` / `.find()` chains over imperative loops
+- `for...of` only for sequential async (rate-limiting) or building Maps
+- Build collections with spread/concat, not `.push()` into mutable arrays (unless accumulating in a sequential loop)
+- Object construction via spread and `Object.fromEntries` — avoid in-place mutation
+
+### Control Flow
+- `ts-pattern` `.match().with().exhaustive()` for discriminated unions — never `.otherwise()` for exhaustive types
+- `switch` for simple string-literal dispatch (e.g., output format)
+- Early `return` for guards; ternary for inline conditionals; no nested if/else ladders
+
+### Types
+- Zod schemas for API responses; `type` = `z.infer<typeof Schema>` (co-located, same name)
+- API types: `Canvas`/`GH`-prefixed Zod schemas
+- `interface` for internal domain/config types
+- `type` for discriminated unions, Kysely row aliases, computed types
+- Generics only where truly needed — no premature abstraction
+
+### Side Effects & State
+- Side effects are layered: DB writes in `db/`, API calls in `apis/`, console output in `cli/` only
+- Errors: `process.exit(1)` (fatal CLI), `throw Error` (logic), `consola.error` (display)
+- Two allowed singletons: `_db` (connection.ts), `_cached` (config.ts) with explicit reset functions. No other module-level mutable state
+
+### Module Organization
+- Barrel `index.ts` re-exports per directory; `export type { ... }` separated from value exports
+- `@/` path alias for cross-module imports
+- Lazy dynamic imports in CLI command handlers for startup performance
+- Section dividers: `// ─── Title ──────────` within files
+
+### Tooling
 - Biome for formatting + linting (2-space indent, 100 char line width)
-- `ts-pattern` `.exhaustive()` for discriminated union dispatch
-- Kysely typed query builder for all DB operations — no raw SQL
-- Lazy dynamic imports where beneficial for startup performance
+- Kysely typed query builder — no raw SQL
 
 ## Key Libraries
 
@@ -61,7 +91,7 @@ Binary name: `cassa` (avoids conflict with Python `cass`).
 ## Gotchas
 
 - Canvas assignment/tab IDs are strings, not ints
-- GitHub Classroom URL `url_id` is the org ID, NOT the classroom API `gh_id` — cannot lookup by `url_id` directly
+- GitHub Classroom `url_id` is the org ID, NOT the classroom API `gh_id` — cannot lookup by `url_id` directly
 - `gh api --paginate` handles auth/pagination/rate-limiting natively — prefer over raw HTTP for GitHub
 - Schema v16: 8 tables, inline `_synced_*` columns (no shadow tables) for diff/revert
 
