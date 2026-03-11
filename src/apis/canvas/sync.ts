@@ -1,9 +1,9 @@
+import type { CanvasSubmission, Database } from "@/db/schema.ts";
 /**
  * Canvas grade push workflow — shared between CLI and viewer.
  */
 import type { KyInstance } from "ky";
 import type { Kysely } from "kysely";
-import type { CanvasSubmission, Database } from "../../db/schema.ts";
 import { waitForProgress } from "./client.ts";
 import { CanvasProgress } from "./schema.ts";
 

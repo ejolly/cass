@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { buildGradePushData, isValidGrade } from "../../../src/apis/canvas/sync.ts";
-import type { CanvasSubmission } from "../../../src/db/schema.ts";
+import { buildGradePushData, isValidGrade } from "@/apis/canvas/sync.ts";
+import type { CanvasSubmission } from "@/db/schema.ts";
 
 /** Helper to create a minimal CanvasSubmission with grade data. */
 function makeSub(

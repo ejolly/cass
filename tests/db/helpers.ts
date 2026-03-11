@@ -1,10 +1,10 @@
+import { createDb } from "@/db/connection.ts";
+import { up } from "@/db/migrations/001_initial.ts";
+import type { Database } from "@/db/schema.ts";
 /**
  * Test helpers — in-memory DB with schema applied.
  */
 import { type Kysely, sql } from "kysely";
-import { up } from "../../migrations/001_initial.ts";
-import { createDb } from "../../src/db/connection.ts";
-import type { Database } from "../../src/db/schema.ts";
 
 /** Create a fresh in-memory DB with the full schema applied. */
 export async function createTestDb(): Promise<Kysely<Database>> {

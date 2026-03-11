@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import type { Database } from "@/db/schema.ts";
 import { type Kysely, sql } from "kysely";
-import type { Database } from "../../src/db/schema.ts";
 import { createTestDb, seedTestData } from "./helpers.ts";
 
 describe("schema & migration", () => {

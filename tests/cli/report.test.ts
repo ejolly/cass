@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { formatCsv, formatMarkdown, formatRows, formatTable } from "../../src/cli/report.ts";
+import { formatCsv, formatMarkdown, formatRows, formatTable } from "@/cli/report.ts";
 
 const rows = [
   { Name: "Alice", Score: 95, Grade: "A" },

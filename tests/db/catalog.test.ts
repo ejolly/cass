@@ -8,7 +8,7 @@ import {
   isEditable,
   isPullGuarded,
   isPushable,
-} from "../../src/db/catalog.ts";
+} from "@/db/catalog.ts";
 
 describe("catalog", () => {
   it("has capabilities for all viewer tables", () => {

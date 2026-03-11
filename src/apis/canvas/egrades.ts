@@ -1,11 +1,11 @@
+import type { Database } from "@/db/schema.ts";
+import { toCsv } from "@/utils/csv.ts";
 /**
  * eGrades CSV generation — UCSD 5-column format.
  * Uses papaparse for CSV output.
  */
 import type { KyInstance } from "ky";
 import type { Kysely } from "kysely";
-import type { Database } from "../../db/schema.ts";
-import { toCsv } from "../../utils/csv.ts";
 import { getPaginated } from "./client.ts";
 import {
   CanvasCourse,

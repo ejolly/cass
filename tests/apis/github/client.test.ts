@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
-import { assignmentsToDB, studentsToDB } from "../../../src/apis/github/classroom.ts";
-import { sanitizeStudentDir } from "../../../src/apis/github/fetch.ts";
-import type { GHAssignmentResponse, GHStudentInfo } from "../../../src/apis/github/schema.ts";
+import { assignmentsToDB, studentsToDB } from "@/apis/github/classroom.ts";
+import { sanitizeStudentDir } from "@/apis/github/fetch.ts";
+import type { GHAssignmentResponse, GHStudentInfo } from "@/apis/github/schema.ts";
 
 describe("GitHub utils", () => {
   describe("sanitizeStudentDir", () => {

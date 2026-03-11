@@ -2,8 +2,8 @@
  * Prerequisite checks — reports config, CLI tools, and auth status.
  */
 import { join } from "node:path";
+import { checkAuth, checkAvailable } from "@/apis/github/client.ts";
 import { match } from "ts-pattern";
-import { checkAuth, checkAvailable } from "../apis/github/client.ts";
 import { type Config, classroomStatus, configFilePath, hasCanvas } from "./config.ts";
 
 export type CheckStatus = "ok" | "warn" | "error";
@@ -66,7 +66,8 @@ async function canvasChecks(cfg: Config): Promise<Check[]> {
 
   const tokenPath = join(cfg.root, ".canvastoken");
   const tokenExists = await Bun.file(tokenPath).exists();
-  const envToken = Boolean(process.env.CANVAS_TOKEN);
+  const { env } = await import("@/env.ts");
+  const envToken = Boolean(env.CANVAS_TOKEN);
 
   const tokenCheck = tokenExists
     ? ok("canvas token", ".canvastoken", 2)

@@ -1,8 +1,8 @@
+import { toCsv, toCsvWithColumns } from "@/utils/csv.ts";
 /**
  * Shared table rendering — cli-table3 tables, CSV, and markdown export.
  */
 import Table from "cli-table3";
-import { toCsv, toCsvWithColumns } from "../utils/csv.ts";
 
 export type OutputFormat = "table" | "csv" | "markdown";
 

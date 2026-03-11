@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { parseSortableName, scoreToLetter } from "../../../src/apis/canvas/egrades.ts";
+import { parseSortableName, scoreToLetter } from "@/apis/canvas/egrades.ts";
 
 describe("egrades", () => {
   const scheme = [

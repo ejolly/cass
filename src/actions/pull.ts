@@ -1,19 +1,14 @@
-/**
- * Pull orchestration — fetches from APIs and updates DB.
- */
-import type { KyInstance } from "ky";
-import type { Kysely } from "kysely";
 import {
   fetchCanvasAssignments,
   fetchCanvasSubmissions,
   fetchStudentsWithSections,
-} from "../apis/canvas/matching.ts";
+} from "@/apis/canvas/matching.ts";
 import {
   assignmentsToDB,
   fetchAllStudents,
   fetchAssignments,
   studentsToDB,
-} from "../apis/github/classroom.ts";
+} from "@/apis/github/classroom.ts";
 import type {
   Database,
   NewAssignment,
@@ -21,8 +16,13 @@ import type {
   NewCanvasSubmission,
   NewGHAssignment,
   NewGHStudent,
-} from "../db/schema.ts";
-import { snapshotAssignmentsSynced, snapshotGradesSynced } from "../db/sync.ts";
+} from "@/db/schema.ts";
+import { snapshotAssignmentsSynced, snapshotGradesSynced } from "@/db/sync.ts";
+/**
+ * Pull orchestration — fetches from APIs and updates DB.
+ */
+import type { KyInstance } from "ky";
+import type { Kysely } from "kysely";
 import type { Config } from "./config.ts";
 import { hasCanvas, hasClassroom } from "./config.ts";
 import { matchStudents, slugMatch, slugify } from "./matching.ts";

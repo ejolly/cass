@@ -3,6 +3,7 @@
  * Replaces ~230 lines of Python (RetryTransport + CanvasClient).
  */
 import { join } from "node:path";
+import { ApiError, ConfigError, NotFoundError } from "@/errors.ts";
 import ky, { type KyInstance, type AfterResponseHook } from "ky";
 import { match } from "ts-pattern";
 import { CanvasProgress } from "./schema.ts";
@@ -113,7 +114,7 @@ export async function waitForProgress(
     const result = match(progress.workflow_state)
       .with("completed", () => ({ done: true as const, progress }))
       .with("failed", () => {
-        throw new Error(`Canvas progress failed: ${progress.message ?? "unknown error"}`);
+        throw new ApiError(`Canvas progress failed: ${progress.message ?? "unknown error"}`);
       })
       .with("queued", "running", () => ({ done: false as const }))
       .exhaustive();
@@ -123,7 +124,7 @@ export async function waitForProgress(
     await Bun.sleep(1000);
   }
 
-  throw new Error(`Canvas progress ${progressId} timed out after ${timeoutMs}ms`);
+  throw new ApiError(`Canvas progress ${progressId} timed out after ${timeoutMs}ms`);
 }
 
 /**
@@ -148,7 +149,7 @@ export async function resolveResource<T extends { id: number; name?: string; tit
   );
 
   if (!byName) {
-    throw new Error(`Could not resolve resource: ${identifier}`);
+    throw new NotFoundError("resource", identifier);
   }
 
   return byName;
@@ -166,10 +167,11 @@ export async function loadCanvasToken(projectRoot: string): Promise<string> {
     if (token) return token;
   }
 
-  const envToken = process.env.CANVAS_TOKEN;
+  const { env } = await import("@/env.ts");
+  const envToken = env.CANVAS_TOKEN;
   if (envToken) return envToken.trim();
 
-  throw new Error(
+  throw new ConfigError(
     "Canvas token not found. Create a .canvastoken file or set CANVAS_TOKEN env var.",
   );
 }

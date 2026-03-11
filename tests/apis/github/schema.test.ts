@@ -5,7 +5,7 @@ import {
   GHCommit,
   GHRosterEntry,
   GHStudentInfo,
-} from "../../../src/apis/github/schema.ts";
+} from "@/apis/github/schema.ts";
 
 describe("GitHub Zod schemas", () => {
   it("parses student info with string coercion for id", () => {
