@@ -114,15 +114,12 @@ Config fields: `slug`, `title`, `org` are populated during classroom resolution 
 - 25 CLI tests (subprocess-based: help, version, status, query, push, revert, backup, delete)
 - Binary name: `cassa` (avoids conflict with Python `cass`)
 
-## Remaining Work
-
-### Phase 6: Testing & Polish
-
-- [ ] Implement `src/db/views.ts` (gradebook matrix pivot) if needed by `query gradebook`
-- [ ] Implement `src/db/cache.ts` (request caching with TTL) if needed
-- [ ] Update `CLAUDE.md` with TS dev instructions
-- [ ] Verify `bun link` / global install for `cassa`
-- [ ] Remove Python files from branch (pyproject.toml, uv.lock, cass/ Python package)
+### Phase 6: Testing & Polish ✅
+- [x] `src/db/views.ts` — not needed; `queryGradebook()` in `queries.ts` handles it
+- [x] `src/db/cache.ts` — not needed; nothing references it
+- [x] Update `CLAUDE.md` with TS dev instructions
+- [x] Verify `bun link` / global install for `cassa` — works (`node_modules/.bin/cassa`; global requires `~/.cache/.bun/bin` in PATH)
+- [x] Remove Python files from branch — removed `cass/{apis,cli,actions,db}`, `pyproject.toml`, `uv.lock`; kept `cass/viewer/` (NiceGUI frontend)
 
 ## Key Design Decisions
 
