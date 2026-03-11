@@ -1,24 +1,13 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { queryAssignments, queryDataset, queryStudents, querySubmissions } from "@/db/queries.ts";
-import type { Database } from "@/db/schema.ts";
-import type { Kysely } from "kysely";
-import { createTestDb, seedTestData } from "./helpers.ts";
+import { useTestDb } from "./helpers.ts";
 
 describe("queries", () => {
-  let db: Kysely<Database>;
-
-  beforeEach(async () => {
-    db = await createTestDb();
-    await seedTestData(db);
-  });
-
-  afterEach(async () => {
-    await db.destroy();
-  });
+  const getDb = useTestDb();
 
   describe("queryStudents", () => {
     it("returns enriched student data with github info", async () => {
-      const rows = await queryStudents(db);
+      const rows = await queryStudents(getDb());
       expect(rows.length).toBe(3);
 
       const alice = rows.find((r) => r.name === "Alice Smith");
@@ -28,7 +17,7 @@ describe("queries", () => {
     });
 
     it("includes students without github accounts", async () => {
-      const rows = await queryStudents(db);
+      const rows = await queryStudents(getDb());
       const charlie = rows.find((r) => r.name === "Charlie Brown");
       expect(charlie).toBeDefined();
       expect(charlie!.github_username).toBeNull();
@@ -37,7 +26,7 @@ describe("queries", () => {
 
   describe("queryAssignments", () => {
     it("returns enriched assignment data", async () => {
-      const rows = await queryAssignments(db);
+      const rows = await queryAssignments(getDb());
       expect(rows.length).toBe(2);
 
       const hw1 = rows.find((r) => r.slug === "hw1");
@@ -50,10 +39,9 @@ describe("queries", () => {
 
   describe("querySubmissions", () => {
     it("returns joined submission data", async () => {
-      const rows = await querySubmissions(db);
+      const rows = await querySubmissions(getDb());
       expect(rows.length).toBeGreaterThan(0);
 
-      // Should have student name and assignment title from JOINs
       const first = rows[0]!;
       expect(first).toHaveProperty("name");
       expect(first).toHaveProperty("title");
@@ -63,27 +51,27 @@ describe("queries", () => {
 
   describe("queryDataset", () => {
     it("dispatches to students", async () => {
-      const rows = await queryDataset(db, "students");
+      const rows = await queryDataset(getDb(), "students");
       expect(rows.length).toBe(3);
     });
 
     it("dispatches to assignments", async () => {
-      const rows = await queryDataset(db, "assignments");
+      const rows = await queryDataset(getDb(), "assignments");
       expect(rows.length).toBe(2);
     });
 
     it("dispatches to submissions", async () => {
-      const rows = await queryDataset(db, "submissions");
+      const rows = await queryDataset(getDb(), "submissions");
       expect(rows.length).toBeGreaterThan(0);
     });
 
     it("supports optional where clause", async () => {
-      const rows = await queryDataset(db, "students", { where: "excluded = 0" });
+      const rows = await queryDataset(getDb(), "students", { where: "excluded = 0" });
       expect(rows.length).toBe(3);
     });
 
     it("supports optional limit", async () => {
-      const rows = await queryDataset(db, "students", { limit: 1 });
+      const rows = await queryDataset(getDb(), "students", { limit: 1 });
       expect(rows.length).toBe(1);
     });
   });

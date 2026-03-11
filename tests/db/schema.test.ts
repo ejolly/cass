@@ -1,21 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import type { Database } from "@/db/schema.ts";
-import { type Kysely, sql } from "kysely";
-import { createTestDb, seedTestData } from "./helpers.ts";
+import { describe, expect, it } from "bun:test";
+import { sql } from "kysely";
+import { seedTestData, useTestDb } from "./helpers.ts";
 
 describe("schema & migration", () => {
-  let db: Kysely<Database>;
-
-  beforeEach(async () => {
-    db = await createTestDb();
-  });
-
-  afterEach(async () => {
-    await db.destroy();
-  });
+  const getDb = useTestDb({ seed: false });
 
   it("creates all 8 tables", async () => {
-    const tables = await db.introspection.getTables();
+    const tables = await getDb().introspection.getTables();
     const tableNames = tables.map((t) => t.name).sort();
     expect(tableNames).toEqual([
       "assignments",
@@ -30,7 +21,7 @@ describe("schema & migration", () => {
   });
 
   it("sets schema_version to 16", async () => {
-    const row = await db
+    const row = await getDb()
       .selectFrom("meta")
       .select("value")
       .where("key", "=", "schema_version")
@@ -40,10 +31,10 @@ describe("schema & migration", () => {
 
   it("inserts and queries students with Canvas-specific fields", async () => {
     await sql`INSERT INTO students (canvas_id, name, sortable_name, login_id) VALUES (1, 'Test User', 'User, Test', 'tuser')`.execute(
-      db,
+      getDb(),
     );
 
-    const student = await db
+    const student = await getDb()
       .selectFrom("students")
       .selectAll()
       .where("canvas_id", "=", 1)
@@ -61,12 +52,12 @@ describe("schema & migration", () => {
 
   it("enforces unique github_username on students", async () => {
     await sql`INSERT INTO students (canvas_id, github_username, name) VALUES (1, 'alice', 'Alice')`.execute(
-      db,
+      getDb(),
     );
 
     expect(
       sql`INSERT INTO students (canvas_id, github_username, name) VALUES (2, 'alice', 'Alice2')`.execute(
-        db,
+        getDb(),
       ),
     ).rejects.toThrow();
   });
@@ -74,28 +65,28 @@ describe("schema & migration", () => {
   it("supports composite primary key on canvas_submissions", async () => {
     const now = Date.now() / 1000;
     await sql`INSERT INTO canvas_submissions (canvas_user_id, canvas_assignment_id, fetched_at) VALUES (1, 1, ${now})`.execute(
-      db,
+      getDb(),
     );
 
     // Same composite key should fail
     expect(
       sql`INSERT INTO canvas_submissions (canvas_user_id, canvas_assignment_id, fetched_at) VALUES (1, 1, ${now})`.execute(
-        db,
+        getDb(),
       ),
     ).rejects.toThrow();
 
     // Different combo should succeed
     await sql`INSERT INTO canvas_submissions (canvas_user_id, canvas_assignment_id, fetched_at) VALUES (1, 2, ${now})`.execute(
-      db,
+      getDb(),
     );
   });
 
   it("canvas_submissions has inline grade and synced columns", async () => {
     const now = Date.now() / 1000;
     await sql`INSERT INTO canvas_submissions (canvas_user_id, canvas_assignment_id, fetched_at, posted_grade, grade_updated_at, _synced_posted_grade)
-			VALUES (1, 1, ${now}, 'A', ${now}, '')`.execute(db);
+			VALUES (1, 1, ${now}, 'A', ${now}, '')`.execute(getDb());
 
-    const sub = await db
+    const sub = await getDb()
       .selectFrom("canvas_submissions")
       .selectAll()
       .where("canvas_user_id", "=", 1)
@@ -108,10 +99,10 @@ describe("schema & migration", () => {
 
   it("canvas_assignments has inline synced columns", async () => {
     await sql`INSERT INTO canvas_assignments (canvas_id, name, _synced_name) VALUES (1, 'HW 1', 'HW 1')`.execute(
-      db,
+      getDb(),
     );
 
-    const assignment = await db
+    const assignment = await getDb()
       .selectFrom("canvas_assignments")
       .selectAll()
       .where("canvas_id", "=", 1)
@@ -123,17 +114,17 @@ describe("schema & migration", () => {
   });
 
   it("seeds test data without errors", async () => {
-    await seedTestData(db);
+    await seedTestData(getDb());
 
-    const studentCount = await db
+    const studentCount = await getDb()
       .selectFrom("students")
-      .select(db.fn.count<number>("canvas_id").as("count"))
+      .select(getDb().fn.count<number>("canvas_id").as("count"))
       .executeTakeFirstOrThrow();
     expect(studentCount.count).toBe(3);
 
-    const ghSubCount = await db
+    const ghSubCount = await getDb()
       .selectFrom("gh_submissions")
-      .select(db.fn.count<number>("github_username").as("count"))
+      .select(getDb().fn.count<number>("github_username").as("count"))
       .executeTakeFirstOrThrow();
     expect(ghSubCount.count).toBe(2);
   });

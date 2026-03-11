@@ -1,9 +1,10 @@
-import { createDb } from "@/db/connection.ts";
-import { up } from "@/db/migrations/001_initial.ts";
-import type { Database } from "@/db/schema.ts";
 /**
  * Test helpers — in-memory DB with schema applied.
  */
+import { afterEach, beforeEach } from "bun:test";
+import { createDb } from "@/db/connection.ts";
+import { up } from "@/db/migrations/001_initial.ts";
+import type { Database } from "@/db/schema.ts";
 import { type Kysely, sql } from "kysely";
 
 /** Create a fresh in-memory DB with the full schema applied. */
@@ -11,6 +12,23 @@ export async function createTestDb(): Promise<Kysely<Database>> {
   const db = createDb(":memory:");
   await up(db as Kysely<unknown>);
   return db;
+}
+
+/**
+ * Sets up beforeEach/afterEach hooks that create a fresh in-memory DB
+ * (optionally seeded) and destroy it after each test.
+ * Returns a getter for the current db instance.
+ */
+export function useTestDb(opts?: { seed?: boolean }): () => Kysely<Database> {
+  let db: Kysely<Database>;
+  beforeEach(async () => {
+    db = await createTestDb();
+    if (opts?.seed !== false) await seedTestData(db);
+  });
+  afterEach(async () => {
+    await db.destroy();
+  });
+  return () => db;
 }
 
 /** Seed minimal test data for common test scenarios. */

@@ -1,26 +1,15 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { getAllRows, getTableColumns, rawQuery, updateCell } from "@/db/introspection.ts";
-import type { Database } from "@/db/schema.ts";
-import type { Kysely } from "kysely";
-import { createTestDb, seedTestData } from "./helpers.ts";
+import { useTestDb } from "./helpers.ts";
 
 describe("introspection", () => {
-  let db: Kysely<Database>;
-
-  beforeEach(async () => {
-    db = await createTestDb();
-    await seedTestData(db);
-  });
-
-  afterEach(async () => {
-    await db.destroy();
-  });
+  const getDb = useTestDb();
 
   describe("updateCell", () => {
     it("updates a single cell by primary key", async () => {
-      await updateCell(db, "students", ["canvas_id"], [100], "name", "Alice Updated");
+      await updateCell(getDb(), "students", ["canvas_id"], [100], "name", "Alice Updated");
 
-      const student = await db
+      const student = await getDb()
         .selectFrom("students")
         .select("name")
         .where("canvas_id", "=", 100)
@@ -30,7 +19,7 @@ describe("introspection", () => {
 
     it("updates with composite primary key (canvas_submissions)", async () => {
       await updateCell(
-        db,
+        getDb(),
         "canvas_submissions",
         ["canvas_user_id", "canvas_assignment_id"],
         [100, 9001],
@@ -38,7 +27,7 @@ describe("introspection", () => {
         "10",
       );
 
-      const sub = await db
+      const sub = await getDb()
         .selectFrom("canvas_submissions")
         .select("posted_grade")
         .where("canvas_user_id", "=", 100)
@@ -50,21 +39,21 @@ describe("introspection", () => {
 
   describe("rawQuery", () => {
     it("executes arbitrary SQL", async () => {
-      const rows = await rawQuery(db, "SELECT count(*) as n FROM students");
+      const rows = await rawQuery(getDb(), "SELECT count(*) as n FROM students");
       expect(rows[0]!.n).toBe(3);
     });
   });
 
   describe("getAllRows", () => {
     it("returns all rows from a table", async () => {
-      const rows = await getAllRows(db, "students");
+      const rows = await getAllRows(getDb(), "students");
       expect(rows.length).toBe(3);
     });
   });
 
   describe("getTableColumns", () => {
     it("returns column metadata for students (includes Canvas fields)", async () => {
-      const columns = await getTableColumns(db, "students");
+      const columns = await getTableColumns(getDb(), "students");
       const names = columns.map((c) => c.name);
       expect(names).toContain("canvas_id");
       expect(names).toContain("github_username");
@@ -78,7 +67,7 @@ describe("introspection", () => {
     });
 
     it("returns column metadata for canvas_submissions (includes grade + synced)", async () => {
-      const columns = await getTableColumns(db, "canvas_submissions");
+      const columns = await getTableColumns(getDb(), "canvas_submissions");
       const names = columns.map((c) => c.name);
       expect(names).toContain("posted_grade");
       expect(names).toContain("grade_updated_at");
