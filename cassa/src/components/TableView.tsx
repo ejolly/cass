@@ -1,30 +1,40 @@
 /**
- * TableView — data table display using TextTableRenderable.
+ * TableView — data table display using box + text layout.
  */
 import type { Kysely } from "kysely"
 import type { Database } from "@cass/db/schema.ts"
-import { type TextChunk, RGBA, TextTableRenderable } from "@opentui/core"
-import type { TextTableContent, TextTableCellContent } from "@opentui/core"
-import { extend } from "@opentui/solid"
-import { createResource, createMemo } from "solid-js"
+import { createResource, createMemo, For, Show } from "solid-js"
 import { activeTable, searchQuery } from "../state.ts"
 import { getVisibleColumns, getDisplayHeader } from "../catalog.ts"
 import { getAllRows, getTableColumns } from "@cass/db/introspection.ts"
-
-// Register TextTable as a JSX element
-extend({ text_table: TextTableRenderable })
 
 interface TableViewProps {
   db: Kysely<Database>
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────
+// ─── Constants ──────────────────────────────────────────────────────
 
-const HEADER_FG = RGBA.fromHex("#7aa2f7")
-const CELL_FG = RGBA.fromHex("#c0caf5")
+const HEADER_FG = "#7aa2f7"
+const CELL_FG = "#c0caf5"
+const BORDER_COLOR = "#414868"
+const MAX_COL_WIDTH = 40
+const MIN_COL_WIDTH = 6
 
-function cell(s: string, fg?: RGBA): TextTableCellContent {
-  return [{ __isChunk: true, text: s, fg: fg ?? CELL_FG } as TextChunk]
+// ─── Helpers ────────────────────────────────────────────────────────
+
+function truncate(s: string, maxLen: number): string {
+  return s.length > maxLen ? `${s.slice(0, maxLen - 1)}…` : s
+}
+
+interface TableColumn {
+  key: string
+  header: string
+  width: number
+}
+
+interface TableData {
+  cols: TableColumn[]
+  rows: Record<string, unknown>[]
 }
 
 export function TableView(props: TableViewProps) {
@@ -52,41 +62,75 @@ export function TableView(props: TableViewProps) {
     const q = searchQuery().toLowerCase()
     if (!q) return data.rows
     return data.rows.filter((row) =>
-      Object.values(row).some((v) =>
-        String(v ?? "").toLowerCase().includes(q)
-      )
+      Object.values(row).some((v) => String(v ?? "").toLowerCase().includes(q))
     )
   })
 
-  // Build TextTableContent: header row + data rows
-  const content = createMemo<TextTableContent>(() => {
-    const cols = columns()
+  // Compute table layout: columns with headers + widths, filtered rows
+  const table = createMemo<TableData | undefined>(() => {
+    const colKeys = columns()
     const rows = filteredRows()
-    if (cols.length === 0) return []
+    if (colKeys.length === 0) return undefined
 
-    const table = activeTable()
-    const headerRow: TextTableCellContent[] = cols.map((c) =>
-      cell(getDisplayHeader(table, c), HEADER_FG)
-    )
+    const tbl = activeTable()
+    const cols: TableColumn[] = colKeys.map((key) => {
+      const header = getDisplayHeader(tbl, key)
+      const maxCell = rows.reduce((max, row) => {
+        const len = String(row[key] ?? "").length
+        return len > max ? len : max
+      }, 0)
+      const width = Math.min(Math.max(Math.max(header.length, maxCell) + 2, MIN_COL_WIDTH), MAX_COL_WIDTH)
+      return { key, header, width }
+    })
 
-    const dataRows: TextTableCellContent[][] = rows.map((row) =>
-      cols.map((c) => cell(String(row[c] ?? "")))
-    )
-
-    return [headerRow, ...dataRows]
+    return { cols, rows }
   })
 
   return (
     <scrollbox flexGrow={1} focused>
-      <text_table
-        content={content()}
-        border
-        columnWidthMode="full"
-        columnFitter="balanced"
-        cellPadding={1}
-        borderColor="#414868"
-        fg="#c0caf5"
-      />
+      <Show when={table()}>
+        {(t: () => TableData) => (
+          <box flexDirection="column">
+            {/* Header row */}
+            <box flexDirection="row">
+              <For each={t().cols}>
+                {(col) => (
+                  <box width={col.width} paddingX={1}>
+                    <text fg={HEADER_FG}>
+                      <strong>{truncate(col.header, col.width - 2)}</strong>
+                    </text>
+                  </box>
+                )}
+              </For>
+            </box>
+            {/* Separator */}
+            <box height={1}>
+              <text fg={BORDER_COLOR}>
+                {"─".repeat(t().cols.reduce((sum, c) => sum + c.width, 0))}
+              </text>
+            </box>
+            {/* Data rows */}
+            <For each={t().rows}>
+              {(row, rowIdx) => (
+                <box
+                  flexDirection="row"
+                  backgroundColor={rowIdx() % 2 === 1 ? "#1a1b26" : undefined}
+                >
+                  <For each={t().cols}>
+                    {(col) => (
+                      <box width={col.width} paddingX={1}>
+                        <text fg={CELL_FG}>
+                          {truncate(String(row[col.key] ?? ""), col.width - 2)}
+                        </text>
+                      </box>
+                    )}
+                  </For>
+                </box>
+              )}
+            </For>
+          </box>
+        )}
+      </Show>
     </scrollbox>
   )
 }
