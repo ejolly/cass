@@ -47,7 +47,7 @@ export function StatusBar(props: StatusBarProps) {
         when={toast()}
         fallback={
           <text fg="#414868">
-            q:quit Tab:panel /:search s:sort Enter:edit
+            ?:help q:quit Tab:panel /:search s:sort Enter:edit
           </text>
         }
       >

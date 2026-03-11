@@ -49,7 +49,7 @@ export { editingCell, setEditingCell }
 
 // ─── Modals ──────────────────────────────────────────────────────────
 
-export type ModalType = "push" | "revert" | "pull" | null
+export type ModalType = "push" | "revert" | "pull" | "help" | null
 const [activeModal, setActiveModal] = createSignal<ModalType>(null)
 export { activeModal, setActiveModal }
 

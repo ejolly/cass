@@ -31,6 +31,7 @@ import { StatusBar } from "./StatusBar.tsx"
 import { PushModal } from "./modals/PushModal.tsx"
 import { RevertModal } from "./modals/RevertModal.tsx"
 import { PullModal } from "./modals/PullModal.tsx"
+import { HelpModal } from "./modals/HelpModal.tsx"
 import { exportCsv } from "../export.ts"
 
 export interface AppProps {
@@ -97,6 +98,11 @@ export function App(props: AppProps) {
     }
 
     // ─── Global keys ─────────────────────────────────────────
+    if (key.sequence === "?") {
+      setActiveModal("help")
+      return
+    }
+
     switch (key.name) {
       case "q":
         renderer.destroy()
@@ -235,6 +241,9 @@ export function App(props: AppProps) {
           canvasClient={props.canvasClient}
           config={props.config!}
         />
+      </Show>
+      <Show when={activeModal() === "help"}>
+        <HelpModal />
       </Show>
     </box>
   )
