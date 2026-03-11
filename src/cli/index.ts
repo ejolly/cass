@@ -13,9 +13,11 @@ import { register as query } from "./commands/query.ts";
 import { register as restore } from "./commands/restore.ts";
 import { register as revert } from "./commands/revert.ts";
 import { register as status } from "./commands/status.ts";
+import { register as view } from "./commands/view.ts";
 
 export function registerRootCommands(cli: CAC): void {
   status(cli);
+  view(cli);
   init(cli);
   pull(cli);
   push(cli);

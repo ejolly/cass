@@ -28,6 +28,7 @@
     "ts-pattern": "^5",
     "zod": "^3"
   },
+  "workspaces": ["cassa"],
   "devDependencies": {
     "@biomejs/biome": "^1",
     "@types/bun": "^1",
