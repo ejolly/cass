@@ -50,6 +50,7 @@ export async function querySubmissions(db: Kysely<Database>, opts: QueryOptions 
 			"cs.canvas_assignment_id",
 			"cs.submitted",
 			"cs.score",
+			"cs.posted_grade",
 			"cs.late",
 			"cs.workflow_state",
 			"cs.submitted_at",
@@ -76,13 +77,13 @@ export function queryDataset(
 		.exhaustive() as Promise<Record<string, unknown>[]>;
 }
 
-/** Gradebook — placeholder for the matrix pivot view. */
+/** Gradebook — score + posted_grade from canvas_submissions (no join to grades needed). */
 export async function queryGradebook(db: Kysely<Database>, opts: QueryOptions = {}) {
 	let query = db
 		.selectFrom("canvas_submissions as cs")
 		.innerJoin("students as s", "s.canvas_id", "cs.canvas_user_id")
 		.innerJoin("assignments as a", "a.canvas_assignment_id", "cs.canvas_assignment_id")
-		.select(["s.name", "a.title", "cs.score"]);
+		.select(["s.name", "a.title", "cs.score", "cs.posted_grade"]);
 
 	if (opts.where) query = query.where(sql.raw<SqlBool>(opts.where));
 	if (opts.order) query = query.orderBy(sql.raw(opts.order));

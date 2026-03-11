@@ -1,5 +1,8 @@
 /**
- * Initial schema — matches Python cass SQLite schema v15.
+ * Initial schema v16 — simplified from v15:
+ *   - Merged canvas_grades into canvas_submissions
+ *   - Merged canvas_students into students
+ *   - Replaced shadow tables with inline _synced_* columns
  */
 import type { Kysely } from "kysely";
 import { sql } from "kysely";
@@ -14,16 +17,20 @@ export async function up(db: Kysely<unknown>): Promise<void> {
 
 	await db
 		.insertInto("meta" as never)
-		.values({ key: "schema_version", value: "15" } as never)
+		.values({ key: "schema_version", value: "16" } as never)
 		.execute();
 
-	// Students (master)
+	// Students (master — includes Canvas-specific fields)
 	await db.schema
 		.createTable("students")
 		.addColumn("canvas_id", "integer", (col) => col.primaryKey())
 		.addColumn("github_username", "text", (col) => col.unique())
 		.addColumn("name", "text", (col) => col.notNull().defaultTo(""))
+		.addColumn("sortable_name", "text", (col) => col.notNull().defaultTo(""))
 		.addColumn("email", "text", (col) => col.notNull().defaultTo(""))
+		.addColumn("login_id", "text", (col) => col.notNull().defaultTo(""))
+		.addColumn("sis_user_id", "text", (col) => col.notNull().defaultTo(""))
+		.addColumn("sis_section_id", "text", (col) => col.notNull().defaultTo(""))
 		.addColumn("excluded", "integer", (col) => col.notNull().defaultTo(0))
 		.execute();
 
@@ -38,19 +45,7 @@ export async function up(db: Kysely<unknown>): Promise<void> {
 		.addColumn("deadline", "text")
 		.execute();
 
-	// Canvas students
-	await db.schema
-		.createTable("canvas_students")
-		.addColumn("canvas_id", "integer", (col) => col.primaryKey())
-		.addColumn("name", "text", (col) => col.notNull())
-		.addColumn("sortable_name", "text", (col) => col.notNull().defaultTo(""))
-		.addColumn("email", "text", (col) => col.notNull().defaultTo(""))
-		.addColumn("login_id", "text", (col) => col.notNull().defaultTo(""))
-		.addColumn("sis_user_id", "text", (col) => col.notNull().defaultTo(""))
-		.addColumn("sis_section_id", "text", (col) => col.notNull().defaultTo(""))
-		.execute();
-
-	// Canvas assignments
+	// Canvas assignments (with inline synced columns)
 	await db.schema
 		.createTable("canvas_assignments")
 		.addColumn("canvas_id", "integer", (col) => col.primaryKey())
@@ -60,9 +55,13 @@ export async function up(db: Kysely<unknown>): Promise<void> {
 		.addColumn("published", "integer", (col) => col.notNull().defaultTo(0))
 		.addColumn("assignment_group", "text", (col) => col.notNull().defaultTo(""))
 		.addColumn("post_manually", "integer", (col) => col.notNull().defaultTo(0))
+		.addColumn("_synced_name", "text", (col) => col.notNull().defaultTo(""))
+		.addColumn("_synced_points_possible", "real", (col) => col.notNull().defaultTo(0))
+		.addColumn("_synced_due_at", "text")
+		.addColumn("_synced_published", "integer", (col) => col.notNull().defaultTo(0))
 		.execute();
 
-	// Canvas submissions
+	// Canvas submissions (merged with grades, inline synced column)
 	await db.schema
 		.createTable("canvas_submissions")
 		.addColumn("canvas_user_id", "integer", (col) => col.notNull())
@@ -74,53 +73,16 @@ export async function up(db: Kysely<unknown>): Promise<void> {
 		.addColumn("score", "real")
 		.addColumn("workflow_state", "text", (col) => col.notNull().defaultTo(""))
 		.addColumn("fetched_at", "real", (col) => col.notNull())
+		// Grade fields (merged from canvas_grades)
+		.addColumn("posted_grade", "text", (col) => col.notNull().defaultTo(""))
+		.addColumn("grade_updated_at", "real", (col) => col.notNull().defaultTo(0))
+		// Inline synced baseline
+		.addColumn("_synced_posted_grade", "text", (col) => col.notNull().defaultTo(""))
 		.execute();
 
 	await db.schema
 		.createIndex("canvas_submissions_pk")
 		.on("canvas_submissions")
-		.columns(["canvas_user_id", "canvas_assignment_id"])
-		.unique()
-		.execute();
-
-	// Canvas grades
-	await db.schema
-		.createTable("canvas_grades")
-		.addColumn("canvas_user_id", "integer", (col) => col.notNull())
-		.addColumn("canvas_assignment_id", "integer", (col) => col.notNull())
-		.addColumn("score", "real")
-		.addColumn("posted_grade", "text", (col) => col.notNull().defaultTo(""))
-		.addColumn("updated_at", "real", (col) => col.notNull())
-		.execute();
-
-	await db.schema
-		.createIndex("canvas_grades_pk")
-		.on("canvas_grades")
-		.columns(["canvas_user_id", "canvas_assignment_id"])
-		.unique()
-		.execute();
-
-	// Shadow: canvas assignments synced
-	await db.schema
-		.createTable("_canvas_assignments_synced")
-		.addColumn("canvas_id", "integer", (col) => col.primaryKey())
-		.addColumn("name", "text", (col) => col.notNull())
-		.addColumn("points_possible", "real", (col) => col.notNull().defaultTo(0))
-		.addColumn("due_at", "text")
-		.addColumn("published", "integer", (col) => col.notNull().defaultTo(0))
-		.execute();
-
-	// Shadow: canvas grades synced
-	await db.schema
-		.createTable("_canvas_grades_synced")
-		.addColumn("canvas_user_id", "integer", (col) => col.notNull())
-		.addColumn("canvas_assignment_id", "integer", (col) => col.notNull())
-		.addColumn("posted_grade", "text", (col) => col.notNull().defaultTo(""))
-		.execute();
-
-	await db.schema
-		.createIndex("canvas_grades_synced_pk")
-		.on("_canvas_grades_synced")
 		.columns(["canvas_user_id", "canvas_assignment_id"])
 		.unique()
 		.execute();
@@ -192,12 +154,8 @@ export async function down(db: Kysely<unknown>): Promise<void> {
 		"gh_submissions",
 		"gh_assignments",
 		"gh_students",
-		"_canvas_grades_synced",
-		"_canvas_assignments_synced",
-		"canvas_grades",
 		"canvas_submissions",
 		"canvas_assignments",
-		"canvas_students",
 		"assignments",
 		"students",
 		"meta",

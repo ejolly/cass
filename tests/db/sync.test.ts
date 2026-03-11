@@ -4,8 +4,10 @@ import type { Database } from "../../src/db/schema.ts";
 import {
 	getPendingAssignmentChanges,
 	getPendingGradeChanges,
-	snapshotCanvasAssignmentsSynced,
-	snapshotCanvasGradesSynced,
+	revertAssignments,
+	revertGrades,
+	snapshotAssignmentsSynced,
+	snapshotGradesSynced,
 } from "../../src/db/sync.ts";
 import { createTestDb, seedTestData } from "./helpers.ts";
 
@@ -21,40 +23,47 @@ describe("sync", () => {
 		await db.destroy();
 	});
 
-	describe("snapshotCanvasGradesSynced", () => {
-		it("copies current grades to synced table", async () => {
-			await snapshotCanvasGradesSynced(db);
+	describe("snapshotGradesSynced", () => {
+		it("copies posted_grade to _synced_posted_grade for all rows", async () => {
+			await snapshotGradesSynced(db);
 
-			const synced = await db.selectFrom("_canvas_grades_synced").selectAll().execute();
+			const rows = await db
+				.selectFrom("canvas_submissions")
+				.select(["posted_grade", "_synced_posted_grade"])
+				.execute();
 
-			// Should have all grades from canvas_grades
-			expect(synced.length).toBe(2);
+			for (const row of rows) {
+				expect(row._synced_posted_grade).toBe(row.posted_grade);
+			}
 		});
 	});
 
-	describe("snapshotCanvasAssignmentsSynced", () => {
-		it("copies current assignments to synced table", async () => {
-			await snapshotCanvasAssignmentsSynced(db);
+	describe("snapshotAssignmentsSynced", () => {
+		it("copies working values to _synced_* columns", async () => {
+			await snapshotAssignmentsSynced(db);
 
-			const synced = await db.selectFrom("_canvas_assignments_synced").selectAll().execute();
+			const rows = await db.selectFrom("canvas_assignments").selectAll().execute();
 
-			expect(synced.length).toBe(2);
+			for (const row of rows) {
+				expect(row._synced_name).toBe(row.name);
+				expect(row._synced_points_possible).toBe(row.points_possible);
+				expect(row._synced_due_at).toBe(row.due_at);
+				expect(row._synced_published).toBe(row.published);
+			}
 		});
 	});
 
 	describe("getPendingGradeChanges", () => {
 		it("returns empty when grades match synced", async () => {
-			// Snapshot so everything is synced
-			await snapshotCanvasGradesSynced(db);
+			await snapshotGradesSynced(db);
 			const pending = await getPendingGradeChanges(db);
 			expect(pending.length).toBe(0);
 		});
 
 		it("detects changed posted_grade", async () => {
-			// Change a grade after syncing
-			await snapshotCanvasGradesSynced(db);
+			await snapshotGradesSynced(db);
 			await db
-				.updateTable("canvas_grades")
+				.updateTable("canvas_submissions")
 				.set({ posted_grade: "10" })
 				.where("canvas_user_id", "=", 100)
 				.where("canvas_assignment_id", "=", 9001)
@@ -66,10 +75,8 @@ describe("sync", () => {
 			expect(pending[0]!.posted_grade).toBe("10");
 		});
 
-		it("detects new grades not yet synced", async () => {
-			// Bob's grade for hw1 is in canvas_grades but user_id 200 grade for 9001
-			// was already seeded. Snapshot only has user 100.
-			// So user 200 should show as pending.
+		it("detects grades not yet synced (synced differs from working)", async () => {
+			// Seed data: user 200 has posted_grade='9' but _synced_posted_grade=''
 			const pending = await getPendingGradeChanges(db);
 			expect(pending.length).toBe(1);
 			expect(pending[0]!.canvas_user_id).toBe(200);
@@ -77,17 +84,98 @@ describe("sync", () => {
 	});
 
 	describe("getPendingAssignmentChanges", () => {
-		it("detects new assignments not yet synced", async () => {
-			// hw2 (canvas_id 9002) was not seeded into synced table
+		it("detects unsynced assignments (synced columns differ)", async () => {
+			// hw2 (canvas_id 9002) has _synced_name='' but name='Homework 2'
 			const pending = await getPendingAssignmentChanges(db);
 			expect(pending.length).toBe(1);
 			expect(pending[0]!.canvas_id).toBe(9002);
 		});
 
 		it("returns empty when all synced", async () => {
-			await snapshotCanvasAssignmentsSynced(db);
+			await snapshotAssignmentsSynced(db);
 			const pending = await getPendingAssignmentChanges(db);
 			expect(pending.length).toBe(0);
+		});
+
+		it("detects changed name", async () => {
+			await snapshotAssignmentsSynced(db);
+			await db
+				.updateTable("canvas_assignments")
+				.set({ name: "Renamed HW" })
+				.where("canvas_id", "=", 9001)
+				.execute();
+
+			const pending = await getPendingAssignmentChanges(db);
+			expect(pending.length).toBe(1);
+			expect(pending[0]!.name).toBe("Renamed HW");
+		});
+
+		it("detects changed due_at (nullable)", async () => {
+			await snapshotAssignmentsSynced(db);
+			await db
+				.updateTable("canvas_assignments")
+				.set({ due_at: "2026-03-01T23:59:00Z" })
+				.where("canvas_id", "=", 9001)
+				.execute();
+
+			const pending = await getPendingAssignmentChanges(db);
+			expect(pending.length).toBe(1);
+		});
+	});
+
+	describe("revertGrades", () => {
+		it("restores posted_grade from synced baseline", async () => {
+			await snapshotGradesSynced(db);
+			await db
+				.updateTable("canvas_submissions")
+				.set({ posted_grade: "CHANGED" })
+				.where("canvas_user_id", "=", 100)
+				.execute();
+
+			const count = await revertGrades(db);
+			expect(count).toBe(1);
+
+			const row = await db
+				.selectFrom("canvas_submissions")
+				.select("posted_grade")
+				.where("canvas_user_id", "=", 100)
+				.where("canvas_assignment_id", "=", 9001)
+				.executeTakeFirstOrThrow();
+			expect(row.posted_grade).toBe("8");
+		});
+
+		it("returns 0 when nothing to revert", async () => {
+			await snapshotGradesSynced(db);
+			const count = await revertGrades(db);
+			expect(count).toBe(0);
+		});
+	});
+
+	describe("revertAssignments", () => {
+		it("restores assignment fields from synced baseline", async () => {
+			await snapshotAssignmentsSynced(db);
+			await db
+				.updateTable("canvas_assignments")
+				.set({ name: "CHANGED", published: 0 })
+				.where("canvas_id", "=", 9001)
+				.execute();
+
+			const count = await revertAssignments(db);
+			expect(count).toBe(1);
+
+			const row = await db
+				.selectFrom("canvas_assignments")
+				.select(["name", "published"])
+				.where("canvas_id", "=", 9001)
+				.executeTakeFirstOrThrow();
+			expect(row.name).toBe("Homework 1");
+			expect(row.published).toBe(1);
+		});
+
+		it("returns 0 when nothing to revert", async () => {
+			await snapshotAssignmentsSynced(db);
+			const count = await revertAssignments(db);
+			expect(count).toBe(0);
 		});
 	});
 });

@@ -27,14 +27,14 @@ Full rewrite of cass (excluding viewer) from Python to TypeScript, using Bun as 
 
 ### Phase 0+1: Scaffolding + Database Layer ✅
 - Bun project with tsconfig (strict, ESNext, bundler resolution), biome, package.json scripts
-- `src/db/schema.ts` — Kysely `Database` interface, 12 table types, Selectable/Insertable/Updateable aliases
+- `src/db/schema.ts` — Kysely `Database` interface, 8 tables (simplified from 12), Selectable/Insertable/Updateable aliases
 - `src/db/connection.ts` — lazy singleton, `createDb`, `getDb`, `closeDb`, `dbPath`
 - `src/db/catalog.ts` — `TABLE_CAPABILITIES` record, `CANVAS_PUSHABLE`, helper functions
 - `src/db/queries.ts` — typed queries with ts-pattern `.exhaustive()` dataset dispatch
-- `src/db/sync.ts` — shadow table snapshot/diff/revert via Kysely typed writes
+- `src/db/sync.ts` — inline `_synced_*` column diff/revert (no shadow tables)
 - `src/db/introspection.ts` — dynamic `updateTable`, `rawQuery`, `getTableColumns`
-- `migrations/001_initial.ts` — schema v15
-- Tests for all db modules (96 tests passing)
+- `migrations/001_initial.ts` — schema v16
+- Tests for all db modules (106 tests passing)
 
 ### Phase 2+3: Zod Schemas + API Clients ✅
 - `src/apis/canvas/schema.ts` — 20+ Canvas zod schemas with transforms
@@ -62,13 +62,23 @@ Full rewrite of cass (excluding viewer) from Python to TypeScript, using Bun as 
 - Removed stale `motherduckDb` / `[database]` config section
 - Fixed variable shadowing, dynamic imports, directory detection issues
 
+### Schema Simplification (v15 → v16) ✅
+- **Merged `canvas_grades` into `canvas_submissions`** — added `posted_grade`, `grade_updated_at` columns; eliminated separate grades table
+- **Merged `canvas_students` into `students`** — added `sortable_name`, `login_id`, `sis_user_id`, `sis_section_id` columns; one master student table
+- **Replaced shadow tables with inline `_synced_*` columns** — `_synced_posted_grade` on `canvas_submissions`, `_synced_name`/`_synced_points_possible`/`_synced_due_at`/`_synced_published` on `canvas_assignments`
+- Eliminated 4 tables: `canvas_grades`, `canvas_students`, `_canvas_grades_synced`, `_canvas_assignments_synced`
+- Snapshot = `UPDATE SET _synced_x = x` (was DELETE ALL + INSERT SELECT)
+- Diff = `WHERE x != _synced_x` (was LEFT JOIN across tables)
+- Revert = `UPDATE SET x = _synced_x` (was DELETE ALL + INSERT SELECT)
+
 ### Shared Utilities
 - `src/utils/paths.ts` — `findProjectRoot` (async, walks up looking for `cass.toml`)
 - `src/utils/csv.ts` — thin papaparse wrappers (`parseCsv`, `toCsv`, `toCsvWithColumns`)
 
 ## Current State
 
-- **96 tests passing**, lint clean, typecheck clean
+- **106 tests passing**, lint clean, typecheck clean
+- Schema v16: 8 tables (down from 12), no shadow tables
 - `src/cli/` is empty — Phase 5 not started
 - `src/index.ts` (CLI entry point) does not exist yet
 - `src/db/views.ts` (gradebook matrix pivot) and `src/db/cache.ts` (request caching) not yet implemented
@@ -138,6 +148,8 @@ Config fields: `slug`, `title`, `org` are populated during classroom resolution 
 2. **kysely over drizzle** — typed query builder handles both static CRUD and dynamic WHERE/ORDER/table names without escape hatches
 3. **ts-pattern** — exhaustive dispatch for dataset routing, config state machine, push results, Canvas progress polling
 4. **Clean DB break** — no backward compat with Python `cass.db`; users re-run `cass pull`
+11. **Inline sync tracking** — `_synced_*` columns instead of shadow tables; simpler snapshot/diff/revert with no JOINs
+12. **Merged tables** — `canvas_grades` → `canvas_submissions`, `canvas_students` → `students`; 8 tables instead of 12
 5. **Config compatibility** — same `cass.toml` format, Zod-validated on load
 6. **Bun natives** — Bun.$ (shell), Bun.file/write (I/O), bun:sqlite (DB), bun:test (tests)
 7. **consola + cli-table3 + @clack/prompts** — logs/spinners, dense tables, interactive input

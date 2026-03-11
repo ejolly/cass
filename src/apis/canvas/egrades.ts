@@ -86,7 +86,7 @@ export async function generateEgrades(
 
 	// 4. Get local student data
 	const students = await db
-		.selectFrom("canvas_students")
+		.selectFrom("students")
 		.select(["canvas_id", "sortable_name", "sis_user_id", "sis_section_id"])
 		.where("sis_user_id", "!=", "")
 		.execute();

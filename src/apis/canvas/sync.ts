@@ -3,7 +3,7 @@
  */
 import type { KyInstance } from "ky";
 import type { Kysely } from "kysely";
-import type { CanvasGrade, Database } from "../../db/schema.ts";
+import type { CanvasSubmission, Database } from "../../db/schema.ts";
 import { waitForProgress } from "./client.ts";
 import { CanvasProgress } from "./schema.ts";
 
@@ -17,21 +17,21 @@ export function isValidGrade(grade: string | null | undefined): boolean {
 /** assignment_id -> { user_id -> grade_string } */
 export type GradeData = Record<string, Record<string, string>>;
 
-/** Convert pending grade rows to push data, filtering invalid grades. */
-export function buildGradePushData(grades: CanvasGrade[]): [GradeData, number] {
+/** Convert pending submission rows (with grade changes) to push data, filtering invalid grades. */
+export function buildGradePushData(submissions: CanvasSubmission[]): [GradeData, number] {
 	const data: GradeData = {};
 	let skipped = 0;
 
-	for (const g of grades) {
-		if (!isValidGrade(g.posted_grade)) {
+	for (const s of submissions) {
+		if (!isValidGrade(s.posted_grade)) {
 			skipped++;
 			continue;
 		}
-		const aidKey = String(g.canvas_assignment_id);
+		const aidKey = String(s.canvas_assignment_id);
 		if (!data[aidKey]) {
 			data[aidKey] = {};
 		}
-		data[aidKey]![String(g.canvas_user_id)] = g.posted_grade;
+		data[aidKey]![String(s.canvas_user_id)] = s.posted_grade;
 	}
 
 	return [data, skipped];

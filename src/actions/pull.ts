@@ -18,13 +18,11 @@ import type {
 	Database,
 	NewAssignment,
 	NewCanvasAssignment,
-	NewCanvasStudent,
 	NewCanvasSubmission,
 	NewGHAssignment,
 	NewGHStudent,
-	NewStudent,
 } from "../db/schema.ts";
-import { snapshotCanvasAssignmentsSynced, snapshotCanvasGradesSynced } from "../db/sync.ts";
+import { snapshotAssignmentsSynced, snapshotGradesSynced } from "../db/sync.ts";
 import type { Config } from "./config.ts";
 import { hasCanvas, hasClassroom } from "./config.ts";
 import { matchStudents, slugMatch, slugify } from "./matching.ts";
@@ -74,21 +72,14 @@ export async function pullStudents(
 	cfg: Config,
 	onProgress?: ProgressFn,
 ): Promise<void> {
-	// Canvas students
+	// Canvas students → directly into students table (master)
 	if (canvasClient && hasCanvas(cfg)) {
 		onProgress?.("students", "Fetching Canvas students...");
 		const [students] = await fetchStudentsWithSections(canvasClient, cfg.canvasCourseId);
 
-		const rows: NewCanvasStudent[] = students.map((s) => ({
-			canvas_id: s.canvas_id,
-			name: s.name,
-			sortable_name: s.sortable_name,
-			email: s.email,
-			login_id: s.login_id,
-			sis_user_id: s.sis_user_id,
-			sis_section_id: s.sis_section_id,
-		}));
-		await batchUpsert(db, "canvas_students", rows, ["canvas_id"]);
+		await batchUpsert(db, "students", students as unknown as Record<string, unknown>[], [
+			"canvas_id",
+		]);
 		onProgress?.("students", `Saved ${students.length} Canvas students`);
 	}
 
@@ -106,12 +97,12 @@ export async function pullStudents(
 		await batchUpsert(db, "gh_students", ghRows, ["github_username"]);
 		onProgress?.("students", `Saved ${ghRows.length} GitHub students`);
 
-		// Auto-match
+		// Auto-match: update github_username on master students
 		if (canvasClient && hasCanvas(cfg)) {
-			const canvasStudents = await db.selectFrom("canvas_students").selectAll().execute();
+			const masterStudents = await db.selectFrom("students").selectAll().execute();
 			const { matched } = matchStudents(
 				ghStudents,
-				canvasStudents.map((s) => ({
+				masterStudents.map((s) => ({
 					id: s.canvas_id,
 					name: s.name,
 					sortable_name: s.sortable_name,
@@ -121,20 +112,14 @@ export async function pullStudents(
 				})),
 			);
 
-			// Build reverse lookup: canvasId → ghLogin
-			const canvasIdToGhLogin = new Map<number, string>();
+			// Update github_username on matched students
 			for (const [ghLogin, canvasId] of matched.entries()) {
-				canvasIdToGhLogin.set(canvasId, ghLogin);
+				await db
+					.updateTable("students")
+					.set({ github_username: ghLogin })
+					.where("canvas_id", "=", canvasId)
+					.execute();
 			}
-
-			// Upsert master students
-			const studentRows: NewStudent[] = canvasStudents.map((cs) => ({
-				canvas_id: cs.canvas_id,
-				github_username: canvasIdToGhLogin.get(cs.canvas_id) ?? null,
-				name: cs.name,
-				email: cs.email,
-			}));
-			await batchUpsert(db, "students", studentRows, ["canvas_id"]);
 			onProgress?.("students", `Matched ${matched.size} students`);
 		}
 	}
@@ -226,17 +211,17 @@ export async function pullAssignments(
 	onProgress?.("assignments", `Merged ${masterAssignments.length} master assignments`);
 }
 
-/** Pull submissions from Canvas + GitHub. */
+/** Pull submissions from Canvas. */
 export async function pullSubmissions(
 	db: Kysely<Database>,
 	canvasClient: KyInstance | null,
 	cfg: Config,
 	onProgress?: ProgressFn,
 ): Promise<void> {
-	// Canvas submissions
+	// Canvas submissions (includes grade data)
 	if (canvasClient && hasCanvas(cfg)) {
 		const assignments = await db.selectFrom("canvas_assignments").select("canvas_id").execute();
-		const knownIds = await db.selectFrom("canvas_students").select("canvas_id").execute();
+		const knownIds = await db.selectFrom("students").select("canvas_id").execute();
 		const knownSet = new Set(knownIds.map((r) => r.canvas_id));
 
 		for (const a of assignments) {
@@ -257,6 +242,8 @@ export async function pullSubmissions(
 				score: s.score,
 				workflow_state: s.workflow_state,
 				fetched_at: s.fetched_at,
+				posted_grade: s.posted_grade,
+				grade_updated_at: s.grade_updated_at,
 			}));
 			await batchUpsert(db, "canvas_submissions", rows, ["canvas_user_id", "canvas_assignment_id"]);
 		}
@@ -277,8 +264,8 @@ export async function pullAll(
 	await pullAssignments(db, canvasClient, cfg, onProgress);
 	await pullSubmissions(db, canvasClient, cfg, onProgress);
 
-	// Snapshot synced state
-	await snapshotCanvasGradesSynced(db);
-	await snapshotCanvasAssignmentsSynced(db);
-	onProgress?.("sync", "Synced shadow tables");
+	// Snapshot synced state (inline columns)
+	await snapshotGradesSynced(db);
+	await snapshotAssignmentsSynced(db);
+	onProgress?.("sync", "Synced baseline columns");
 }

@@ -4,13 +4,12 @@
  */
 import type { TableName } from "./schema.ts";
 
-// ─── Viewer table names (excludes meta + shadow tables) ─────────────
+// ─── Viewer table names (excludes meta) ─────────────────────────────
 
 /** Tables visible in the viewer, ordered by viewer_rank. */
 export type ViewerTableName =
-	| "canvas_grades"
-	| "canvas_assignments"
 	| "canvas_submissions"
+	| "canvas_assignments"
 	| "gh_submissions"
 	| "gh_students"
 	| "gh_assignments"
@@ -27,25 +26,18 @@ export interface TableCapability {
 }
 
 export const TABLE_CAPABILITIES: Record<ViewerTableName, TableCapability> = {
-	canvas_grades: {
+	canvas_submissions: {
 		editable: true,
 		pushable: true,
 		pullGuarded: true,
 		viewerRank: 0,
-		editableColumns: null,
+		editableColumns: ["posted_grade"],
 	},
 	canvas_assignments: {
 		editable: true,
 		pushable: true,
 		pullGuarded: true,
 		viewerRank: 1,
-		editableColumns: null,
-	},
-	canvas_submissions: {
-		editable: false,
-		pushable: false,
-		pullGuarded: false,
-		viewerRank: 2,
 		editableColumns: null,
 	},
 	gh_submissions: {
@@ -89,30 +81,23 @@ export const TABLE_CAPABILITIES: Record<ViewerTableName, TableCapability> = {
 
 export const CANVAS_PUSHABLE = {
 	canvas_assignments: ["name", "points_possible", "due_at", "published"] as const,
-	canvas_grades: ["posted_grade"] as const,
+	canvas_submissions: ["posted_grade"] as const,
 } as const;
 
 // ─── Derived sets ───────────────────────────────────────────────────
 
 /** Tables hidden from the viewer. */
-export const EXCLUDED_TABLES: TableName[] = [
-	"meta",
-	"canvas_students",
-	"_canvas_assignments_synced",
-	"_canvas_grades_synced",
-];
+export const EXCLUDED_TABLES: TableName[] = ["meta"];
 
 /** Tables available for export, in order. */
 export const EXPORTABLE_TABLES: TableName[] = [
 	"students",
 	"assignments",
 	"gh_students",
-	"canvas_students",
 	"gh_assignments",
 	"canvas_assignments",
 	"gh_submissions",
 	"canvas_submissions",
-	"canvas_grades",
 ];
 
 // ─── Helper functions ───────────────────────────────────────────────

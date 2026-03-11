@@ -2,11 +2,7 @@
  * Canvas roster and submission fetching — transforms API responses to DB rows.
  */
 import type { KyInstance } from "ky";
-import type {
-	NewCanvasAssignment,
-	NewCanvasStudent,
-	NewCanvasSubmission,
-} from "../../db/schema.ts";
+import type { NewCanvasAssignment, NewCanvasSubmission, NewStudent } from "../../db/schema.ts";
 import { getPaginated } from "./client.ts";
 import {
 	CanvasAssignmentGroup,
@@ -23,7 +19,7 @@ const SUBMITTED_STATES = new Set(["submitted", "graded", "pending_review"]);
 export async function fetchStudentsWithSections(
 	client: KyInstance,
 	courseId: number,
-): Promise<[NewCanvasStudent[], Map<number, string>]> {
+): Promise<[NewStudent[], Map<number, string>]> {
 	const [rawStudents, rawUsers, rawSections] = await Promise.all([
 		getPaginated<unknown>(client, `courses/${courseId}/users`, {
 			enrollment_type: "student",
@@ -61,7 +57,7 @@ export async function fetchStudentsWithSections(
 		if (sis) sisSectionMap.set(userId, sis);
 	}
 
-	const students: NewCanvasStudent[] = rawStudents.map((s) => ({
+	const students: NewStudent[] = rawStudents.map((s) => ({
 		canvas_id: s.id,
 		name: s.name,
 		sortable_name: s.sortable_name,
@@ -69,6 +65,7 @@ export async function fetchStudentsWithSections(
 		login_id: s.login_id ?? "",
 		sis_user_id: s.sis_user_id ?? "",
 		sis_section_id: sisSectionMap.get(s.id) ?? "",
+		github_username: null,
 	}));
 
 	return [students, sisSectionMap];
@@ -118,6 +115,7 @@ export async function fetchCanvasSubmissions(
 		`courses/${courseId}/assignments/${canvasAssignmentId}/submissions`,
 	).then((items) => items.map((i) => CanvasSubmissionResponse.parse(i)));
 
+	const now = Date.now() / 1000;
 	return rawSubs
 		.filter((s) => knownCanvasIds.has(s.user_id))
 		.map((s) => ({
@@ -129,6 +127,8 @@ export async function fetchCanvasSubmissions(
 			lateness_seconds: Math.floor(s.seconds_late),
 			score: s.score,
 			workflow_state: s.workflow_state,
-			fetched_at: Date.now() / 1000,
+			fetched_at: now,
+			posted_grade: s.grade ?? "",
+			grade_updated_at: now,
 		}));
 }

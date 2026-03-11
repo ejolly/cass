@@ -1,119 +1,98 @@
 /**
- * Change tracking via shadow table diffs.
- * Uses kysely LEFT JOIN to detect pending changes between working and synced tables.
+ * Change tracking via inline _synced_* columns.
+ * Compares working values against synced baselines to detect pending changes.
  */
 import { type Kysely, sql } from "kysely";
-import type { CanvasAssignment, CanvasGrade, Database } from "./schema.ts";
+import type { CanvasAssignment, CanvasSubmission, Database } from "./schema.ts";
 
-// ─── Snapshot (copy working → synced) ───────────────────────────────
+// ─── Snapshot (copy working → synced columns) ───────────────────────
 
-/** Copy all canvas_grades rows into _canvas_grades_synced (replace). */
-export async function snapshotCanvasGradesSynced(db: Kysely<Database>): Promise<void> {
-	await db.deleteFrom("_canvas_grades_synced").execute();
+/** Snapshot current grades: set _synced_posted_grade = posted_grade for all rows. */
+export async function snapshotGradesSynced(db: Kysely<Database>): Promise<void> {
 	await db
-		.insertInto("_canvas_grades_synced")
-		.columns(["canvas_user_id", "canvas_assignment_id", "posted_grade"])
-		.expression(
-			db
-				.selectFrom("canvas_grades")
-				.select(["canvas_user_id", "canvas_assignment_id", "posted_grade"]),
-		)
+		.updateTable("canvas_submissions")
+		.set({ _synced_posted_grade: sql`posted_grade` })
 		.execute();
 }
 
-/** Copy all canvas_assignments rows into _canvas_assignments_synced (replace). */
-export async function snapshotCanvasAssignmentsSynced(db: Kysely<Database>): Promise<void> {
-	await db.deleteFrom("_canvas_assignments_synced").execute();
+/** Snapshot current assignments: set _synced_* = working values for all rows. */
+export async function snapshotAssignmentsSynced(db: Kysely<Database>): Promise<void> {
 	await db
-		.insertInto("_canvas_assignments_synced")
-		.columns(["canvas_id", "name", "points_possible", "due_at", "published"])
-		.expression(
-			db
-				.selectFrom("canvas_assignments")
-				.select(["canvas_id", "name", "points_possible", "due_at", "published"]),
-		)
+		.updateTable("canvas_assignments")
+		.set({
+			_synced_name: sql`name`,
+			_synced_points_possible: sql`points_possible`,
+			_synced_due_at: sql`due_at`,
+			_synced_published: sql`published`,
+		})
 		.execute();
 }
 
 // ─── Pending change detection ───────────────────────────────────────
 
-/** Get grades that differ from synced state (changed or new). */
-export async function getPendingGradeChanges(db: Kysely<Database>): Promise<CanvasGrade[]> {
+/** Get submissions with grades that differ from synced state. */
+export async function getPendingGradeChanges(db: Kysely<Database>): Promise<CanvasSubmission[]> {
 	return db
-		.selectFrom("canvas_grades as g")
-		.leftJoin("_canvas_grades_synced as s", (join) =>
-			join
-				.onRef("g.canvas_user_id", "=", "s.canvas_user_id")
-				.onRef("g.canvas_assignment_id", "=", "s.canvas_assignment_id"),
-		)
-		.where((eb) =>
-			eb.or([
-				eb("g.posted_grade", "!=", eb.ref("s.posted_grade")),
-				eb("s.canvas_user_id", "is", null),
-			]),
-		)
-		.selectAll("g")
+		.selectFrom("canvas_submissions")
+		.where((eb) => eb("posted_grade", "!=", eb.ref("_synced_posted_grade")))
+		.selectAll()
 		.execute();
 }
 
-/** Get assignments that differ from synced state (changed or new). */
+/** Get assignments that differ from synced state. */
 export async function getPendingAssignmentChanges(
 	db: Kysely<Database>,
 ): Promise<CanvasAssignment[]> {
 	return db
-		.selectFrom("canvas_assignments as a")
-		.leftJoin("_canvas_assignments_synced as s", (join) =>
-			join.onRef("a.canvas_id", "=", "s.canvas_id"),
-		)
+		.selectFrom("canvas_assignments")
 		.where((eb) =>
 			eb.or([
-				eb("a.name", "!=", eb.ref("s.name")),
-				eb("a.points_possible", "!=", eb.ref("s.points_possible")),
-				// For nullable columns, use raw comparison
-				sql<boolean>`a.due_at IS NOT s.due_at`,
-				eb("a.published", "!=", eb.ref("s.published")),
-				eb("s.canvas_id", "is", null),
+				eb("name", "!=", eb.ref("_synced_name")),
+				eb("points_possible", "!=", eb.ref("_synced_points_possible")),
+				sql<boolean>`due_at IS NOT _synced_due_at`,
+				eb("published", "!=", eb.ref("_synced_published")),
 			]),
 		)
-		.selectAll("a")
+		.selectAll()
 		.execute();
 }
 
 // ─── Revert to synced state ─────────────────────────────────────────
 
-/** Revert canvas_grades to its synced state by restoring from shadow table. */
+/** Revert grades to synced baseline. Returns count of reverted rows. */
 export async function revertGrades(db: Kysely<Database>): Promise<number> {
-	await db.deleteFrom("canvas_grades").execute();
+	const pending = await getPendingGradeChanges(db);
+	if (pending.length === 0) return 0;
+
 	await db
-		.insertInto("canvas_grades")
-		.columns(["canvas_user_id", "canvas_assignment_id", "posted_grade"])
-		.expression(
-			db
-				.selectFrom("_canvas_grades_synced")
-				.select(["canvas_user_id", "canvas_assignment_id", "posted_grade"]),
-		)
+		.updateTable("canvas_submissions")
+		.set({ posted_grade: sql`_synced_posted_grade` })
+		.where((eb) => eb("posted_grade", "!=", eb.ref("_synced_posted_grade")))
 		.execute();
-	const count = await db
-		.selectFrom("_canvas_grades_synced")
-		.select(db.fn.count<number>("canvas_user_id").as("count"))
-		.executeTakeFirstOrThrow();
-	return count.count;
+	return pending.length;
 }
 
-/** Revert canvas_assignments to synced state. */
+/** Revert assignments to synced baseline. Returns count of reverted rows. */
 export async function revertAssignments(db: Kysely<Database>): Promise<number> {
-	// Delete working table and restore from synced snapshot
-	await db.deleteFrom("canvas_assignments").execute();
+	const pending = await getPendingAssignmentChanges(db);
+	if (pending.length === 0) return 0;
+
 	await db
-		.insertInto("canvas_assignments")
-		.columns(["canvas_id", "name", "points_possible", "due_at", "published"])
-		.expression(
-			db
-				.selectFrom("_canvas_assignments_synced")
-				.select(["canvas_id", "name", "points_possible", "due_at", "published"]),
+		.updateTable("canvas_assignments")
+		.set({
+			name: sql`_synced_name`,
+			points_possible: sql`_synced_points_possible`,
+			due_at: sql`_synced_due_at`,
+			published: sql`_synced_published`,
+		})
+		.where((eb) =>
+			eb.or([
+				eb("name", "!=", eb.ref("_synced_name")),
+				eb("points_possible", "!=", eb.ref("_synced_points_possible")),
+				sql<boolean>`due_at IS NOT _synced_due_at`,
+				eb("published", "!=", eb.ref("_synced_published")),
+			]),
 		)
 		.execute();
-
-	const pending = await getPendingAssignmentChanges(db);
 	return pending.length;
 }

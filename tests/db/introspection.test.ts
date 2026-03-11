@@ -28,23 +28,23 @@ describe("introspection", () => {
 			expect(student.name).toBe("Alice Updated");
 		});
 
-		it("updates with composite primary key", async () => {
+		it("updates with composite primary key (canvas_submissions)", async () => {
 			await updateCell(
 				db,
-				"canvas_grades",
+				"canvas_submissions",
 				["canvas_user_id", "canvas_assignment_id"],
 				[100, 9001],
 				"posted_grade",
 				"10",
 			);
 
-			const grade = await db
-				.selectFrom("canvas_grades")
+			const sub = await db
+				.selectFrom("canvas_submissions")
 				.select("posted_grade")
 				.where("canvas_user_id", "=", 100)
 				.where("canvas_assignment_id", "=", 9001)
 				.executeTakeFirstOrThrow();
-			expect(grade.posted_grade).toBe("10");
+			expect(sub.posted_grade).toBe("10");
 		});
 	});
 
@@ -63,14 +63,26 @@ describe("introspection", () => {
 	});
 
 	describe("getTableColumns", () => {
-		it("returns column metadata for a table", async () => {
+		it("returns column metadata for students (includes Canvas fields)", async () => {
 			const columns = await getTableColumns(db, "students");
 			const names = columns.map((c) => c.name);
 			expect(names).toContain("canvas_id");
 			expect(names).toContain("github_username");
 			expect(names).toContain("name");
+			expect(names).toContain("sortable_name");
 			expect(names).toContain("email");
+			expect(names).toContain("login_id");
+			expect(names).toContain("sis_user_id");
+			expect(names).toContain("sis_section_id");
 			expect(names).toContain("excluded");
+		});
+
+		it("returns column metadata for canvas_submissions (includes grade + synced)", async () => {
+			const columns = await getTableColumns(db, "canvas_submissions");
+			const names = columns.map((c) => c.name);
+			expect(names).toContain("posted_grade");
+			expect(names).toContain("grade_updated_at");
+			expect(names).toContain("_synced_posted_grade");
 		});
 	});
 });
