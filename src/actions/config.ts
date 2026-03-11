@@ -1,9 +1,10 @@
 /**
  * Config loading — smol-toml parsing + zod validated config.
  */
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { parse as parseTOML, stringify as stringifyTOML } from "smol-toml";
 import { z } from "zod";
+import { findProjectRoot } from "../utils/paths.ts";
 
 // ─── Config schema ──────────────────────────────────────────────────
 
@@ -19,6 +20,32 @@ const CanvasAssignmentSpec = z.object({
 	due_at: z.string().default(""),
 	published: z.boolean().default(false),
 	group: z.string().default(""),
+});
+
+const TomlConfigSchema = z.object({
+	classroom: z
+		.object({
+			url: z.coerce.string().default(""),
+			url_id: z.coerce.number().default(0),
+			gh_id: z.coerce.number().default(0),
+			slug: z.coerce.string().default(""),
+			title: z.coerce.string().default(""),
+			org: z.coerce.string().default(""),
+		})
+		.default({}),
+	canvas: z
+		.object({
+			base_url: z.coerce.string().default(""),
+			course_id: z.coerce.number().default(0),
+			modules: z.array(CanvasModuleSpec).default([]),
+			assignments: z.array(CanvasAssignmentSpec).default([]),
+		})
+		.default({}),
+	database: z
+		.object({
+			motherduck: z.coerce.string().default(""),
+		})
+		.default({}),
 });
 
 export type CanvasModuleSpec = z.infer<typeof CanvasModuleSpec>;
@@ -88,19 +115,10 @@ export function parseClassroomUrl(raw: string): number | null {
 
 // ─── File discovery ─────────────────────────────────────────────────
 
-export function findProjectRoot(start = process.cwd()): string | null {
-	let dir = start;
-	while (true) {
-		const candidate = join(dir, "cass.toml");
-		if (Bun.file(candidate).size > 0) return dir;
-		const parent = dirname(dir);
-		if (parent === dir) return null;
-		dir = parent;
-	}
-}
+export { findProjectRoot };
 
-export function configFilePath(): string | null {
-	const root = findProjectRoot();
+export async function configFilePath(): Promise<string | null> {
+	const root = await findProjectRoot();
 	return root ? join(root, "cass.toml") : null;
 }
 
@@ -109,34 +127,26 @@ export function configFilePath(): string | null {
 let _cached: Config | null = null;
 
 export async function loadConfig(): Promise<Config> {
-	const root = findProjectRoot();
+	const root = await findProjectRoot();
 	if (!root) throw new Error("Could not find cass.toml in any parent directory");
 
 	const tomlPath = join(root, "cass.toml");
 	const text = await Bun.file(tomlPath).text();
-	const data = parseTOML(text);
-
-	const canvas = (data.canvas ?? {}) as Record<string, unknown>;
-	const classroom = (data.classroom ?? {}) as Record<string, unknown>;
-	const database = (data.database ?? {}) as Record<string, unknown>;
+	const parsed = TomlConfigSchema.parse(parseTOML(text));
 
 	return {
 		root,
-		classroomUrl: String(classroom.url ?? ""),
-		classroomUrlId: Number(classroom.url_id ?? 0),
-		classroomGhId: Number(classroom.gh_id ?? 0),
-		classroomSlug: String(classroom.slug ?? ""),
-		classroomTitle: String(classroom.title ?? ""),
-		org: String(classroom.org ?? ""),
-		canvasBaseUrl: String(canvas.base_url ?? ""),
-		canvasCourseId: Number(canvas.course_id ?? 0),
-		canvasModules: Array.isArray(canvas.modules)
-			? canvas.modules.map((m: unknown) => CanvasModuleSpec.parse(m))
-			: [],
-		canvasAssignments: Array.isArray(canvas.assignments)
-			? canvas.assignments.map((a: unknown) => CanvasAssignmentSpec.parse(a))
-			: [],
-		motherduckDb: String(database.motherduck ?? ""),
+		classroomUrl: parsed.classroom.url,
+		classroomUrlId: parsed.classroom.url_id,
+		classroomGhId: parsed.classroom.gh_id,
+		classroomSlug: parsed.classroom.slug,
+		classroomTitle: parsed.classroom.title,
+		org: parsed.classroom.org,
+		canvasBaseUrl: parsed.canvas.base_url,
+		canvasCourseId: parsed.canvas.course_id,
+		canvasModules: parsed.canvas.modules,
+		canvasAssignments: parsed.canvas.assignments,
+		motherduckDb: parsed.database.motherduck,
 	};
 }
 
@@ -162,21 +172,28 @@ export interface ConfigUpdate {
 	canvasCourseId?: number;
 }
 
+/** Map from ConfigUpdate keys to their TOML section + field name. */
+const UPDATE_FIELD_MAP: Record<keyof ConfigUpdate, [string, string]> = {
+	classroomUrl: ["classroom", "url"],
+	classroomUrlId: ["classroom", "url_id"],
+	classroomGhId: ["classroom", "gh_id"],
+	classroomSlug: ["classroom", "slug"],
+	classroomTitle: ["classroom", "title"],
+	org: ["classroom", "org"],
+	canvasBaseUrl: ["canvas", "base_url"],
+	canvasCourseId: ["canvas", "course_id"],
+};
+
 export async function updateConfig(path: string, updates: ConfigUpdate): Promise<void> {
 	const text = await Bun.file(path).text();
 	const data = parseTOML(text) as Record<string, Record<string, unknown>>;
 
-	if (!data.classroom) data.classroom = {};
-	if (!data.canvas) data.canvas = {};
-
-	if (updates.classroomUrl !== undefined) data.classroom.url = updates.classroomUrl;
-	if (updates.classroomUrlId !== undefined) data.classroom.url_id = updates.classroomUrlId;
-	if (updates.classroomGhId !== undefined) data.classroom.gh_id = updates.classroomGhId;
-	if (updates.classroomSlug !== undefined) data.classroom.slug = updates.classroomSlug;
-	if (updates.classroomTitle !== undefined) data.classroom.title = updates.classroomTitle;
-	if (updates.org !== undefined) data.classroom.org = updates.org;
-	if (updates.canvasBaseUrl !== undefined) data.canvas.base_url = updates.canvasBaseUrl;
-	if (updates.canvasCourseId !== undefined) data.canvas.course_id = updates.canvasCourseId;
+	for (const [key, value] of Object.entries(updates)) {
+		if (value === undefined) continue;
+		const [section, field] = UPDATE_FIELD_MAP[key as keyof ConfigUpdate]!;
+		if (!data[section]) data[section] = {};
+		data[section]![field] = value;
+	}
 
 	await Bun.write(path, stringifyTOML(data));
 	resetConfig();

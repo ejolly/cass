@@ -1,6 +1,7 @@
 /**
  * Prerequisite checks — reports config, CLI tools, and auth status.
  */
+import { join } from "node:path";
 import { match } from "ts-pattern";
 import { checkAuth, checkAvailable } from "../apis/github/client.ts";
 import { type Config, classroomStatus, configFilePath, hasCanvas } from "./config.ts";
@@ -31,7 +32,7 @@ export async function checkPrerequisites(cfg?: Config): Promise<Check[]> {
 	const checks: Check[] = [];
 
 	// 1. Config file
-	const path = configFilePath();
+	const path = await configFilePath();
 	if (!path) {
 		checks.push(err("cass.toml", "not found in any parent directory"));
 		return checks;
@@ -62,7 +63,6 @@ export async function checkPrerequisites(cfg?: Config): Promise<Check[]> {
 		checks.push(ok("course_id", String(cfg.canvasCourseId), 2));
 
 		// Check token
-		const { join } = await import("node:path");
 		const tokenPath = join(cfg.root, ".canvastoken");
 		const tokenExists = await Bun.file(tokenPath).exists();
 		const envToken = Boolean(process.env.CANVAS_TOKEN);

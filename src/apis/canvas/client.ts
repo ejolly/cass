@@ -2,6 +2,7 @@
  * Canvas API client — ky instance with retry hooks + pagination helper.
  * Replaces ~230 lines of Python (RetryTransport + CanvasClient).
  */
+import { join } from "node:path";
 import ky, { type KyInstance, type AfterResponseHook } from "ky";
 import { match } from "ts-pattern";
 import { CanvasProgress, type CanvasProgressState } from "./schema.ts";
@@ -73,10 +74,10 @@ export async function getPaginated<T>(
 		// Parse Link header for next page
 		const linkHeader = response.headers.get("Link");
 		if (linkHeader) {
-			const match = LINK_NEXT_RE.exec(linkHeader);
-			if (match?.[1]) {
+			const linkMatch = LINK_NEXT_RE.exec(linkHeader);
+			if (linkMatch?.[1]) {
 				// Canvas returns absolute URLs; extract path + query to keep relative
-				const nextUrl = match[1];
+				const nextUrl = linkMatch[1];
 				if (nextUrl.startsWith("http")) {
 					const parsed = new URL(nextUrl);
 					url = `${parsed.pathname.replace(/^\/api\/v1\//, "")}${parsed.search}`;
@@ -157,7 +158,6 @@ export async function resolveResource<T extends { id: number; name?: string; tit
  * Load Canvas token from .canvastoken file or CANVAS_TOKEN env var.
  */
 export async function loadCanvasToken(projectRoot: string): Promise<string> {
-	const { join } = await import("node:path");
 	const tokenPath = join(projectRoot, ".canvastoken");
 	const tokenFile = Bun.file(tokenPath);
 

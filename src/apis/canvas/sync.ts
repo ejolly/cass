@@ -5,6 +5,7 @@ import type { KyInstance } from "ky";
 import type { Kysely } from "kysely";
 import type { CanvasGrade, Database } from "../../db/schema.ts";
 import { waitForProgress } from "./client.ts";
+import { CanvasProgress } from "./schema.ts";
 
 const INVALID_GRADES = new Set([undefined, null, "", "-", "?"]);
 
@@ -96,7 +97,7 @@ export async function pushGrades(
 				})
 				.json();
 
-			const progress = await import("./schema.ts").then((m) => m.CanvasProgress.parse(raw));
+			const progress = CanvasProgress.parse(raw);
 			await waitForProgress(client, progress.id);
 
 			results.push({ ok: true, canvasAssignmentId: aid, count: Object.keys(grades).length });

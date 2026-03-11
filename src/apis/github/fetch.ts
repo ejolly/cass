@@ -21,8 +21,8 @@ type CloneResult = "cloned" | "updated" | "up-to-date";
 
 /** Clone or pull a single repo. */
 async function cloneOrPull(repoUrl: string, dest: string): Promise<CloneResult> {
-	const gitDir = join(dest, ".git");
-	const gitExists = await Bun.file(gitDir)
+	const gitHead = join(dest, ".git", "HEAD");
+	const gitExists = await Bun.file(gitHead)
 		.exists()
 		.catch(() => false);
 

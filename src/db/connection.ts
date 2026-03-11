@@ -1,10 +1,14 @@
+import { Database as SQLiteDatabase } from "bun:sqlite";
 /**
  * Database connection — lazy singleton using bun:sqlite + kysely.
  */
-import { Database as SQLiteDatabase } from "bun:sqlite";
+import { join } from "node:path";
 import { Kysely } from "kysely";
 import { BunSqliteDialect } from "kysely-bun-sqlite";
+import { findProjectRoot } from "../utils/paths.ts";
 import type { Database } from "./schema.ts";
+
+export { findProjectRoot };
 
 let _db: Kysely<Database> | null = null;
 
@@ -35,31 +39,11 @@ export async function closeDb(): Promise<void> {
 	}
 }
 
-/**
- * Find cass.db by walking up from cwd looking for cass.toml.
- * Returns the directory containing cass.toml, or null if not found.
- */
-export function findProjectRoot(from = process.cwd()): string | null {
-	let dir = from;
-	const { join, dirname } = require("node:path") as typeof import("node:path");
-
-	while (true) {
-		const candidate = join(dir, "cass.toml");
-		if (Bun.file(candidate).size > 0) {
-			return dir;
-		}
-		const parent = dirname(dir);
-		if (parent === dir) return null;
-		dir = parent;
-	}
-}
-
 /** Resolve the path to cass.db relative to the project root. */
-export function dbPath(from?: string): string {
-	const root = findProjectRoot(from);
+export async function dbPath(from?: string): Promise<string> {
+	const root = await findProjectRoot(from);
 	if (!root) {
 		throw new Error("Could not find cass.toml in any parent directory");
 	}
-	const { join } = require("node:path") as typeof import("node:path");
 	return join(root, "cass.db");
 }

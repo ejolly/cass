@@ -4,8 +4,8 @@
  */
 import type { KyInstance } from "ky";
 import type { Kysely } from "kysely";
-import Papa from "papaparse";
 import type { Database } from "../../db/schema.ts";
+import { toCsv } from "../../utils/csv.ts";
 import { getPaginated } from "./client.ts";
 import {
 	CanvasCourse,
@@ -113,10 +113,9 @@ export async function generateEgrades(
 	});
 
 	// 6. Write CSV
-	const csv = Papa.unparse({
-		fields: ["Last Name", "First Name", "Student ID", "SectionId", "Final_Assigned_Egrade"],
-		data: rows,
-	});
+	const headers = ["Last Name", "First Name", "Student ID", "SectionId", "Final_Assigned_Egrade"];
+	const objects = rows.map((r) => Object.fromEntries(headers.map((h, i) => [h, r[i] ?? ""])));
+	const csv = toCsv(objects);
 
 	await Bun.write(output, csv);
 

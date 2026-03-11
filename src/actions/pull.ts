@@ -1,9 +1,8 @@
-import type { KyInstance } from "ky";
 /**
  * Pull orchestration — fetches from APIs and updates DB.
  */
+import type { KyInstance } from "ky";
 import type { Kysely } from "kysely";
-import { sql } from "kysely";
 import {
 	fetchCanvasAssignments,
 	fetchCanvasSubmissions,
@@ -15,12 +14,20 @@ import {
 	fetchAssignments,
 	studentsToDB,
 } from "../apis/github/classroom.ts";
-import type { Database } from "../db/schema.ts";
+import type {
+	Database,
+	NewAssignment,
+	NewCanvasAssignment,
+	NewCanvasStudent,
+	NewCanvasSubmission,
+	NewGHAssignment,
+	NewGHStudent,
+	NewStudent,
+} from "../db/schema.ts";
 import { snapshotCanvasAssignmentsSynced, snapshotCanvasGradesSynced } from "../db/sync.ts";
 import type { Config } from "./config.ts";
 import { hasCanvas, hasClassroom } from "./config.ts";
-import { matchStudents } from "./matching.ts";
-import { slugMatch, slugify } from "./matching.ts";
+import { matchStudents, slugMatch, slugify } from "./matching.ts";
 
 export type PullMode =
 	| { mode: "all" }
@@ -29,6 +36,36 @@ export type PullMode =
 	| { mode: "submissions" };
 
 type ProgressFn = (step: string, detail: string) => void;
+
+const BATCH_SIZE = 500;
+
+/** Batch upsert rows using Kysely insertInto + onConflict. */
+async function batchUpsert<T extends keyof Database>(
+	db: Kysely<Database>,
+	table: T,
+	rows: Array<Record<string, unknown>>,
+	conflictColumns: string[],
+): Promise<void> {
+	for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+		const batch = rows.slice(i, i + BATCH_SIZE);
+		// Determine update columns (all columns except conflict columns)
+		const allCols = Object.keys(batch[0]!);
+		const updateCols = allCols.filter((c) => !conflictColumns.includes(c));
+
+		const updateSet: Record<string, unknown> = {};
+		for (const col of updateCols) {
+			// biome-ignore lint/suspicious/noExplicitAny: dynamic column references require untyped eb
+			updateSet[col] = (eb: any) => eb.ref(`excluded.${col}`);
+		}
+
+		// biome-ignore lint/suspicious/noExplicitAny: dynamic table name requires untyped cast
+		await (db.insertInto(table) as any)
+			.values(batch)
+			// biome-ignore lint/suspicious/noExplicitAny: dynamic conflict columns require untyped oc
+			.onConflict((oc: any) => oc.columns(conflictColumns).doUpdateSet(updateSet))
+			.execute();
+	}
+}
 
 /** Pull students from Canvas + GitHub, match, and save to DB. */
 export async function pullStudents(
@@ -42,13 +79,16 @@ export async function pullStudents(
 		onProgress?.("students", "Fetching Canvas students...");
 		const [students] = await fetchStudentsWithSections(canvasClient, cfg.canvasCourseId);
 
-		// Upsert canvas_students
-		for (const s of students) {
-			await sql`INSERT OR REPLACE INTO canvas_students (canvas_id, name, sortable_name, email, login_id, sis_user_id, sis_section_id)
-				VALUES (${s.canvas_id}, ${s.name}, ${s.sortable_name}, ${s.email}, ${s.login_id}, ${s.sis_user_id}, ${s.sis_section_id})`.execute(
-				db,
-			);
-		}
+		const rows: NewCanvasStudent[] = students.map((s) => ({
+			canvas_id: s.canvas_id,
+			name: s.name,
+			sortable_name: s.sortable_name,
+			email: s.email,
+			login_id: s.login_id,
+			sis_user_id: s.sis_user_id,
+			sis_section_id: s.sis_section_id,
+		}));
+		await batchUpsert(db, "canvas_students", rows, ["canvas_id"]);
 		onProgress?.("students", `Saved ${students.length} Canvas students`);
 	}
 
@@ -56,12 +96,14 @@ export async function pullStudents(
 	if (hasClassroom(cfg)) {
 		onProgress?.("students", "Fetching GitHub students...");
 		const ghStudents = await fetchAllStudents(cfg.classroomGhId);
-		const ghRows = studentsToDB(ghStudents);
+		const ghRows: NewGHStudent[] = studentsToDB(ghStudents).map((s) => ({
+			github_username: s.github_username,
+			github_id: s.github_id,
+			name: s.name,
+			email: s.email,
+		}));
 
-		for (const s of ghRows) {
-			await sql`INSERT OR REPLACE INTO gh_students (github_username, github_id, name, email)
-				VALUES (${s.github_username}, ${s.github_id}, ${s.name}, ${s.email})`.execute(db);
-		}
+		await batchUpsert(db, "gh_students", ghRows, ["github_username"]);
 		onProgress?.("students", `Saved ${ghRows.length} GitHub students`);
 
 		// Auto-match
@@ -79,12 +121,20 @@ export async function pullStudents(
 				})),
 			);
 
-			// Upsert master students
-			for (const cs of canvasStudents) {
-				const ghLogin = [...matched.entries()].find(([, cid]) => cid === cs.canvas_id)?.[0] ?? null;
-				await sql`INSERT OR REPLACE INTO students (canvas_id, github_username, name, email)
-					VALUES (${cs.canvas_id}, ${ghLogin}, ${cs.name}, ${cs.email})`.execute(db);
+			// Build reverse lookup: canvasId → ghLogin
+			const canvasIdToGhLogin = new Map<number, string>();
+			for (const [ghLogin, canvasId] of matched.entries()) {
+				canvasIdToGhLogin.set(canvasId, ghLogin);
 			}
+
+			// Upsert master students
+			const studentRows: NewStudent[] = canvasStudents.map((cs) => ({
+				canvas_id: cs.canvas_id,
+				github_username: canvasIdToGhLogin.get(cs.canvas_id) ?? null,
+				name: cs.name,
+				email: cs.email,
+			}));
+			await batchUpsert(db, "students", studentRows, ["canvas_id"]);
 			onProgress?.("students", `Matched ${matched.size} students`);
 		}
 	}
@@ -97,15 +147,7 @@ export async function pullAssignments(
 	cfg: Config,
 	onProgress?: ProgressFn,
 ): Promise<void> {
-	let canvasAssignments: Array<{
-		canvas_id: number;
-		name: string;
-		points_possible: number;
-		due_at: string | null;
-		published: number;
-		assignment_group: string;
-		post_manually: number;
-	}> = [];
+	let canvasAssignments: NewCanvasAssignment[] = [];
 
 	if (canvasClient && hasCanvas(cfg)) {
 		onProgress?.("assignments", "Fetching Canvas assignments...");
@@ -120,12 +162,7 @@ export async function pullAssignments(
 			post_manually: a.post_manually ?? 0,
 		}));
 
-		for (const a of canvasAssignments) {
-			await sql`INSERT OR REPLACE INTO canvas_assignments (canvas_id, name, points_possible, due_at, published, assignment_group, post_manually)
-				VALUES (${a.canvas_id}, ${a.name}, ${a.points_possible}, ${a.due_at}, ${a.published}, ${a.assignment_group}, ${a.post_manually})`.execute(
-				db,
-			);
-		}
+		await batchUpsert(db, "canvas_assignments", canvasAssignments, ["canvas_id"]);
 		onProgress?.("assignments", `Saved ${canvasAssignments.length} Canvas assignments`);
 	}
 
@@ -135,24 +172,24 @@ export async function pullAssignments(
 		const ghAssignments = await fetchAssignments(cfg.classroomGhId);
 		ghAssignmentRows = assignmentsToDB(ghAssignments);
 
-		for (const a of ghAssignmentRows) {
-			await sql`INSERT OR REPLACE INTO gh_assignments (slug, gh_id, title, deadline, points_possible, accepted, submissions_count, passing_count, starter_code_repo, submittable_files)
-				VALUES (${a.slug}, ${a.gh_id}, ${a.title}, ${a.deadline ?? null}, ${a.points_possible}, ${a.accepted}, ${a.submissions_count}, ${a.passing_count}, ${a.starter_code_repo}, ${a.submittable_files})`.execute(
-				db,
-			);
-		}
+		const ghRows: NewGHAssignment[] = ghAssignmentRows.map((a) => ({
+			slug: a.slug,
+			gh_id: a.gh_id,
+			title: a.title,
+			deadline: a.deadline ?? null,
+			points_possible: a.points_possible,
+			accepted: a.accepted,
+			submissions_count: a.submissions_count,
+			passing_count: a.passing_count,
+			starter_code_repo: a.starter_code_repo,
+			submittable_files: a.submittable_files,
+		}));
+		await batchUpsert(db, "gh_assignments", ghRows, ["slug"]);
 		onProgress?.("assignments", `Saved ${ghAssignmentRows.length} GitHub assignments`);
 	}
 
 	// Merge into master assignments table
-	const masterAssignments: Array<{
-		slug: string;
-		title: string;
-		ghSlug: string | null;
-		canvasId: number | null;
-		points: number;
-		deadline: string | null;
-	}> = [];
+	const masterAssignments: NewAssignment[] = [];
 
 	// Canvas-first: create from canvas assignments
 	for (const ca of canvasAssignments) {
@@ -161,34 +198,31 @@ export async function pullAssignments(
 		masterAssignments.push({
 			slug,
 			title: ca.name,
-			ghSlug: ghMatch?.slug ?? null,
-			canvasId: ca.canvas_id,
-			points: ca.points_possible,
-			deadline: ca.due_at,
+			gh_assignment_slug: ghMatch?.slug ?? null,
+			canvas_assignment_id: ca.canvas_id,
+			points_possible: ca.points_possible ?? 0,
+			deadline: ca.due_at ?? null,
 		});
 	}
 
 	// Append GH-only assignments
-	const matchedGHSlugs = new Set(masterAssignments.map((a) => a.ghSlug).filter(Boolean));
+	const matchedGHSlugs = new Set(
+		masterAssignments.map((a) => a.gh_assignment_slug).filter(Boolean),
+	);
 	for (const ga of ghAssignmentRows) {
 		if (!matchedGHSlugs.has(ga.slug)) {
 			masterAssignments.push({
 				slug: ga.slug,
 				title: ga.title,
-				ghSlug: ga.slug,
-				canvasId: null,
-				points: ga.points_possible ?? 1,
+				gh_assignment_slug: ga.slug,
+				canvas_assignment_id: null,
+				points_possible: ga.points_possible ?? 1,
 				deadline: ga.deadline ?? null,
 			});
 		}
 	}
 
-	for (const a of masterAssignments) {
-		await sql`INSERT OR REPLACE INTO assignments (slug, title, gh_assignment_slug, canvas_assignment_id, points_possible, deadline)
-			VALUES (${a.slug}, ${a.title}, ${a.ghSlug}, ${a.canvasId}, ${a.points}, ${a.deadline})`.execute(
-			db,
-		);
-	}
+	await batchUpsert(db, "assignments", masterAssignments, ["slug"]);
 	onProgress?.("assignments", `Merged ${masterAssignments.length} master assignments`);
 }
 
@@ -213,12 +247,18 @@ export async function pullSubmissions(
 				a.canvas_id,
 				knownSet,
 			);
-			for (const s of subs) {
-				await sql`INSERT OR REPLACE INTO canvas_submissions (canvas_user_id, canvas_assignment_id, submitted, submitted_at, late, lateness_seconds, score, workflow_state, fetched_at)
-					VALUES (${s.canvas_user_id}, ${s.canvas_assignment_id}, ${s.submitted}, ${s.submitted_at}, ${s.late}, ${s.lateness_seconds}, ${s.score}, ${s.workflow_state}, ${s.fetched_at})`.execute(
-					db,
-				);
-			}
+			const rows: NewCanvasSubmission[] = subs.map((s) => ({
+				canvas_user_id: s.canvas_user_id,
+				canvas_assignment_id: s.canvas_assignment_id,
+				submitted: s.submitted,
+				submitted_at: s.submitted_at,
+				late: s.late,
+				lateness_seconds: s.lateness_seconds,
+				score: s.score,
+				workflow_state: s.workflow_state,
+				fetched_at: s.fetched_at,
+			}));
+			await batchUpsert(db, "canvas_submissions", rows, ["canvas_user_id", "canvas_assignment_id"]);
 		}
 		onProgress?.("submissions", `Saved Canvas submissions for ${assignments.length} assignments`);
 	}
