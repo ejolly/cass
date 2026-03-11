@@ -25,5 +25,6 @@ dev.py
 *.db
 tests/testdb/
 dist/
+node_modules/
 .env.*
 !.env.example
