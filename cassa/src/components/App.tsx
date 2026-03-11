@@ -174,6 +174,7 @@ export function App(props: AppProps) {
 
         case "return":
           beginEdit(td)
+          key.preventDefault() // prevent Enter from reaching the newly-focused input
           break
 
         case "p":
