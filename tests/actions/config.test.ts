@@ -21,7 +21,6 @@ const baseConfig: Config = {
 	canvasCourseId: 0,
 	canvasModules: [],
 	canvasAssignments: [],
-	motherduckDb: "",
 };
 
 describe("config", () => {

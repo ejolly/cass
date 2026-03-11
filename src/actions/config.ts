@@ -41,11 +41,6 @@ const TomlConfigSchema = z.object({
 			assignments: z.array(CanvasAssignmentSpec).default([]),
 		})
 		.default({}),
-	database: z
-		.object({
-			motherduck: z.coerce.string().default(""),
-		})
-		.default({}),
 });
 
 export type CanvasModuleSpec = z.infer<typeof CanvasModuleSpec>;
@@ -65,8 +60,6 @@ export interface Config {
 	canvasCourseId: number;
 	canvasModules: CanvasModuleSpec[];
 	canvasAssignments: CanvasAssignmentSpec[];
-	// Database
-	motherduckDb: string;
 }
 
 export type ConfigState =
@@ -146,7 +139,6 @@ export async function loadConfig(): Promise<Config> {
 		canvasCourseId: parsed.canvas.course_id,
 		canvasModules: parsed.canvas.modules,
 		canvasAssignments: parsed.canvas.assignments,
-		motherduckDb: parsed.database.motherduck,
 	};
 }
 
