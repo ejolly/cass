@@ -10,7 +10,7 @@ import {
   sortState, editingCell, setEditingCell,
   setFocusPanel,
 } from "../state.ts"
-import { setTableDataRef } from "./App.tsx"
+import { setTableDataRef, getEditCommitRef } from "./App.tsx"
 import { getVisibleColumns, getDisplayHeader } from "../catalog.ts"
 import { getAllRows, getTableColumns } from "@cass/db/introspection.ts"
 
@@ -214,6 +214,7 @@ export function TableView(props: TableViewProps) {
                                   onInput={(v) =>
                                     setEditingCell((prev) => prev ? { ...prev, value: v } : null)
                                   }
+                                  onSubmit={() => getEditCommitRef()?.()}
                                   focused
                                   width={col.width - 2}
                                 />

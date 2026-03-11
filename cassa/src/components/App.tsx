@@ -51,8 +51,17 @@ export function setModalConfirmRef(fn: (() => void) | null): void {
   modalConfirmRef = fn
 }
 
+/** Edit commit callback — set by App, called by TableView's input onSubmit. */
+let editCommitRef: (() => void) | null = null
+export function getEditCommitRef(): (() => void) | null {
+  return editCommitRef
+}
+
 export function App(props: AppProps) {
   const renderer = useRenderer()
+
+  // Wire up edit commit so TableView's input onSubmit can trigger it
+  editCommitRef = () => commitEdit(props.db)
 
   useKeyboard((key) => {
     // ─── Search focused: only Escape escapes ──────────────────
