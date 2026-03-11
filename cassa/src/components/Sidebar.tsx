@@ -1,12 +1,13 @@
 /**
- * Sidebar — grouped table navigation list with cursor.
+ * Sidebar — grouped table navigation list with cursor and mouse support.
  */
 import { For } from "solid-js"
 import { isEditable } from "@cass/db/catalog.ts"
 import {
   focusPanel,
-  sidebarCursor,
-  activeTable,
+  sidebarCursor, setSidebarCursor,
+  activeTable, setActiveTable,
+  setFocusPanel,
 } from "../state.ts"
 import { TABLE_GROUPS, FLAT_TABLES, displayName } from "../catalog.ts"
 
@@ -47,6 +48,11 @@ export function Sidebar() {
                             ? "#292e42"
                             : undefined
                       }
+                      onMouseDown={() => {
+                        setSidebarCursor(idx)
+                        setActiveTable(table)
+                        setFocusPanel("table")
+                      }}
                     >
                       <text fg={isActive() ? "#7aa2f7" : "#c0caf5"}>
                         {isCursor() && focused() ? "▸ " : "  "}
