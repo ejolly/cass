@@ -13,34 +13,34 @@ const LINK_NEXT_RE = /<([^>]+)>;\s*rel="next"/;
 
 /** Proactive throttle: sleep when rate limit remaining is low. */
 const throttleOnRateLimit: AfterResponseHook = async (_request, _options, response) => {
-	const remaining = response.headers.get("X-Rate-Limit-Remaining");
-	if (remaining && Number.parseFloat(remaining) < THROTTLE_THRESHOLD) {
-		await Bun.sleep(THROTTLE_DELAY_MS);
-	}
+  const remaining = response.headers.get("X-Rate-Limit-Remaining");
+  if (remaining && Number.parseFloat(remaining) < THROTTLE_THRESHOLD) {
+    await Bun.sleep(THROTTLE_DELAY_MS);
+  }
 };
 
 export interface CanvasClientOptions {
-	baseUrl: string;
-	token: string;
+  baseUrl: string;
+  token: string;
 }
 
 export function createCanvasClient(opts: CanvasClientOptions): KyInstance {
-	const prefixUrl = `${opts.baseUrl.replace(/\/+$/, "")}/api/v1`;
+  const prefixUrl = `${opts.baseUrl.replace(/\/+$/, "")}/api/v1`;
 
-	return ky.create({
-		prefixUrl,
-		headers: {
-			Authorization: `Bearer ${opts.token}`,
-		},
-		timeout: 30_000,
-		retry: {
-			limit: 3,
-			backoffLimit: 8000,
-		},
-		hooks: {
-			afterResponse: [throttleOnRateLimit],
-		},
-	});
+  return ky.create({
+    prefixUrl,
+    headers: {
+      Authorization: `Bearer ${opts.token}`,
+    },
+    timeout: 30_000,
+    retry: {
+      limit: 3,
+      backoffLimit: 8000,
+    },
+    hooks: {
+      afterResponse: [throttleOnRateLimit],
+    },
+  });
 }
 
 /**
@@ -48,51 +48,51 @@ export function createCanvasClient(opts: CanvasClientOptions): KyInstance {
  * Returns all pages concatenated into a single array.
  */
 export async function getPaginated<T>(
-	client: KyInstance,
-	endpoint: string,
-	params: Record<string, string | number> = {},
+  client: KyInstance,
+  endpoint: string,
+  params: Record<string, string | number> = {},
 ): Promise<T[]> {
-	const allResults: T[] = [];
-	const searchParams = new URLSearchParams();
-	searchParams.set("per_page", "100");
-	for (const [k, v] of Object.entries(params)) {
-		searchParams.set(k, String(v));
-	}
+  const allResults: T[] = [];
+  const searchParams = new URLSearchParams();
+  searchParams.set("per_page", "100");
+  for (const [k, v] of Object.entries(params)) {
+    searchParams.set(k, String(v));
+  }
 
-	let url: string | null = `${endpoint}?${searchParams.toString()}`;
+  let url: string | null = `${endpoint}?${searchParams.toString()}`;
 
-	while (url) {
-		const response = await client.get(url);
-		const data = await response.json<T | T[]>();
+  while (url) {
+    const response = await client.get(url);
+    const data = await response.json<T | T[]>();
 
-		if (Array.isArray(data)) {
-			allResults.push(...data);
-		} else {
-			allResults.push(data);
-		}
+    if (Array.isArray(data)) {
+      allResults.push(...data);
+    } else {
+      allResults.push(data);
+    }
 
-		// Parse Link header for next page
-		const linkHeader = response.headers.get("Link");
-		if (linkHeader) {
-			const linkMatch = LINK_NEXT_RE.exec(linkHeader);
-			if (linkMatch?.[1]) {
-				// Canvas returns absolute URLs; extract path + query to keep relative
-				const nextUrl = linkMatch[1];
-				if (nextUrl.startsWith("http")) {
-					const parsed = new URL(nextUrl);
-					url = `${parsed.pathname.replace(/^\/api\/v1\//, "")}${parsed.search}`;
-				} else {
-					url = nextUrl;
-				}
-			} else {
-				url = null;
-			}
-		} else {
-			url = null;
-		}
-	}
+    // Parse Link header for next page
+    const linkHeader = response.headers.get("Link");
+    if (linkHeader) {
+      const linkMatch = LINK_NEXT_RE.exec(linkHeader);
+      if (linkMatch?.[1]) {
+        // Canvas returns absolute URLs; extract path + query to keep relative
+        const nextUrl = linkMatch[1];
+        if (nextUrl.startsWith("http")) {
+          const parsed = new URL(nextUrl);
+          url = `${parsed.pathname.replace(/^\/api\/v1\//, "")}${parsed.search}`;
+        } else {
+          url = nextUrl;
+        }
+      } else {
+        url = null;
+      }
+    } else {
+      url = null;
+    }
+  }
 
-	return allResults;
+  return allResults;
 }
 
 /**
@@ -100,30 +100,30 @@ export async function getPaginated<T>(
  * Uses ts-pattern for exhaustive state matching.
  */
 export async function waitForProgress(
-	client: KyInstance,
-	progressId: number,
-	timeoutMs = 120_000,
+  client: KyInstance,
+  progressId: number,
+  timeoutMs = 120_000,
 ): Promise<CanvasProgress> {
-	const start = Date.now();
+  const start = Date.now();
 
-	while (Date.now() - start < timeoutMs) {
-		const raw = await client.get(`progress/${progressId}`).json();
-		const progress = CanvasProgress.parse(raw);
+  while (Date.now() - start < timeoutMs) {
+    const raw = await client.get(`progress/${progressId}`).json();
+    const progress = CanvasProgress.parse(raw);
 
-		const result = match(progress.workflow_state)
-			.with("completed", () => ({ done: true as const, progress }))
-			.with("failed", () => {
-				throw new Error(`Canvas progress failed: ${progress.message ?? "unknown error"}`);
-			})
-			.with("queued", "running", () => ({ done: false as const }))
-			.exhaustive();
+    const result = match(progress.workflow_state)
+      .with("completed", () => ({ done: true as const, progress }))
+      .with("failed", () => {
+        throw new Error(`Canvas progress failed: ${progress.message ?? "unknown error"}`);
+      })
+      .with("queued", "running", () => ({ done: false as const }))
+      .exhaustive();
 
-		if (result.done) return result.progress;
+    if (result.done) return result.progress;
 
-		await Bun.sleep(1000);
-	}
+    await Bun.sleep(1000);
+  }
 
-	throw new Error(`Canvas progress ${progressId} timed out after ${timeoutMs}ms`);
+  throw new Error(`Canvas progress ${progressId} timed out after ${timeoutMs}ms`);
 }
 
 /**
@@ -131,45 +131,45 @@ export async function waitForProgress(
  * Works for modules, assignments, quizzes.
  */
 export async function resolveResource<T extends { id: number; name?: string; title?: string }>(
-	items: T[],
-	identifier: string,
+  items: T[],
+  identifier: string,
 ): Promise<T> {
-	// Try numeric ID first
-	const numId = Number(identifier);
-	if (!Number.isNaN(numId)) {
-		const byId = items.find((item) => item.id === numId);
-		if (byId) return byId;
-	}
+  // Try numeric ID first
+  const numId = Number(identifier);
+  if (!Number.isNaN(numId)) {
+    const byId = items.find((item) => item.id === numId);
+    if (byId) return byId;
+  }
 
-	// Fall back to case-insensitive name match
-	const lower = identifier.toLowerCase();
-	const byName = items.find(
-		(item) => item.name?.toLowerCase() === lower || item.title?.toLowerCase() === lower,
-	);
+  // Fall back to case-insensitive name match
+  const lower = identifier.toLowerCase();
+  const byName = items.find(
+    (item) => item.name?.toLowerCase() === lower || item.title?.toLowerCase() === lower,
+  );
 
-	if (!byName) {
-		throw new Error(`Could not resolve resource: ${identifier}`);
-	}
+  if (!byName) {
+    throw new Error(`Could not resolve resource: ${identifier}`);
+  }
 
-	return byName;
+  return byName;
 }
 
 /**
  * Load Canvas token from .canvastoken file or CANVAS_TOKEN env var.
  */
 export async function loadCanvasToken(projectRoot: string): Promise<string> {
-	const tokenPath = join(projectRoot, ".canvastoken");
-	const tokenFile = Bun.file(tokenPath);
+  const tokenPath = join(projectRoot, ".canvastoken");
+  const tokenFile = Bun.file(tokenPath);
 
-	if (await tokenFile.exists()) {
-		const token = (await tokenFile.text()).trim();
-		if (token) return token;
-	}
+  if (await tokenFile.exists()) {
+    const token = (await tokenFile.text()).trim();
+    if (token) return token;
+  }
 
-	const envToken = process.env.CANVAS_TOKEN;
-	if (envToken) return envToken.trim();
+  const envToken = process.env.CANVAS_TOKEN;
+  if (envToken) return envToken.trim();
 
-	throw new Error(
-		"Canvas token not found. Create a .canvastoken file or set CANVAS_TOKEN env var.",
-	);
+  throw new Error(
+    "Canvas token not found. Create a .canvastoken file or set CANVAS_TOKEN env var.",
+  );
 }

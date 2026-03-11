@@ -21,13 +21,13 @@ cli.version("0.1.0");
 // Show help when invoked with no command args
 const hasCommand = process.argv.slice(2).some((a) => !a.startsWith("-"));
 if (
-	!hasCommand &&
-	!process.argv.includes("--help") &&
-	!process.argv.includes("-h") &&
-	!process.argv.includes("--version") &&
-	!process.argv.includes("-v")
+  !hasCommand &&
+  !process.argv.includes("--help") &&
+  !process.argv.includes("-h") &&
+  !process.argv.includes("--version") &&
+  !process.argv.includes("-v")
 ) {
-	cli.outputHelp();
+  cli.outputHelp();
 }
 
 cli.parse();

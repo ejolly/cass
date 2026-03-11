@@ -11,7 +11,7 @@ const INVALID_GRADES = new Set([undefined, null, "", "-", "?"]);
 
 /** Check if a grade value is valid for pushing. */
 export function isValidGrade(grade: string | null | undefined): boolean {
-	return !INVALID_GRADES.has(grade);
+  return !INVALID_GRADES.has(grade);
 }
 
 /** assignment_id -> { user_id -> grade_string } */
@@ -19,119 +19,119 @@ export type GradeData = Record<string, Record<string, string>>;
 
 /** Convert pending submission rows (with grade changes) to push data, filtering invalid grades. */
 export function buildGradePushData(submissions: CanvasSubmission[]): [GradeData, number] {
-	const valid = submissions.filter((s) => isValidGrade(s.posted_grade));
-	const skipped = submissions.length - valid.length;
+  const valid = submissions.filter((s) => isValidGrade(s.posted_grade));
+  const skipped = submissions.length - valid.length;
 
-	const data: GradeData = {};
-	for (const s of valid) {
-		const aidKey = String(s.canvas_assignment_id);
-		if (!data[aidKey]) data[aidKey] = {};
-		data[aidKey]![String(s.canvas_user_id)] = s.posted_grade;
-	}
+  const data: GradeData = {};
+  for (const s of valid) {
+    const aidKey = String(s.canvas_assignment_id);
+    if (!data[aidKey]) data[aidKey] = {};
+    data[aidKey]![String(s.canvas_user_id)] = s.posted_grade;
+  }
 
-	return [data, skipped];
+  return [data, skipped];
 }
 
 export interface PushPreviewItem {
-	name: string;
-	canvasId: number;
-	count: number;
-	postManually: boolean;
+  name: string;
+  canvasId: number;
+  count: number;
+  postManually: boolean;
 }
 
 /** Build a per-assignment push preview. */
 export async function buildPushPreview(
-	db: Kysely<Database>,
-	gradeData: GradeData,
+  db: Kysely<Database>,
+  gradeData: GradeData,
 ): Promise<PushPreviewItem[]> {
-	const entries = Object.entries(gradeData);
+  const entries = Object.entries(gradeData);
 
-	return Promise.all(
-		entries.map(async ([aidStr, grades]) => {
-			const aid = Number(aidStr);
-			const row = await db
-				.selectFrom("canvas_assignments")
-				.select(["name", "post_manually"])
-				.where("canvas_id", "=", aid)
-				.executeTakeFirst();
+  return Promise.all(
+    entries.map(async ([aidStr, grades]) => {
+      const aid = Number(aidStr);
+      const row = await db
+        .selectFrom("canvas_assignments")
+        .select(["name", "post_manually"])
+        .where("canvas_id", "=", aid)
+        .executeTakeFirst();
 
-			return {
-				name: row?.name ?? `Assignment ${aid}`,
-				canvasId: aid,
-				count: Object.keys(grades).length,
-				postManually: row?.post_manually === 1,
-			};
-		}),
-	);
+      return {
+        name: row?.name ?? `Assignment ${aid}`,
+        canvasId: aid,
+        count: Object.keys(grades).length,
+        postManually: row?.post_manually === 1,
+      };
+    }),
+  );
 }
 
 export type PushResult =
-	| { ok: true; canvasAssignmentId: number; count: number }
-	| { ok: false; error: string; canvasAssignmentId?: number };
+  | { ok: true; canvasAssignmentId: number; count: number }
+  | { ok: false; error: string; canvasAssignmentId?: number };
 
 /** Push grades to Canvas via bulk update endpoint. Sequential to respect rate limits. */
 export async function pushGrades(
-	client: KyInstance,
-	courseId: number,
-	gradeData: GradeData,
+  client: KyInstance,
+  courseId: number,
+  gradeData: GradeData,
 ): Promise<PushResult[]> {
-	const results: PushResult[] = [];
+  const results: PushResult[] = [];
 
-	for (const [aidStr, grades] of Object.entries(gradeData)) {
-		const aid = Number(aidStr);
-		try {
-			const gradePayload = Object.fromEntries(
-				Object.entries(grades).map(([uid, grade]) => [uid, { posted_grade: grade }]),
-			);
+  for (const [aidStr, grades] of Object.entries(gradeData)) {
+    const aid = Number(aidStr);
+    try {
+      const gradePayload = Object.fromEntries(
+        Object.entries(grades).map(([uid, grade]) => [uid, { posted_grade: grade }]),
+      );
 
-			const raw = await client
-				.post(`courses/${courseId}/assignments/${aid}/submissions/update_grades`, {
-					json: { grade_data: gradePayload },
-				})
-				.json();
+      const raw = await client
+        .post(`courses/${courseId}/assignments/${aid}/submissions/update_grades`, {
+          json: { grade_data: gradePayload },
+        })
+        .json();
 
-			const progress = CanvasProgress.parse(raw);
-			await waitForProgress(client, progress.id);
+      const progress = CanvasProgress.parse(raw);
+      await waitForProgress(client, progress.id);
 
-			results.push({ ok: true, canvasAssignmentId: aid, count: Object.keys(grades).length });
-		} catch (e) {
-			results.push({
-				ok: false,
-				error: e instanceof Error ? e.message : String(e),
-				canvasAssignmentId: aid,
-			});
-		}
-	}
+      results.push({ ok: true, canvasAssignmentId: aid, count: Object.keys(grades).length });
+    } catch (e) {
+      results.push({
+        ok: false,
+        error: e instanceof Error ? e.message : String(e),
+        canvasAssignmentId: aid,
+      });
+    }
+  }
 
-	return results;
+  return results;
 }
 
 /** Push assignment field updates to Canvas. Sequential to respect rate limits. */
 export async function pushAssignments(
-	client: KyInstance,
-	courseId: number,
-	updatesByCanvasId: Record<number, Record<string, unknown>>,
+  client: KyInstance,
+  courseId: number,
+  updatesByCanvasId: Record<number, Record<string, unknown>>,
 ): Promise<PushResult[]> {
-	const results: PushResult[] = [];
+  const results: PushResult[] = [];
 
-	for (const [idStr, updates] of Object.entries(updatesByCanvasId)) {
-		const cid = Number(idStr);
-		try {
-			await client
-				.put(`courses/${courseId}/assignments/${cid}`, {
-					json: { assignment: updates },
-				})
-				.json();
+  for (const [idStr, updates] of Object.entries(updatesByCanvasId)) {
+    const cid = Number(idStr);
+    try {
+      await client
+        .put(`courses/${courseId}/assignments/${cid}`, {
+          json: { assignment: updates },
+        })
+        .json();
 
-			results.push({ ok: true, canvasAssignmentId: cid, count: 1 });
-		} catch (e) {
-			results.push({
-				ok: false,
-				error: e instanceof Error ? e.message : String(e),
-				canvasAssignmentId: cid,
-			});
-		}
-	}
+      results.push({ ok: true, canvasAssignmentId: cid, count: 1 });
+    } catch (e) {
+      results.push({
+        ok: false,
+        error: e instanceof Error ? e.message : String(e),
+        canvasAssignmentId: cid,
+      });
+    }
+  }
 
-	return results;
+  return results;
 }

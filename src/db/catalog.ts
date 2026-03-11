@@ -8,80 +8,80 @@ import type { TableName } from "./schema.ts";
 
 /** Tables visible in the viewer, ordered by viewer_rank. */
 export type ViewerTableName =
-	| "canvas_submissions"
-	| "canvas_assignments"
-	| "gh_submissions"
-	| "gh_students"
-	| "gh_assignments"
-	| "students"
-	| "assignments";
+  | "canvas_submissions"
+  | "canvas_assignments"
+  | "gh_submissions"
+  | "gh_students"
+  | "gh_assignments"
+  | "students"
+  | "assignments";
 
 export interface TableCapability {
-	editable: boolean;
-	pushable: boolean;
-	pullGuarded: boolean;
-	viewerRank: number;
-	/** If set, only these columns are editable. null = all columns editable. */
-	editableColumns: string[] | null;
+  editable: boolean;
+  pushable: boolean;
+  pullGuarded: boolean;
+  viewerRank: number;
+  /** If set, only these columns are editable. null = all columns editable. */
+  editableColumns: string[] | null;
 }
 
 export const TABLE_CAPABILITIES: Record<ViewerTableName, TableCapability> = {
-	canvas_submissions: {
-		editable: true,
-		pushable: true,
-		pullGuarded: true,
-		viewerRank: 0,
-		editableColumns: ["posted_grade"],
-	},
-	canvas_assignments: {
-		editable: true,
-		pushable: true,
-		pullGuarded: true,
-		viewerRank: 1,
-		editableColumns: null,
-	},
-	gh_submissions: {
-		editable: false,
-		pushable: false,
-		pullGuarded: false,
-		viewerRank: 10,
-		editableColumns: null,
-	},
-	gh_students: {
-		editable: true,
-		pushable: false,
-		pullGuarded: false,
-		viewerRank: 11,
-		editableColumns: ["excluded"],
-	},
-	gh_assignments: {
-		editable: false,
-		pushable: false,
-		pullGuarded: false,
-		viewerRank: 12,
-		editableColumns: null,
-	},
-	students: {
-		editable: false,
-		pushable: false,
-		pullGuarded: false,
-		viewerRank: 20,
-		editableColumns: null,
-	},
-	assignments: {
-		editable: false,
-		pushable: false,
-		pullGuarded: false,
-		viewerRank: 21,
-		editableColumns: null,
-	},
+  canvas_submissions: {
+    editable: true,
+    pushable: true,
+    pullGuarded: true,
+    viewerRank: 0,
+    editableColumns: ["posted_grade"],
+  },
+  canvas_assignments: {
+    editable: true,
+    pushable: true,
+    pullGuarded: true,
+    viewerRank: 1,
+    editableColumns: null,
+  },
+  gh_submissions: {
+    editable: false,
+    pushable: false,
+    pullGuarded: false,
+    viewerRank: 10,
+    editableColumns: null,
+  },
+  gh_students: {
+    editable: true,
+    pushable: false,
+    pullGuarded: false,
+    viewerRank: 11,
+    editableColumns: ["excluded"],
+  },
+  gh_assignments: {
+    editable: false,
+    pushable: false,
+    pullGuarded: false,
+    viewerRank: 12,
+    editableColumns: null,
+  },
+  students: {
+    editable: false,
+    pushable: false,
+    pullGuarded: false,
+    viewerRank: 20,
+    editableColumns: null,
+  },
+  assignments: {
+    editable: false,
+    pushable: false,
+    pullGuarded: false,
+    viewerRank: 21,
+    editableColumns: null,
+  },
 };
 
 // ─── Pushable columns per table ─────────────────────────────────────
 
 export const CANVAS_PUSHABLE = {
-	canvas_assignments: ["name", "points_possible", "due_at", "published"] as const,
-	canvas_submissions: ["posted_grade"] as const,
+  canvas_assignments: ["name", "points_possible", "due_at", "published"] as const,
+  canvas_submissions: ["posted_grade"] as const,
 } as const;
 
 // ─── Derived sets ───────────────────────────────────────────────────
@@ -91,36 +91,36 @@ export const EXCLUDED_TABLES: TableName[] = ["meta"];
 
 /** Tables available for export, in order. */
 export const EXPORTABLE_TABLES: TableName[] = [
-	"students",
-	"assignments",
-	"gh_students",
-	"gh_assignments",
-	"canvas_assignments",
-	"gh_submissions",
-	"canvas_submissions",
+  "students",
+  "assignments",
+  "gh_students",
+  "gh_assignments",
+  "canvas_assignments",
+  "gh_submissions",
+  "canvas_submissions",
 ];
 
 // ─── Helper functions ───────────────────────────────────────────────
 
 function getCap(table: string): TableCapability | undefined {
-	return TABLE_CAPABILITIES[table as ViewerTableName];
+  return TABLE_CAPABILITIES[table as ViewerTableName];
 }
 
 export function isEditable(table: string): boolean {
-	return getCap(table)?.editable ?? false;
+  return getCap(table)?.editable ?? false;
 }
 
 export function isPushable(table: string): boolean {
-	return getCap(table)?.pushable ?? false;
+  return getCap(table)?.pushable ?? false;
 }
 
 export function isPullGuarded(table: string): boolean {
-	return getCap(table)?.pullGuarded ?? false;
+  return getCap(table)?.pullGuarded ?? false;
 }
 
 /** Returns restricted editable columns, or null if all columns are editable. */
 export function getEditableColumns(table: string): string[] | null {
-	const cap = getCap(table);
-	if (!cap?.editable) return null;
-	return cap.editableColumns;
+  const cap = getCap(table);
+  if (!cap?.editable) return null;
+  return cap.editableColumns;
 }
