@@ -7,7 +7,7 @@ import { createResource } from "solid-js"
 import {
   activeTable,
   searchQuery, setSearchQuery,
-  searchFocused, setSearchFocused,
+  searchFocused,
 } from "../state.ts"
 import { displayName } from "../catalog.ts"
 import { getAllRows, getTableColumns } from "@cass/db/introspection.ts"
