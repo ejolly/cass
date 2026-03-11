@@ -1,3 +1,6 @@
+/**
+ * GitHub Classroom operations — assignment/student fetch, DB conversion.
+ */
 import type { NewGHAssignment, NewGHStudent } from "../../db/schema.ts";
 import { ghApiList } from "./client.ts";
 import { GHAssignmentResponse, GHRosterEntry, GHStudentInfo } from "./schema.ts";
@@ -42,7 +45,7 @@ export async function buildRepoMap(assignmentId: number): Promise<Map<string, st
 			// grades endpoint gives repo name, construct full_name from URL
 			const urlMatch = /github\.com\/([^/]+\/[^/]+)/.exec(e.student_repository_url);
 			if (urlMatch?.[1] != null) {
-				map.set(e.github_username.toLowerCase(), urlMatch[1] as string);
+				map.set(e.github_username.toLowerCase(), urlMatch[1]);
 			}
 		}
 	}

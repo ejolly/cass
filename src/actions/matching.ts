@@ -6,14 +6,17 @@ import type { GHStudentInfo } from "../apis/github/schema.ts";
 
 /** Normalize a name for matching: lowercase, handle "Last, First", strip non-alpha, sort tokens. */
 export function normalize(name: string): string {
-	let n = name.toLowerCase();
-	// Handle "Last, First" format
-	if (n.includes(",")) {
-		const parts = n.split(",").map((p) => p.trim());
-		n = parts.reverse().join(" ");
-	}
+	const lower = name.toLowerCase();
+	// Handle "Last, First" format → "First Last"
+	const oriented = lower.includes(",")
+		? lower
+				.split(",")
+				.map((p) => p.trim())
+				.reverse()
+				.join(" ")
+		: lower;
 	// Replace non-alpha (except spaces) with spaces, split into tokens, sort
-	return n
+	return oriented
 		.replace(/[^a-z\s]/g, " ")
 		.split(/\s+/)
 		.filter(Boolean)

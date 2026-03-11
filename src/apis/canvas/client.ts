@@ -5,7 +5,7 @@
 import { join } from "node:path";
 import ky, { type KyInstance, type AfterResponseHook } from "ky";
 import { match } from "ts-pattern";
-import { CanvasProgress, type CanvasProgressState } from "./schema.ts";
+import { CanvasProgress } from "./schema.ts";
 
 const THROTTLE_THRESHOLD = 50;
 const THROTTLE_DELAY_MS = 1000;
@@ -110,7 +110,7 @@ export async function waitForProgress(
 		const raw = await client.get(`progress/${progressId}`).json();
 		const progress = CanvasProgress.parse(raw);
 
-		const result = match(progress.workflow_state as CanvasProgressState)
+		const result = match(progress.workflow_state)
 			.with("completed", () => ({ done: true as const, progress }))
 			.with("failed", () => {
 				throw new Error(`Canvas progress failed: ${progress.message ?? "unknown error"}`);

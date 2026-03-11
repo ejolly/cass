@@ -19,18 +19,13 @@ export type GradeData = Record<string, Record<string, string>>;
 
 /** Convert pending submission rows (with grade changes) to push data, filtering invalid grades. */
 export function buildGradePushData(submissions: CanvasSubmission[]): [GradeData, number] {
-	const data: GradeData = {};
-	let skipped = 0;
+	const valid = submissions.filter((s) => isValidGrade(s.posted_grade));
+	const skipped = submissions.length - valid.length;
 
-	for (const s of submissions) {
-		if (!isValidGrade(s.posted_grade)) {
-			skipped++;
-			continue;
-		}
+	const data: GradeData = {};
+	for (const s of valid) {
 		const aidKey = String(s.canvas_assignment_id);
-		if (!data[aidKey]) {
-			data[aidKey] = {};
-		}
+		if (!data[aidKey]) data[aidKey] = {};
 		data[aidKey]![String(s.canvas_user_id)] = s.posted_grade;
 	}
 
@@ -49,32 +44,32 @@ export async function buildPushPreview(
 	db: Kysely<Database>,
 	gradeData: GradeData,
 ): Promise<PushPreviewItem[]> {
-	const preview: PushPreviewItem[] = [];
+	const entries = Object.entries(gradeData);
 
-	for (const [aidStr, grades] of Object.entries(gradeData)) {
-		const aid = Number(aidStr);
-		const row = await db
-			.selectFrom("canvas_assignments")
-			.select(["name", "post_manually"])
-			.where("canvas_id", "=", aid)
-			.executeTakeFirst();
+	return Promise.all(
+		entries.map(async ([aidStr, grades]) => {
+			const aid = Number(aidStr);
+			const row = await db
+				.selectFrom("canvas_assignments")
+				.select(["name", "post_manually"])
+				.where("canvas_id", "=", aid)
+				.executeTakeFirst();
 
-		preview.push({
-			name: row?.name ?? `Assignment ${aid}`,
-			canvasId: aid,
-			count: Object.keys(grades).length,
-			postManually: row?.post_manually === 1,
-		});
-	}
-
-	return preview;
+			return {
+				name: row?.name ?? `Assignment ${aid}`,
+				canvasId: aid,
+				count: Object.keys(grades).length,
+				postManually: row?.post_manually === 1,
+			};
+		}),
+	);
 }
 
 export type PushResult =
 	| { ok: true; canvasAssignmentId: number; count: number }
 	| { ok: false; error: string; canvasAssignmentId?: number };
 
-/** Push grades to Canvas via bulk update endpoint. */
+/** Push grades to Canvas via bulk update endpoint. Sequential to respect rate limits. */
 export async function pushGrades(
 	client: KyInstance,
 	courseId: number,
@@ -85,11 +80,9 @@ export async function pushGrades(
 	for (const [aidStr, grades] of Object.entries(gradeData)) {
 		const aid = Number(aidStr);
 		try {
-			// Build the bulk grade_data payload
-			const gradePayload: Record<string, { posted_grade: string }> = {};
-			for (const [uid, grade] of Object.entries(grades)) {
-				gradePayload[uid] = { posted_grade: grade };
-			}
+			const gradePayload = Object.fromEntries(
+				Object.entries(grades).map(([uid, grade]) => [uid, { posted_grade: grade }]),
+			);
 
 			const raw = await client
 				.post(`courses/${courseId}/assignments/${aid}/submissions/update_grades`, {
@@ -113,7 +106,7 @@ export async function pushGrades(
 	return results;
 }
 
-/** Push assignment field updates to Canvas. */
+/** Push assignment field updates to Canvas. Sequential to respect rate limits. */
 export async function pushAssignments(
 	client: KyInstance,
 	courseId: number,
