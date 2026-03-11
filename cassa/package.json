@@ -4,7 +4,8 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "bun --preload @opentui/solid/preload run --watch src/index.tsx"
+    "dev": "bun --preload @opentui/solid/preload run --watch src/index.tsx",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@opentui/core": "^0.1.87",

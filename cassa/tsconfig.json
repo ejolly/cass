@@ -16,7 +16,8 @@
     "noUncheckedIndexedAccess": true,
     "baseUrl": ".",
     "paths": {
-      "@cass/*": ["../src/*"]
+      "@cass/*": ["../src/*"],
+      "@/*": ["../src/*"]
     }
   },
   "include": ["src/**/*.ts", "src/**/*.tsx"]

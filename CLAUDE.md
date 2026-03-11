@@ -21,13 +21,14 @@ The viewer (`cass/viewer/`) is a separate Python/NiceGUI app — do not modify i
 bun install                # install deps
 bun run lint               # biome check
 bun run lint:fix           # biome check --write
-bun run typecheck          # tsc --noEmit (strict)
+bun run typecheck          # tsc --noEmit (root + cassa/)
 bun test                   # bun:test
+bun run check              # lint + typecheck + test (all-in-one)
 bun run dev                # run CLI in dev mode
 bun run build              # compile to dist/cassa
 ```
 
-**Always run `bun run lint && bun run typecheck && bun test` before finishing work.**
+**Always run `bun run check` before finishing work.**
 
 ## Style
 

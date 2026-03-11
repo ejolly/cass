@@ -12,7 +12,8 @@
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "test": "bun test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc --noEmit --project cassa/tsconfig.json",
+    "check": "bun run lint && bun run typecheck && bun test"
   },
   "dependencies": {
     "@clack/prompts": "^0.10",
