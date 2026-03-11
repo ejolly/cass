@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { getAllRows, getTableColumns, rawQuery, updateCell } from "@/db/introspection.ts";
+import type { Database } from "@/db/schema.ts";
 import type { Kysely } from "kysely";
-import { getAllRows, getTableColumns, rawQuery, updateCell } from "../../src/db/introspection.ts";
-import type { Database } from "../../src/db/schema.ts";
 import { createTestDb, seedTestData } from "./helpers.ts";
 
 describe("introspection", () => {

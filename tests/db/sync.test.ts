@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import type { Kysely } from "kysely";
-import type { Database } from "../../src/db/schema.ts";
+import type { Database } from "@/db/schema.ts";
 import {
   getPendingAssignmentChanges,
   getPendingGradeChanges,
@@ -8,7 +7,8 @@ import {
   revertGrades,
   snapshotAssignmentsSynced,
   snapshotGradesSynced,
-} from "../../src/db/sync.ts";
+} from "@/db/sync.ts";
+import type { Kysely } from "kysely";
 import { createTestDb, seedTestData } from "./helpers.ts";
 
 describe("sync", () => {

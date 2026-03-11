@@ -1,8 +1,8 @@
 /**
  * Student matching — name normalization and slug matching.
  */
-import type { CanvasStudentResponse } from "../apis/canvas/schema.ts";
-import type { GHStudentInfo } from "../apis/github/schema.ts";
+import type { CanvasStudentResponse } from "@/apis/canvas/schema.ts";
+import type { GHStudentInfo } from "@/apis/github/schema.ts";
 
 /** Normalize a name for matching: lowercase, handle "Last, First", strip non-alpha, sort tokens. */
 export function normalize(name: string): string {

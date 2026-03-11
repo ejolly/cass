@@ -113,7 +113,7 @@ describe("query with in-memory-like DB", () => {
     // Create DB with schema via a small setup script
     const setupScript = `
 			import { createDb } from "${BIN.replace("index.ts", "db/connection.ts")}";
-			import { up } from "${join(import.meta.dir, "../../migrations/001_initial.ts")}";
+			import { up } from "${join(import.meta.dir, "../../src/db/migrations/001_initial.ts")}";
 			const db = createDb("${join(tmpDir, "cass.db")}");
 			await up(db);
 			await db.destroy();

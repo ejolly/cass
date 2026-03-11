@@ -1,7 +1,7 @@
 /**
  * GitHub Classroom operations — assignment/student fetch, DB conversion.
  */
-import type { NewGHAssignment, NewGHStudent } from "../../db/schema.ts";
+import type { NewGHAssignment, NewGHStudent } from "@/db/schema.ts";
 import { ghApiList } from "./client.ts";
 import { GHAssignmentResponse, GHRosterEntry, GHStudentInfo } from "./schema.ts";
 

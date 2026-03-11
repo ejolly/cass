@@ -1,8 +1,8 @@
+import type { NewCanvasAssignment, NewCanvasSubmission, NewStudent } from "@/db/schema.ts";
 /**
  * Canvas roster and submission fetching — transforms API responses to DB rows.
  */
 import type { KyInstance } from "ky";
-import type { NewCanvasAssignment, NewCanvasSubmission, NewStudent } from "../../db/schema.ts";
 import { getPaginated } from "./client.ts";
 import {
   CanvasAssignmentGroup,

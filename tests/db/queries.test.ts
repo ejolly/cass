@@ -1,12 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { queryAssignments, queryDataset, queryStudents, querySubmissions } from "@/db/queries.ts";
+import type { Database } from "@/db/schema.ts";
 import type { Kysely } from "kysely";
-import {
-  queryAssignments,
-  queryDataset,
-  queryStudents,
-  querySubmissions,
-} from "../../src/db/queries.ts";
-import type { Database } from "../../src/db/schema.ts";
 import { createTestDb, seedTestData } from "./helpers.ts";
 
 describe("queries", () => {

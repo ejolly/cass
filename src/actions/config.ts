@@ -2,9 +2,10 @@
  * Config loading — smol-toml parsing + zod validated config.
  */
 import { join } from "node:path";
+import { ConfigError } from "@/errors.ts";
+import { findProjectRoot } from "@/utils/paths.ts";
 import { parse as parseTOML, stringify as stringifyTOML } from "smol-toml";
 import { z } from "zod";
-import { findProjectRoot } from "../utils/paths.ts";
 
 // ─── Config schema ──────────────────────────────────────────────────
 
@@ -121,7 +122,7 @@ let _cached: Config | null = null;
 
 export async function loadConfig(): Promise<Config> {
   const root = await findProjectRoot();
-  if (!root) throw new Error("Could not find cass.toml in any parent directory");
+  if (!root) throw new ConfigError("Could not find cass.toml in any parent directory");
 
   const tomlPath = join(root, "cass.toml");
   const text = await Bun.file(tomlPath).text();

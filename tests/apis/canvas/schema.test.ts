@@ -7,7 +7,7 @@ import {
   CanvasStudentResponse,
   CanvasSubmissionResponse,
   CanvasTab,
-} from "../../../src/apis/canvas/schema.ts";
+} from "@/apis/canvas/schema.ts";
 
 describe("Canvas Zod schemas", () => {
   it("parses a course response", () => {

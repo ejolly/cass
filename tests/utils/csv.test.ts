@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { parseCsv, toCsv, toCsvWithColumns } from "../../src/utils/csv.ts";
+import { parseCsv, toCsv, toCsvWithColumns } from "@/utils/csv.ts";
 
 describe("csv utils", () => {
   it("parses CSV to objects", () => {

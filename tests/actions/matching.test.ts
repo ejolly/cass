@@ -5,9 +5,9 @@ import {
   normalize,
   slugMatch,
   slugify,
-} from "../../src/actions/matching.ts";
-import type { CanvasStudentResponse } from "../../src/apis/canvas/schema.ts";
-import type { GHStudentInfo } from "../../src/apis/github/schema.ts";
+} from "@/actions/matching.ts";
+import type { CanvasStudentResponse } from "@/apis/canvas/schema.ts";
+import type { GHStudentInfo } from "@/apis/github/schema.ts";
 
 describe("matching", () => {
   describe("normalize", () => {

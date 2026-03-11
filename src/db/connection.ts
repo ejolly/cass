@@ -3,12 +3,11 @@ import { Database as SQLiteDatabase } from "bun:sqlite";
  * Database connection — lazy singleton using bun:sqlite + kysely.
  */
 import { join } from "node:path";
+import { ConfigError } from "@/errors.ts";
+import { findProjectRoot } from "@/utils/paths.ts";
 import { Kysely } from "kysely";
 import { BunSqliteDialect } from "kysely-bun-sqlite";
-import { findProjectRoot } from "../utils/paths.ts";
 import type { Database } from "./schema.ts";
-
-export { findProjectRoot };
 
 let _db: Kysely<Database> | null = null;
 
@@ -43,7 +42,7 @@ export async function closeDb(): Promise<void> {
 export async function dbPath(from?: string): Promise<string> {
   const root = await findProjectRoot(from);
   if (!root) {
-    throw new Error("Could not find cass.toml in any parent directory");
+    throw new ConfigError("Could not find cass.toml in any parent directory");
   }
   return join(root, "cass.db");
 }

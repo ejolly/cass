@@ -7,7 +7,7 @@ import {
   hasClassroomUrl,
   parseCanvasCourseUrl,
   parseClassroomUrl,
-} from "../../src/actions/config.ts";
+} from "@/actions/config.ts";
 
 const baseConfig: Config = {
   root: "/tmp/test",
