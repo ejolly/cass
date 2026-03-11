@@ -77,10 +77,9 @@ Full rewrite of cass (excluding viewer) from Python to TypeScript, using Bun as 
 
 ## Current State
 
-- **106 tests passing**, lint clean, typecheck clean
+- **131 tests passing**, lint clean, typecheck clean
 - Schema v16: 8 tables (down from 12), no shadow tables
-- `src/cli/` is empty — Phase 5 not started
-- `src/index.ts` (CLI entry point) does not exist yet
+- Full CLI implemented: 40+ flat commands via cac, binary name `cassa`
 - `src/db/views.ts` (gradebook matrix pivot) and `src/db/cache.ts` (request caching) not yet implemented
 - `src/apis/github/service.ts` not yet implemented (may not be needed — classroom.ts covers it)
 
@@ -106,40 +105,23 @@ title = "201b-W26"
 
 Config fields: `slug`, `title`, `org` are populated during classroom resolution and used for display in `status`/`init`. `canvasModules` and `canvasAssignments` are optional TOML arrays used by `canvas-sync`.
 
+### Phase 5: CLI Layer ✅
+- `src/index.ts` — cac entry point (`cassa`), flat command registration, auto-help on no args
+- `src/cli/index.ts` — 10 root commands: status, init, pull, push, revert, query, pull-repos, delete, backup, restore
+- `src/cli/canvas.ts` — 30+ canvas commands: course overview, people, modules (CRUD), assignments (CRUD + groups), quizzes (CRUD), files (list/upload/delete), announcements (CRUD), tabs (show/hide), canvas-sync (dry-run/push)
+- `src/cli/report.ts` — formatTable (cli-table3), formatCsv (papaparse), formatMarkdown (GFM), formatRows dispatcher
+- All list commands support `--csv` and `--save` output formats
+- 25 CLI tests (subprocess-based: help, version, status, query, push, revert, backup, delete)
+- Binary name: `cassa` (avoids conflict with Python `cass`)
+
 ## Remaining Work
-
-### Phase 5: CLI Layer (`src/cli/`)
-
-- [ ] **`src/index.ts`** — cac entry point, flat command registration, `cli.help()`, `cli.version()`, `cli.parse()`
-- [ ] **Root commands** (`src/cli/index.ts`):
-  - `status` — sync overview (consola.box for summary panel)
-  - `init` — interactive setup (@clack/prompts: text for URLs, confirm, select). Uses `parseCanvasCourseUrl()`, `parseClassroomUrl()`, `updateConfig()`. ts-pattern for ConfigState dispatch
-  - `pull` — fetch APIs → DB (`--students`, `--assignments`, `--submissions`, `--limit`). PullMode dispatch via ts-pattern. consola for progress
-  - `push` — preview + push Canvas changes (`--yes`). Render PushResult with ts-pattern `.exhaustive()`
-  - `revert` — revert pending changes (`--yes`)
-  - `query <dataset>` — query datasets (`--where`, `--order`, `--limit`, `--sql`). cli-table3 for output
-  - `pull-repos` — clone/update repos (`-a`, `-s`, `-n`)
-  - `delete` — delete DB (`--yes`)
-  - `backup` — `Bun.write(backupPath, Bun.file(dbPath))` (`--tag`, `--list`)
-  - `restore <file>` — `Bun.write(dbPath, Bun.file(backupPath))` (`--yes`)
-- [ ] **Canvas commands** (`src/cli/canvas.ts`):
-  - `canvas` (course overview), `canvas-people`, `canvas-modules`, `canvas-modules-create`, `canvas-modules-publish`, `canvas-modules-unpublish`, `canvas-modules-delete`, `canvas-modules-add-item`
-  - `canvas-assignments`, `canvas-assignments-groups`, `canvas-assignments-create`, `canvas-assignments-publish`, `canvas-assignments-unpublish`, `canvas-assignments-delete`
-  - `canvas-quizzes`, `canvas-quizzes-create`, `canvas-quizzes-publish`, `canvas-quizzes-unpublish`, `canvas-quizzes-delete`
-  - `canvas-files`, `canvas-files-upload`, `canvas-files-delete`
-  - `canvas-announcements`, `canvas-announcements-create`, `canvas-announcements-update`, `canvas-announcements-delete`
-  - `canvas-tabs`, `canvas-tabs-show`, `canvas-tabs-hide`
-  - `canvas-sync` (`--push`, `--force`) — uses `cfg.canvasModules` / `cfg.canvasAssignments`
-  - All list commands: `--csv` (papaparse), `--save` (Bun.write)
-- [ ] **`src/cli/report.ts`** — shared table rendering (cli-table3), CSV/markdown export helpers
 
 ### Phase 6: Testing & Polish
 
-- [ ] CLI end-to-end test with real `cass.toml`
 - [ ] Implement `src/db/views.ts` (gradebook matrix pivot) if needed by `query gradebook`
 - [ ] Implement `src/db/cache.ts` (request caching with TTL) if needed
 - [ ] Update `CLAUDE.md` with TS dev instructions
-- [ ] Verify `bun link` makes `cass` available globally
+- [ ] Verify `bun link` / global install for `cassa`
 - [ ] Remove Python files from branch (pyproject.toml, uv.lock, cass/ Python package)
 
 ## Key Design Decisions
