@@ -23,6 +23,7 @@ memory/
 dev.py
 .canvastoken
 *.db
+*.duckdb
 tests/testdb/
 dist/
 .env.*

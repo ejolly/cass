@@ -17,12 +17,11 @@ CLI / Viewer  →  actions/  →  db/     →  SQLite
 
 ```bash
 uv sync                    # install deps
-uv run poe lint            # ruff format → ruff check → ty → basedpyright
-uv run poe test            # pytest
+uv run poe ok            # formats, lints, tests
 uv run poe install         # uv tool install . --force
 ```
 
-**Always run `uv run poe lint && uv run poe test` before finishing work.**
+**Always run `uv run poe ok` before finishing work.**
 
 Use `symbex` for token-efficient code exploration:
 
