@@ -49,45 +49,71 @@ def _detect_state() -> str:
     return "ready"
 
 
-def start_nicegui_server(port: int = 0, *, project_root: Path | None = None) -> None:
+def start_nicegui_server(
+    port: int = 0,
+    *,
+    project_root: Path | None = None,
+    generic_file: Path | None = None,
+) -> None:
     """Start the NiceGUI viewer, open the browser, block until Ctrl+C.
 
     Args:
         port: Port number to bind to. 0 = auto-select an available port.
+        project_root: Path to the cass project root (cass-specific viewer).
+        generic_file: Path to a .duckdb or .db file (generic viewer).
 
-    Routes based on project state:
+    Routes based on project state (when generic_file is None):
     - No cass.toml → setup wizard
     - cass.toml but no database → auto-pull with progress
     - Both exist → normal table viewer
     """
-    from .setup import pull_progress_page, setup_wizard_page
+    if generic_file is not None:
 
-    @ui.page("/")
-    def root_page() -> None:  # pyright: ignore[reportUnusedFunction]
-        state = _detect_state()
-        if state == "setup":
-            setup_wizard_page(on_complete=lambda: ui.navigate.to("/pull"))
-        elif state == "pull":
+        @ui.page("/")
+        def generic_root() -> None:  # pyright: ignore[reportUnusedFunction]
+            _render_generic_viewer(generic_file)
+
+        title = f"cass \u2014 {generic_file.name}"
+    else:
+        from .setup import pull_progress_page, setup_wizard_page
+
+        @ui.page("/")
+        def root_page() -> None:  # pyright: ignore[reportUnusedFunction]
+            state = _detect_state()
+            if state == "setup":
+                setup_wizard_page(on_complete=lambda: ui.navigate.to("/pull"))
+            elif state == "pull":
+                pull_progress_page(on_complete=lambda: ui.navigate.to("/view"))
+            else:
+                ui.navigate.to("/view")
+
+        @ui.page("/pull")
+        def pull_page() -> None:  # pyright: ignore[reportUnusedFunction]
             pull_progress_page(on_complete=lambda: ui.navigate.to("/view"))
-        else:
-            ui.navigate.to("/view")
 
-    @ui.page("/pull")
-    def pull_page() -> None:  # pyright: ignore[reportUnusedFunction]
-        pull_progress_page(on_complete=lambda: ui.navigate.to("/view"))
+        @ui.page("/view")
+        def view_page() -> None:  # pyright: ignore[reportUnusedFunction]
+            _render_viewer(project_root)
 
-    @ui.page("/view")
-    def view_page() -> None:  # pyright: ignore[reportUnusedFunction]
-        _render_viewer(project_root)
+        title = "cass viewer"
 
     ui.run(  # pyright: ignore[reportUnknownMemberType]
-        title="cass viewer",
+        title=title,
         port=port if port > 0 else None,
         dark=True,
         reload=False,
         show=True,
         favicon="\U0001f4ca",
     )
+
+
+def _render_generic_viewer(filepath: Path) -> None:
+    """Render the generic viewer for an arbitrary SQLite/DuckDB file."""
+    from ..db.ibis_adapter import connect_file
+    from .generic_page import GenericViewerPage
+
+    con = connect_file(filepath)
+    GenericViewerPage(con, filepath)
 
 
 def _render_viewer(project_root: Path | None = None) -> None:

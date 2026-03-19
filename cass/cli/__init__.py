@@ -1012,10 +1012,21 @@ def restore(
 
 @app.command()
 def view(
+    filepath: str = typer.Argument("", help="Path to a .duckdb or .db file (optional)"),
     port: int = typer.Option(0, "--port", help="Port number (0 = auto-select)"),
 ) -> None:
     """Open the database in a browser-based viewer."""
-    from ..actions.config import get_config
-    from ..viewer.nicegui_app import start_nicegui_server
+    if filepath:
+        path = Path(filepath).resolve()
+        if not path.exists():
+            raise SystemExit(f"File not found: {path}")
+        if path.suffix not in {".duckdb", ".db"}:
+            raise SystemExit(f"Unsupported file type: {path.suffix}")
+        from ..viewer.nicegui_app import start_nicegui_server
 
-    start_nicegui_server(port=port, project_root=get_config().root)
+        start_nicegui_server(port=port, generic_file=path)
+    else:
+        from ..actions.config import get_config
+        from ..viewer.nicegui_app import start_nicegui_server
+
+        start_nicegui_server(port=port, project_root=get_config().root)
