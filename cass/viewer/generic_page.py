@@ -58,7 +58,7 @@ class GenericViewerPage:
 
         with splitter.after, ui.column().classes("v-main-col"):
             self._build_toolbar(toggle_sidebar=_toggle_sidebar)
-            self.grid_container = ui.column().classes("w-full flex-1")
+            self.grid_container = ui.element("div").classes("v-grid-container")
 
         if self.tables:
             self.load_table(self.tables[0]["name"])
@@ -155,19 +155,27 @@ class GenericViewerPage:
         if self.grid_container is not None:
             self.grid_container.clear()
             with self.grid_container:
-                self.grid = ui.aggrid(
-                    {
-                        "columnDefs": col_defs,
-                        "rowData": rows,
-                        "defaultColDef": {
-                            "flex": 1,
-                            "minWidth": 100,
+                self.grid = (
+                    ui.aggrid(
+                        {
+                            "columnDefs": col_defs,
+                            "rowData": rows,
+                            "defaultColDef": {
+                                "sortable": True,
+                                "resizable": True,
+                                "minWidth": 80,
+                                "flex": 1,
+                            },
+                            "animateRows": True,
+                            "enableCellTextSelection": True,
+                            ":getRowId": f"(params) => {row_id_js}",
                         },
-                        ":getRowId": f"(params) => {row_id_js}",
-                    },
-                    html_columns=[],
-                    theme="balham",
-                ).classes("w-full flex-1")
+                        html_columns=[],
+                        theme="quartz",
+                    )
+                    .classes("v-grid")
+                    .style("height: calc(100vh - 6rem)")
+                )
 
                 attach_generic_edit_handler(
                     self.grid,
@@ -176,6 +184,19 @@ class GenericViewerPage:
                     pk_cols,
                     use_rowid=use_rowid,
                 )
+
+            # AG Grid adds ag-delay-render to hide rows until initial
+            # render completes, but inside a splitter the grid never
+            # receives the resize event that clears it.  Force-remove
+            # the class after a short delay so rows become visible.
+            ui.timer(
+                0.1,
+                lambda: ui.run_javascript(
+                    "document.querySelectorAll('.ag-delay-render')"
+                    ".forEach(el => el.classList.remove('ag-delay-render'))"
+                ),
+                once=True,
+            )
 
         # Update metadata
         if self.meta_label is not None:
@@ -219,17 +240,21 @@ class GenericViewerPage:
         if self.grid_container is not None:
             self.grid_container.clear()
             with self.grid_container:
-                self.grid = ui.aggrid(
-                    {
-                        "columnDefs": col_defs,
-                        "rowData": rows,
-                        "defaultColDef": {
-                            "flex": 1,
-                            "minWidth": 100,
+                self.grid = (
+                    ui.aggrid(
+                        {
+                            "columnDefs": col_defs,
+                            "rowData": rows,
+                            "defaultColDef": {
+                                "flex": 1,
+                                "minWidth": 80,
+                            },
                         },
-                    },
-                    theme="balham",
-                ).classes("w-full flex-1")
+                        theme="quartz",
+                    )
+                    .classes("v-grid")
+                    .style("height: calc(100vh - 6rem)")
+                )
 
         if self.meta_label is not None:
             self.meta_label.text = f"{len(rows)} rows \u00b7 {len(columns)} columns"
