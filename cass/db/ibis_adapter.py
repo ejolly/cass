@@ -129,6 +129,33 @@ def update_cell(
         return {"ok": False, "error": str(exc)}
 
 
+def get_categorical_columns(
+    con: BaseBackend, table: str, *, max_distinct: int = 10
+) -> dict[str, list[str]]:
+    """Detect string columns with few distinct values and return their options.
+
+    Args:
+        con: ibis connection.
+        table: Table name.
+        max_distinct: Maximum distinct values to qualify as categorical.
+
+    Returns:
+        Mapping of column name to sorted list of distinct values.
+    """
+    t = con.table(table)
+    schema = t.schema()
+    result: dict[str, list[str]] = {}
+    for col_name, dtype in schema.items():
+        dtype_str = str(dtype).lower()
+        if "string" not in dtype_str and "varchar" not in dtype_str:
+            continue
+        distinct = t.select(col_name).distinct().execute()
+        values = [str(v) for v in distinct[col_name] if v is not None]
+        if 0 < len(values) <= max_distinct:
+            result[col_name] = sorted(values)
+    return result
+
+
 def run_sql(con: BaseBackend, sql: str) -> tuple[list[str], list[dict[str, Any]]]:
     """Execute raw SQL and return (column_names, list_of_row_dicts)."""
     cursor = con.raw_sql(sql)

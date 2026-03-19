@@ -11,6 +11,7 @@ from ibis import BaseBackend
 from nicegui import ui
 
 from ..db.ibis_adapter import (
+    get_categorical_columns,
     get_primary_keys,
     get_row_count,
     get_rows,
@@ -138,7 +139,10 @@ class GenericViewerPage:
         pk_cols = get_primary_keys(self.con, table_name)
         use_rowid = len(pk_cols) == 0
         rows = get_rows(self.con, table_name)
-        col_defs = build_generic_column_defs(schema, pk_cols, use_rowid=use_rowid)
+        categoricals = get_categorical_columns(self.con, table_name)
+        col_defs = build_generic_column_defs(
+            schema, pk_cols, use_rowid=use_rowid, categoricals=categoricals
+        )
 
         # Row ID expression for AG Grid
         if pk_cols:

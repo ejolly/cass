@@ -16,6 +16,7 @@ def build_generic_column_defs(
     *,
     editable: bool = True,
     use_rowid: bool = False,
+    categoricals: dict[str, list[str]] | None = None,
 ) -> list[dict[str, Any]]:
     """Build AG Grid column definitions from an ibis schema.
 
@@ -24,7 +25,10 @@ def build_generic_column_defs(
         pk_cols: Primary key column names.
         editable: Whether non-PK columns should be editable.
         use_rowid: If True, add a hidden rowid column for editing.
+        categoricals: Mapping of column name to list of distinct values
+            for columns that should use a dropdown selector.
     """
+    categoricals = categoricals or {}
     defs: list[dict[str, Any]] = []
     for name, dtype in schema:
         dtype_lower = dtype.lower()
@@ -48,12 +52,25 @@ def build_generic_column_defs(
 
         if col_is_editable:
             col_def["editable"] = True
-            numeric = ("int", "float", "double", "real", "decimal")
-            if any(t in dtype_lower for t in numeric):
+
+            if name in categoricals:
+                col_def["cellEditor"] = "agSelectCellEditor"
+                col_def["cellEditorParams"] = {"values": categoricals[name]}
+            elif any(
+                t in dtype_lower for t in ("int", "float", "double", "real", "decimal")
+            ):
                 col_def["cellEditor"] = "agNumberCellEditor"
+                params: dict[str, Any] = {"showStepperButtons": True}
+                if "int" in dtype_lower:
+                    params["precision"] = 0
+                    params["step"] = 1
+                col_def["cellEditorParams"] = params
             elif "bool" in dtype_lower:
                 col_def["cellRenderer"] = "agCheckboxCellRenderer"
-            elif any(t in dtype_lower for t in ("date", "timestamp")):
+            elif "timestamp" in dtype_lower:
+                col_def["cellEditor"] = "agDateStringCellEditor"
+                col_def["cellEditorParams"] = {"includeTime": True}
+            elif "date" in dtype_lower:
                 col_def["cellEditor"] = "agDateStringCellEditor"
 
         defs.append(col_def)
