@@ -28,6 +28,7 @@ from rich.table import Table
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 BUMP_LEVELS = ("patch", "minor", "major")
 SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
+RELEASE_FILES = ("pyproject.toml", "uv.lock", "CHANGELOG.md")
 
 console = Console()
 
@@ -131,10 +132,15 @@ def main() -> None:
     if not confirm(f"Create release commit and tag {tag}?"):
         abort("Cancelled. Nothing changed.")
 
-    run(["uv", "version", version])
-    run(["git", "cliff", "--tag", tag, "-o", "CHANGELOG.md"])
-    run(["git", "add", "pyproject.toml", "uv.lock", "CHANGELOG.md"])
-    run(["git", "commit", "-m", f"chore(release): {tag}"])
+    try:
+        run(["uv", "version", version])
+        run(["git", "cliff", "--tag", tag, "-o", "CHANGELOG.md"])
+        run(["git", "add", *RELEASE_FILES])
+        run(["git", "commit", "-m", f"chore(release): {tag}"])
+    except SystemExit:
+        subprocess.run(["git", "checkout", "--", *RELEASE_FILES], cwd=PROJECT_ROOT)
+        console.print(f"  Restored {', '.join(RELEASE_FILES)} to HEAD.")
+        raise
     run(["git", "tag", "-a", tag, "-m", f"cassroom {version}"])
     console.print(f"  Committed and tagged [bold]{tag}[/]")
 

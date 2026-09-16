@@ -147,5 +147,5 @@ help = "Install cass as a global CLI tool"
 cmd = "uv tool install . --force --reinstall"
 
 [tool.poe.tasks.release]
-help = "Release to PyPI: [pypi|testpypi] [patch|minor|major]"
+help = "Cut a release: [patch|minor|major|X.Y.Z] [--dry-run]; CI publishes on tag push"
 cmd = "python scripts/release.py"
