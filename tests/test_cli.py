@@ -639,6 +639,189 @@ class TestSessionCookieAuth:
         assert "Canvas rejected the session cookie" in capsys.readouterr().out
 
 
+class TestCliErrors:
+    def _run_with(self, monkeypatch, exc: Exception):
+        from cass.cli import run
+
+        def boom() -> None:
+            raise exc
+
+        monkeypatch.setattr("cass.cli.app", boom)
+        with pytest.raises(SystemExit) as info:
+            run()
+        return info.value.code
+
+    def test_run_prints_http_error_without_traceback(self, monkeypatch, capsys):
+        import httpx
+
+        req = httpx.Request("DELETE", "https://canvas.example.com/api/v1/modules/1")
+        resp = httpx.Response(404, request=req, json={"errors": [{"message": "x"}]})
+        exc = httpx.HTTPStatusError("nope", request=req, response=resp)
+        assert self._run_with(monkeypatch, exc) == 1
+        out = capsys.readouterr().out
+        assert "404" in out
+        assert "/modules/1" in out
+        assert "Traceback" not in out
+
+    def test_run_prints_runtime_error_without_traceback(self, monkeypatch, capsys):
+        code = self._run_with(monkeypatch, RuntimeError("Assignment not found: nope"))
+        assert code == 1
+        out = capsys.readouterr().out
+        assert "Assignment not found: nope" in out
+        assert "Traceback" not in out
+
+
+class TestReportHelpers:
+    def test_due_renders_local_date(self, monkeypatch):
+        from cass.cli.canvas import due
+
+        monkeypatch.setenv("TZ", "America/Los_Angeles")
+        time.tzset()
+        # 23:59 PDT on Oct 1 is 06:59Z on Oct 2 — must still show Oct 1
+        assert due("2026-10-02T06:59:00Z") == "2026-10-01"
+        assert due("2026-10-01T23:59:00-07:00") == "2026-10-01"
+        assert due(None) == ""
+
+    def test_row_count_pluralizes(self, capsys):
+        from cass.cli import report
+
+        report.render_list(["A"], [["x"]])
+        assert "1 row\n" in capsys.readouterr().out
+        report.render_list(["A"], [["x"], ["y"]])
+        assert "2 rows" in capsys.readouterr().out
+        report.render_list(["A"], [])
+        assert "0 rows" in capsys.readouterr().out
+
+
+class TestCanvasModules:
+    @pytest.fixture
+    def modules_client(self, monkeypatch):
+        from cass.apis.canvas.schema import CanvasModule
+
+        fake = MagicMock()
+        fake.__enter__.return_value = fake
+        fake.list_modules.return_value = [
+            CanvasModule(id=1, name="Week 1", position=1),
+            CanvasModule(id=2, name="Week 2", position=2),
+        ]
+        fake.resolve_module.return_value = CanvasModule(id=1, name="Week 1", position=1)
+        monkeypatch.setattr("cass.cli.canvas.require_canvas", lambda: None)
+        monkeypatch.setattr("cass.cli.canvas.client", lambda: fake)
+        return fake
+
+    def test_publish_all_without_id(self, modules_client):
+        result = runner.invoke(app, ["canvas", "modules", "publish", "--all"])
+        assert result.exit_code == 0, result.output
+        assert modules_client.publish.call_count == 2
+        assert "Week 2" in result.stdout
+
+    def test_publish_requires_id_or_all(self, modules_client):
+        result = runner.invoke(app, ["canvas", "modules", "publish"])
+        assert result.exit_code == 1
+        assert "Give a module ID or name, or --all" in result.output
+        modules_client.publish.assert_not_called()
+
+    def test_add_item_defaults_title_to_content(self, modules_client):
+        result = runner.invoke(
+            app,
+            [
+                "canvas",
+                "modules",
+                "add-item",
+                "Week 1",
+                "--type",
+                "Assignment",
+                "--content-id",
+                "42",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        modules_client.create_module_item.assert_called_once_with(
+            1, item_type="Assignment", content_id=42, title=None
+        )
+
+
+class TestCanvasQuizzes:
+    def test_create_has_no_points_option(self, monkeypatch):
+        monkeypatch.setattr("cass.cli.canvas.require_canvas", lambda: None)
+        result = runner.invoke(app, ["canvas", "quizzes", "create", "--help"])
+        assert result.exit_code == 0
+        assert "--points" not in result.stdout
+
+
+class TestCanvasSync:
+    def test_due_at_with_offset_is_idempotent(self, monkeypatch, tmp_path):
+        from cass.apis.canvas.schema import CanvasAssignmentResponse
+
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "cass.toml").write_text(
+            '[canvas]\nbase_url = "https://canvas.example.com"\ncourse_id = 1\n'
+            '\n[[canvas.assignments]]\nname = "HW1"\npoints = 10\n'
+            'due_at = "2026-10-01T23:59:00-07:00"\npublished = true\n'
+        )
+        fake = MagicMock()
+        fake.__enter__.return_value = fake
+        fake.list_assignments.return_value = [
+            CanvasAssignmentResponse(
+                id=1,
+                name="HW1",
+                points_possible=10,
+                due_at="2026-10-02T06:59:00Z",
+                published=True,
+            )
+        ]
+        monkeypatch.setattr("cass.cli.canvas.client", lambda: fake)
+
+        result = runner.invoke(app, ["canvas", "sync"])
+        assert result.exit_code == 0, result.output
+        assert "0 create, 0 update, 1 skip" in result.stdout
+
+
+class TestCanvasTabsAndFiles:
+    @pytest.fixture
+    def fake_client(self, monkeypatch):
+        from cass.apis.canvas.schema import CanvasFile, CanvasFolder, CanvasTab
+
+        fake = MagicMock()
+        fake.__enter__.return_value = fake
+        fake.resolve_tab.return_value = CanvasTab(
+            id="context_external_tool_5826", label="Media Gallery"
+        )
+        fake.update_tab.return_value = CanvasTab(
+            id="context_external_tool_5826", label="Media Gallery", hidden=True
+        )
+        fake.list_folders.return_value = [
+            CanvasFolder(id=1, name="course files", full_name="course files")
+        ]
+        fake.list_files.return_value = [
+            CanvasFile(id=18962999, display_name="notes.txt", size=20, folder_id=1)
+        ]
+        monkeypatch.setattr("cass.cli.canvas.require_canvas", lambda: None)
+        monkeypatch.setattr("cass.cli.canvas.client", lambda: fake)
+        return fake
+
+    def test_hide_tab_resolves_by_label(self, fake_client):
+        result = runner.invoke(app, ["canvas", "hide-tab", "Media Gallery"])
+        assert result.exit_code == 0, result.output
+        fake_client.resolve_tab.assert_called_once_with("Media Gallery")
+        fake_client.update_tab.assert_called_once_with(
+            "context_external_tool_5826", hidden=True
+        )
+
+    def test_show_tab_resolves_by_label(self, fake_client):
+        result = runner.invoke(app, ["canvas", "show-tab", "media gallery"])
+        assert result.exit_code == 0, result.output
+        fake_client.update_tab.assert_called_once_with(
+            "context_external_tool_5826", hidden=False
+        )
+
+    def test_files_tree_shows_ids(self, fake_client):
+        result = runner.invoke(app, ["canvas", "files"])
+        assert result.exit_code == 0, result.output
+        assert "notes.txt" in result.stdout
+        assert "18962999" in result.stdout
+
+
 class TestCanvasCalendar:
     def test_when_converts_utc_to_local(self, monkeypatch):
         from cass.cli.canvas import when

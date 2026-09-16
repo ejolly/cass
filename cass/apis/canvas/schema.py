@@ -146,7 +146,7 @@ class CanvasAssignmentResponse(msgspec.Struct):
 
     id: int
     name: str
-    points_possible: float = 0.0
+    points_possible: float | None = None  # null for quizzes with no questions
     due_at: str | None = None
     published: bool = False
     submission_types: list[str] = []

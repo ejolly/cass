@@ -480,26 +480,27 @@ class CanvasClient:
         self,
         module_id: int,
         *,
-        title: str,
         item_type: str,
         content_id: int,
+        title: str | None = None,
     ) -> CanvasModuleItem:
         """Add an item to a module.
 
         Args:
             module_id: Canvas module ID.
-            title: Item title.
             item_type: Item type (Assignment, Quiz, File, etc.).
             content_id: ID of the linked content.
+            title: Item title; Canvas uses the content's name when omitted.
 
         Returns:
             The created module item.
         """
-        params = {
-            "module_item[title]": title,
+        params: dict[str, object] = {
             "module_item[type]": item_type,
             "module_item[content_id]": content_id,
         }
+        if title:
+            params["module_item[title]"] = title
         resp = self._client.post(
             self._course(f"/modules/{module_id}/items"), data=params
         )
@@ -876,17 +877,18 @@ mutation ($assignmentId: ID!) {
         title: str,
         *,
         quiz_type: str = "assignment",
-        points_possible: float | None = None,
         published: bool = False,
         time_limit: int | None = None,
         description: str | None = None,
     ) -> CanvasQuiz:
         """Create a new quiz.
 
+        Points are not settable here: Canvas derives a quiz's points from its
+        questions.
+
         Args:
             title: Quiz title.
             quiz_type: Quiz type (practice_quiz, assignment, graded_survey, survey).
-            points_possible: Total points.
             published: Whether to publish immediately.
             time_limit: Time limit in minutes.
             description: HTML description.
@@ -899,8 +901,6 @@ mutation ($assignmentId: ID!) {
             "quiz[quiz_type]": quiz_type,
             "quiz[published]": published,
         }
-        if points_possible is not None:
-            params["quiz[points_possible]"] = points_possible
         if time_limit is not None:
             params["quiz[time_limit]"] = time_limit
         if description:
@@ -1251,6 +1251,28 @@ mutation ($assignmentId: ID!) {
             if m.name.lower() == name_lower:
                 return m
         raise RuntimeError(f"Module not found: {id_or_name}")
+
+    def resolve_tab(self, id_or_label: str) -> CanvasTab:
+        """Resolve a navigation tab by ID or label.
+
+        Args:
+            id_or_label: Tab ID (e.g. ``syllabus``) or label (case-insensitive).
+
+        Returns:
+            The matched tab.
+
+        Raises:
+            RuntimeError: If no tab matches.
+        """
+        tabs = self.list_tabs()
+        for t in tabs:
+            if t.id == id_or_label:
+                return t
+        label_lower = id_or_label.lower()
+        for t in tabs:
+            if t.label.lower() == label_lower:
+                return t
+        raise RuntimeError(f"Tab not found: {id_or_label}")
 
     def resolve_assignment(self, id_or_name: str) -> CanvasAssignmentResponse:
         """Resolve an assignment by numeric ID or name.

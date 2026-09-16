@@ -29,6 +29,22 @@ def values_equal(a: object, b: object) -> bool:
     return False
 
 
+def same_instant(a: str | None, b: str | None) -> bool:
+    """Compare two ISO timestamps by the moment they name, not their spelling.
+
+    Canvas returns UTC (``...Z``) while cass.toml may use a local offset.
+    Unparseable values fall back to plain string comparison.
+    """
+    if not a and not b:
+        return True
+    if not a or not b:
+        return False
+    try:
+        return datetime.fromisoformat(a) == datetime.fromisoformat(b)
+    except ValueError:
+        return a == b
+
+
 def resolve_row_name(
     conn: sqlite_utils.Database,
     table: str,

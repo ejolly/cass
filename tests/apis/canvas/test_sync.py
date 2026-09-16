@@ -19,6 +19,35 @@ import sqlite_utils
 from cass.db import canvas_apply, canvas_preview
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+class TestSameInstant:
+    def test_offset_and_utc_forms_match(self):
+        from cass.apis.canvas.sync import same_instant
+
+        assert same_instant("2026-10-01T23:59:00-07:00", "2026-10-02T06:59:00Z")
+
+    def test_different_instants_differ(self):
+        from cass.apis.canvas.sync import same_instant
+
+        assert not same_instant("2026-10-01T23:59:00-07:00", "2026-10-01T23:59:00Z")
+
+    def test_empty_and_none(self):
+        from cass.apis.canvas.sync import same_instant
+
+        assert same_instant("", None)
+        assert not same_instant("2026-10-01T23:59:00Z", None)
+
+    def test_unparseable_falls_back_to_string_compare(self):
+        from cass.apis.canvas.sync import same_instant
+
+        assert same_instant("soon", "soon")
+        assert not same_instant("soon", "later")
+
+
+# ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 

@@ -279,7 +279,7 @@ async def pull_assignments(
                 title=ca.name,
                 gh_assignment_slug=gh_slug,
                 canvas_assignment_id=ca.id,
-                points_possible=ca.points_possible,
+                points_possible=ca.points_possible or 0.0,
                 deadline=deadline,
             )
         )
@@ -503,7 +503,7 @@ async def pull_all_async(
                     title=ca.name,
                     gh_assignment_slug=gh_slug,
                     canvas_assignment_id=ca.id,
-                    points_possible=ca.points_possible,
+                    points_possible=ca.points_possible or 0.0,
                     deadline=deadline,
                 )
             )

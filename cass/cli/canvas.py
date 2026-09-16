@@ -292,11 +292,14 @@ def create(
 
 @modules_app.command(name="publish")
 def modules_publish(
-    id_or_name: str = typer.Argument(..., help="Module ID or name"),
+    id_or_name: str | None = typer.Argument(None, help="Module ID or name"),
     all_modules: bool = typer.Option(False, "--all", help="Publish all modules"),
 ) -> None:
     """Publish a module (or all modules with --all)."""
     require_canvas()
+    if not all_modules and not id_or_name:
+        console.print("[red]Give a module ID or name, or --all.[/red]")
+        raise typer.Exit(code=1)
     with client() as c:
         if all_modules:
             modules = c.list_modules()
@@ -304,7 +307,7 @@ def modules_publish(
                 c.publish("modules", m.id)
                 console.print(f"  [green]Published:[/green] {m.name}")
         else:
-            mod = c.resolve_module(id_or_name)
+            mod = c.resolve_module(id_or_name or "")
             c.publish("modules", mod.id)
             console.print(f"[green]Published:[/green] {mod.name}")
 
@@ -345,8 +348,8 @@ def modules_add_item(
     content_id: int = typer.Option(
         ..., "--content-id", help="Canvas ID of the content"
     ),
-    title: str = typer.Option(
-        "", "--title", help="Item title (defaults to content name)"
+    title: str | None = typer.Option(
+        None, "--title", help="Item title (defaults to content name)"
     ),
 ) -> None:
     """Add an item to a module."""
@@ -354,7 +357,7 @@ def modules_add_item(
     with client() as c:
         mod = c.resolve_module(id_or_name)
         item = c.create_module_item(
-            mod.id, title=title or item_type, item_type=item_type, content_id=content_id
+            mod.id, item_type=item_type, content_id=content_id, title=title
         )
     console.print(f"[green]Added:[/green] {item.title} to {mod.name}")
 
@@ -387,7 +390,7 @@ def assignments_callback(
             rows = [
                 ["ID", str(a.id)],
                 ["Name", a.name],
-                ["Points", str(a.points_possible)],
+                ["Points", str(a.points_possible or 0.0)],
                 ["Due", a.due_at or ""],
                 ["Published", pub(a.published)],
                 ["Submission Types", ", ".join(a.submission_types)],
@@ -404,7 +407,7 @@ def assignments_callback(
                 [
                     str(a.id),
                     a.name,
-                    str(a.points_possible),
+                    str(a.points_possible or 0.0),
                     due(a.due_at),
                     pub(a.published),
                     groups.get(a.assignment_group_id, ""),
@@ -566,19 +569,17 @@ def quizzes_create(
         "--type",
         help="Quiz type (practice_quiz, assignment, graded_survey, survey)",
     ),
-    points: float | None = typer.Option(None, "--points", help="Points possible"),
     publish: bool = typer.Option(False, "--publish", help="Publish immediately"),
     time_limit: int | None = typer.Option(
         None, "--time-limit", help="Time limit in minutes"
     ),
 ) -> None:
-    """Create a new quiz."""
+    """Create a new quiz (points come from its questions)."""
     require_canvas()
     with client() as c:
         q = c.create_quiz(
             title,
             quiz_type=quiz_type,
-            points_possible=points,
             published=publish,
             time_limit=time_limit,
         )
@@ -778,7 +779,7 @@ def files(
                 size(f.size),
                 f.content_type,
                 folder_names.get(f.folder_id, ""),
-                f.created_at[:10] if f.created_at else "",
+                due(f.created_at),
             ]
             for f in all_files
         ]
@@ -801,7 +802,7 @@ def files(
 
     # Add files to their folders
     for f in sorted(all_files, key=lambda f: f.display_name):
-        label = f"{f.display_name}  [dim]{size(f.size)}[/dim]"
+        label = f"{f.display_name}  [dim]{size(f.size)}  id={f.id}[/dim]"
         parent = folder_nodes.get(f.folder_id)
         if parent:
             parent.add(label)
@@ -937,14 +938,14 @@ def tabs(
     with client() as c:
         tab_list = c.list_tabs()
 
-    headers = ["ID", "Label", "Type", "Position", "Visibility"]
+    headers = ["Label", "Type", "Position", "Visibility", "ID"]
     rows = [
         [
-            t.id,
             t.label,
             t.type,
             str(t.position or ""),
             "hidden" if t.hidden else "visible",
+            t.id,
         ]
         for t in sorted(tab_list, key=lambda t: t.position or 999)
     ]
@@ -959,23 +960,25 @@ def tabs(
 
 @canvas_app.command(name="show-tab", rich_help_panel="Manage")
 def tabs_show(
-    tab_id: str = typer.Argument(..., help="Tab ID to show"),
+    id_or_label: str = typer.Argument(..., help="Tab ID or label"),
 ) -> None:
     """Make a navigation tab visible."""
     require_canvas()
     with client() as c:
-        t = c.update_tab(tab_id, hidden=False)
+        tab = c.resolve_tab(id_or_label)
+        t = c.update_tab(tab.id, hidden=False)
     console.print(f"[green]Visible:[/green] {t.label}")
 
 
 @canvas_app.command(name="hide-tab", rich_help_panel="Manage")
 def tabs_hide(
-    tab_id: str = typer.Argument(..., help="Tab ID to hide"),
+    id_or_label: str = typer.Argument(..., help="Tab ID or label"),
 ) -> None:
     """Hide a navigation tab."""
     require_canvas()
     with client() as c:
-        t = c.update_tab(tab_id, hidden=True)
+        tab = c.resolve_tab(id_or_label)
+        t = c.update_tab(tab.id, hidden=True)
     console.print(f"[yellow]Hidden:[/yellow] {t.label}")
 
 
@@ -1048,7 +1051,7 @@ def sync(
 
         # --- Assignments ---
         if cfg.canvas_assignments:
-            from ..apis.canvas.sync import push_assignments
+            from ..apis.canvas.sync import push_assignments, same_instant
 
             live_assignments = c.list_assignments()
             live_by_name = {a.name.lower(): a for a in live_assignments}
@@ -1065,9 +1068,9 @@ def sync(
                 if key in live_by_name:
                     live = live_by_name[key]
                     changes: dict[str, object] = {}
-                    if spec.points and live.points_possible != spec.points:
+                    if spec.points and (live.points_possible or 0.0) != spec.points:
                         changes["points_possible"] = spec.points
-                    if spec.due_at and live.due_at != spec.due_at:
+                    if spec.due_at and not same_instant(live.due_at, spec.due_at):
                         changes["due_at"] = spec.due_at
                     if live.published != spec.published:
                         changes["published"] = spec.published
@@ -1154,10 +1157,12 @@ def pub(val: bool | None) -> str:
 
 
 def due(val: str | None) -> str:
+    """Format a Canvas timestamp (UTC) as a local date."""
+    from datetime import datetime
+
     if not val:
         return ""
-    # Show date portion only
-    return val[:10] if len(val) >= 10 else val
+    return datetime.fromisoformat(val).astimezone().strftime("%Y-%m-%d")
 
 
 def when(val: str | None) -> str:

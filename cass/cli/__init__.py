@@ -1052,10 +1052,22 @@ def view(
 
 def run() -> None:
     """Console-script entry point: run the CLI, reporting auth failures cleanly."""
+    import httpx
+
     from ..apis.canvas.auth import CanvasAuthError
 
     try:
         app()
     except CanvasAuthError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise SystemExit(1) from None
+    except httpx.HTTPStatusError as exc:
+        resp = exc.response
+        console.print(
+            f"[red]Canvas returned {resp.status_code} for "
+            f"{exc.request.method} {exc.request.url.path}[/red]"
+        )
+        raise SystemExit(1) from None
+    except RuntimeError as exc:
         console.print(f"[red]{exc}[/red]")
         raise SystemExit(1) from None

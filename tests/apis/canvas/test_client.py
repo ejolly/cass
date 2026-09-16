@@ -280,6 +280,12 @@ class TestModels:
         assert e.location_name == "Room 237"
         assert e.all_day is False
 
+    def test_canvas_assignment_with_null_points(self):
+        """Quiz-backed assignments report null points until the quiz has questions."""
+        data = {"id": 1, "name": "Quiz shell", "points_possible": None}
+        a = msgspec.convert(data, CanvasAssignmentResponse, strict=False)
+        assert a.points_possible is None
+
     def test_canvas_submission_response(self):
         """CanvasSubmissionResponse with all fields from real API."""
         data = {
@@ -559,6 +565,32 @@ class TestCanvasClient:
         assert req.method == "DELETE"
         assert str(req.url).endswith("/calendar_events/235")
 
+    def test_resolve_tab_by_id(self, mock_client):
+        client, transport = mock_client
+        transport.add(
+            json_data=[
+                {"id": "syllabus", "label": "Syllabus"},
+                {"id": "context_external_tool_5826", "label": "Media Gallery"},
+            ]
+        )
+        assert client.resolve_tab("context_external_tool_5826").label == "Media Gallery"
+
+    def test_resolve_tab_by_label_case_insensitive(self, mock_client):
+        client, transport = mock_client
+        transport.add(
+            json_data=[
+                {"id": "syllabus", "label": "Syllabus"},
+                {"id": "context_external_tool_5826", "label": "Media Gallery"},
+            ]
+        )
+        assert client.resolve_tab("media gallery").id == "context_external_tool_5826"
+
+    def test_resolve_tab_not_found(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data=[{"id": "syllabus", "label": "Syllabus"}])
+        with pytest.raises(RuntimeError, match="Tab not found: nope"):
+            client.resolve_tab("nope")
+
     def test_list_tabs(self, mock_client):
         client, transport = mock_client
         transport.add(
@@ -577,6 +609,32 @@ class TestCanvasClient:
         assert mod.id == 99
         req = transport.requests[0]
         assert req.method == "POST"
+
+    def test_create_module_item_omits_title_when_not_given(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data={"id": 7, "title": "HW1", "type": "Assignment"})
+        item = client.create_module_item(5, item_type="Assignment", content_id=42)
+        assert item.title == "HW1"
+        body = transport.requests[0].content.decode()
+        assert "module_item%5Btype%5D=Assignment" in body
+        assert "module_item%5Bcontent_id%5D=42" in body
+        assert "title" not in body
+
+    def test_create_module_item_sends_explicit_title(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data={"id": 7, "title": "Custom", "type": "Assignment"})
+        client.create_module_item(
+            5, item_type="Assignment", content_id=42, title="Custom"
+        )
+        assert "module_item%5Btitle%5D=Custom" in transport.requests[0].content.decode()
+
+    def test_create_quiz_has_no_points_param(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data={"id": 20, "title": "Q", "quiz_type": "assignment"})
+        client.create_quiz("Q")
+        assert "points" not in transport.requests[0].content.decode()
+        with pytest.raises(TypeError):
+            client.create_quiz("Q", points_possible=5)  # pyright: ignore[reportCallIssue]
 
     def test_create_assignment(self, mock_client):
         client, transport = mock_client

@@ -75,7 +75,7 @@ class CanvasAssignment(msgspec.Struct):
         return cls(
             canvas_id=a.id,
             name=a.name,
-            points_possible=a.points_possible,
+            points_possible=a.points_possible or 0.0,
             due_at=a.due_at or None,
             published=a.published,
             assignment_group=group_name,

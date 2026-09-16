@@ -30,7 +30,7 @@ def render_table(
 
     console.print()
     console.print(table)
-    console.print(f"\n{len(rows)} rows")
+    console.print(f"\n{row_count(rows)}")
     console.print()
 
 
@@ -47,7 +47,7 @@ def render_list(
         table.add_row(*row)
     console.print()
     console.print(table)
-    console.print(f"\n{len(rows)} rows")
+    console.print(f"\n{row_count(rows)}")
     console.print()
 
 
@@ -108,3 +108,9 @@ def save_relation_markdown(path: str, title: str, relation: Any) -> None:
         [str(v) if v is not None else "" for v in row] for row in relation.fetchall()
     ]
     save_markdown(path, title, columns, rows)
+
+
+def row_count(rows: list[object] | list[list[str]]) -> str:
+    """Return a row count with the correct plural, e.g. ``1 row`` / ``3 rows``."""
+    n = len(rows)
+    return f"{n} row" if n == 1 else f"{n} rows"
