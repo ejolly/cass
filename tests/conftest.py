@@ -1,5 +1,6 @@
 """Shared fixtures for cass tests."""
 
+import os
 import shutil
 from pathlib import Path
 
@@ -8,6 +9,10 @@ import sqlite_utils
 
 from cass import db
 from cass.db.core import _db  # noqa: F401 — needed for monkeypatch target
+
+# Rich reads the terminal width at console creation; pin it so CLI output
+# assertions do not depend on the runner's terminal.
+os.environ.setdefault("COLUMNS", "200")
 
 _TESTDB = Path(__file__).parent / "testdb" / "cass.db"
 
