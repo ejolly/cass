@@ -1,5 +1,6 @@
 """Browser import and bounded automatic renewal, without real browser access."""
 
+import sys
 from pathlib import Path
 
 import httpx
@@ -9,6 +10,12 @@ from cass.apis.canvas.auth import CanvasAuthError, SessionAuth, find_auth
 from cass.apis.canvas.client import CanvasClient
 
 ORIGIN = "https://canvas.example.com"
+
+
+@pytest.fixture(autouse=True)
+def pretend_macos(monkeypatch):
+    """Browser import is macOS-only; every macOS-specific call here is mocked."""
+    monkeypatch.setattr(sys, "platform", "darwin")
 
 
 def test_chrome_cli_import_and_automatic_refresh(tmp_path, monkeypatch):
