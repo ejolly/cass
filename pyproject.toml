@@ -35,7 +35,7 @@ dependencies = [
 [project.urls]
 Homepage = "https://github.com/ejolly/cass"
 Repository = "https://github.com/ejolly/cass"
-Documentation = "https://ejolly.github.io/cass"
+Documentation = "https://eshinjolly.com/cass"
 
 [dependency-groups]
 dev = [
@@ -43,9 +43,12 @@ dev = [
     "ty>=0.0.20",
     "pytest>=9.0.2",
     "poethepoet>=0.42.1",
-    "pdoc>=15.0",
     "pytest-asyncio>=1.3.0",
     "pytest-xdist>=3.8.0",
+]
+docs = [
+    "mkdocstrings-python>=2.0.8",
+    "zensical>=0.0.62",
 ]
 
 [[tool.uv.index]]
@@ -84,13 +87,17 @@ sequence = [
 help = "Run test suite"
 cmd = "pytest tests/ -v"
 
+[tool.poe.tasks.cli-docs]
+help = "Generate docs/reference/cli.md from the Typer app"
+cmd = "typer cass.cli utils docs --name cass --output docs/reference/cli.md"
+
 [tool.poe.tasks.docs]
-help = "Generate API docs to docs/api/"
-cmd = "pdoc cass/ --docformat google -o docs/api/"
+help = "Build the docs site into site/"
+sequence = ["cli-docs", { cmd = "zensical build --clean" }]
 
 [tool.poe.tasks.docs-serve]
-help = "Live-preview API docs"
-cmd = "pdoc cass/ --docformat google"
+help = "Live-preview the docs site on localhost:8000"
+sequence = ["cli-docs", { cmd = "zensical serve" }]
 
 [tool.poe.tasks]
 ok = ["lint", "test"]

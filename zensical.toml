@@ -1,0 +1,93 @@
+[project]
+site_name = "cass"
+site_description = "Grading toolkit for Canvas LMS: pull rosters, edit grades in a browser grid, push them back."
+site_url = "https://eshinjolly.com/cass/"
+site_author = "Eshin Jolly"
+repo_url = "https://github.com/ejolly/cass"
+repo_name = "ejolly/cass"
+edit_uri = "edit/main/docs/"
+docs_dir = "docs"
+site_dir = "site"
+copyright = "Copyright &copy; Eshin Jolly"
+
+nav = [
+  { "Home" = "index.md" },
+  { "Getting started" = [
+    { "Install" = "getting-started/install.md" },
+    { "Setup" = "getting-started/setup.md" },
+    { "Daily workflow" = "getting-started/workflow.md" },
+  ] },
+  { "Guide" = [
+    { "Viewer" = "guide/viewer.md" },
+    { "CLI" = "guide/cli.md" },
+    { "Configuration" = "guide/configuration.md" },
+    { "Quizzes" = "guide/quizzes.md" },
+    { "Canvas authentication" = "guide/canvas-auth.md" },
+  ] },
+  { "Reference" = [
+    { "CLI reference" = "reference/cli.md" },
+    { "API" = [
+      { "cass.actions" = "reference/api/actions.md" },
+      { "cass.db" = "reference/api/db.md" },
+      { "cass.apis" = "reference/api/apis.md" },
+    ] },
+  ] },
+  { "Changelog" = "changelog.md" },
+  { "Development" = "development.md" },
+]
+
+[project.theme]
+features = [
+  "navigation.instant",
+  "navigation.tabs",
+  "navigation.sections",
+  "navigation.top",
+  "navigation.footer",
+  "search.suggest",
+  "search.highlight",
+  "content.code.copy",
+  "content.action.edit",
+]
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: light)"
+scheme = "default"
+primary = "indigo"
+accent = "indigo"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: dark)"
+scheme = "slate"
+primary = "indigo"
+accent = "indigo"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to light mode"
+
+[project.markdown_extensions]
+admonition = {}
+attr_list = {}
+md_in_html = {}
+tables = {}
+toc.permalink = true
+pymdownx.details = {}
+pymdownx.superfences = {}
+pymdownx.tabbed.alternate_style = true
+pymdownx.snippets = {}
+pymdownx.highlight.anchor_linenums = true
+pymdownx.inlinehilite = {}
+
+[project.plugins.search]
+
+[project.plugins.autorefs]
+
+[project.plugins.mkdocstrings.handlers.python.options]
+docstring_style = "google"
+show_root_heading = true
+show_source = false
+show_submodules = true
+members_order = "source"
+separate_signature = true
+show_signature_annotations = true
+merge_init_into_class = true

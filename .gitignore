@@ -13,7 +13,8 @@ grade-data/
 .pytest_cache/
 cass.duckdb.wal
 cass.toml
-docs/api/
+site/
+docs/reference/cli.md
 backups/
 memory/
 dev.py
