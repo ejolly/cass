@@ -6,6 +6,8 @@ All data lives in a local SQLite database (`cass.db`) alongside a version-tracka
 
 ## Install
 
+Requires [uv](https://docs.astral.sh/uv/). Then:
+
 ```bash
 uv tool install cassroom
 ```
