@@ -72,6 +72,14 @@ sequence = [
     { cmd = "ty check" },
 ]
 
+[tool.poe.tasks.check]
+help = "Lint and type check without modifying files (used by CI)"
+sequence = [
+    { cmd = "ruff format --check cass/ tests/" },
+    { cmd = "ruff check cass/ tests/" },
+    { cmd = "ty check" },
+]
+
 [tool.poe.tasks.test]
 help = "Run test suite"
 cmd = "pytest tests/ -v"
@@ -86,6 +94,7 @@ cmd = "pdoc cass/ --docformat google"
 
 [tool.poe.tasks]
 ok = ["lint", "test"]
+ci = ["check", "test"]
 
 [tool.ty.rules]
 # sqlite-utils .table() returns Table | View union; Table methods (upsert,
