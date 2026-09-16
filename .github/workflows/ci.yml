@@ -38,4 +38,17 @@ jobs:
         with:
           fetch-depth: 0
       - uses: astral-sh/setup-uv@v10
-      - run: uvx --from commitizen cz check --rev-range "origin/${{ github.base_ref }}..HEAD"
+      - run: uvx --from 'commitizen>=4,<5' cz check --rev-range "origin/${BASE_REF}..HEAD"
+        env:
+          BASE_REF: ${{ github.base_ref }}
+
+  docs:
+    name: docs build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+      - run: uv sync --locked --group docs
+      - run: uv run poe docs
