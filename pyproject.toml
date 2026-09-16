@@ -64,16 +64,16 @@ cass = "cass.cli:run"
 [tool.poe.tasks.lint]
 help = "Format, lint, and type check"
 sequence = [
-    { cmd = "ruff format cass/ tests/" },
-    { cmd = "ruff check cass/ tests/" },
+    { cmd = "ruff format cass/ tests/ scripts/" },
+    { cmd = "ruff check cass/ tests/ scripts/" },
     { cmd = "ty check" },
 ]
 
 [tool.poe.tasks.check]
 help = "Lint and type check without modifying files (used by CI)"
 sequence = [
-    { cmd = "ruff format --check cass/ tests/" },
-    { cmd = "ruff check cass/ tests/" },
+    { cmd = "ruff format --check cass/ tests/ scripts/" },
+    { cmd = "ruff check cass/ tests/ scripts/" },
     { cmd = "ty check" },
 ]
 

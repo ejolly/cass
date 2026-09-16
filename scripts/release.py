@@ -47,7 +47,10 @@ def confirm(prompt: str) -> bool:
 
 
 def run(cmd: list[str]) -> str:
-    """Run a command in the project root and return stripped stdout; abort on failure."""
+    """Run a command in the project root and return stripped stdout.
+
+    Aborts on failure.
+    """
     result = subprocess.run(cmd, cwd=PROJECT_ROOT, capture_output=True, text=True)
     if result.returncode != 0:
         abort(f"{' '.join(cmd)}\n{result.stderr.strip()}")
@@ -55,8 +58,13 @@ def run(cmd: list[str]) -> str:
 
 
 def restore_release_files(root: Path) -> None:
-    """Reset the release files in both index and worktree to HEAD after a failed release commit."""
-    subprocess.run(["git", "checkout", "HEAD", "--", *RELEASE_FILES], cwd=root, check=False)
+    """Reset the release files in both index and worktree to HEAD.
+
+    Called after a failed release commit.
+    """
+    subprocess.run(
+        ["git", "checkout", "HEAD", "--", *RELEASE_FILES], cwd=root, check=False
+    )
 
 
 def parse_args(argv: list[str]) -> tuple[str | None, bool]:
@@ -69,7 +77,9 @@ def parse_args(argv: list[str]) -> tuple[str | None, bool]:
         elif arg in BUMP_LEVELS or SEMVER.match(arg):
             target = arg
         else:
-            abort(f"Unknown argument {arg!r}. Use: [patch|minor|major|X.Y.Z] [--dry-run]")
+            abort(
+                f"Unknown argument {arg!r}. Use: [patch|minor|major|X.Y.Z] [--dry-run]"
+            )
     return target, dry_run
 
 
@@ -91,7 +101,9 @@ def next_version(target: str | None) -> str:
     if target is None:
         return run(["git", "cliff", "--bumped-version"]).removeprefix("v")
     if target in BUMP_LEVELS:
-        return run(["git", "cliff", "--bumped-version", "--bump", target]).removeprefix("v")
+        return run(["git", "cliff", "--bumped-version", "--bump", target]).removeprefix(
+            "v"
+        )
     return target
 
 
@@ -161,7 +173,8 @@ def main() -> None:
     else:
         console.print(
             Panel(
-                f"Not pushed. When ready:\n  git push origin main && git push origin {tag}",
+                "Not pushed. When ready:\n"
+                f"  git push origin main && git push origin {tag}",
                 style="yellow",
             )
         )
