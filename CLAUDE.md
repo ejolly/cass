@@ -19,6 +19,10 @@ CLI / Viewer  →  actions/  →  db/     →  SQLite
 uv sync                    # install deps
 uv run poe ok            # formats, lints, tests
 uv run poe install         # uv tool install . --force
+uv run poe check           # same as lint but read-only (what CI runs via `poe ci`)
+uv run poe docs            # build the docs site (zensical) into site/
+uv run poe docs-serve      # live-preview the docs at localhost:8000
+uv run poe release         # cut a release: bump, changelog, commit, tag, push; CI publishes
 ```
 
 **Always run `uv run poe ok` before finishing work.**
@@ -29,6 +33,12 @@ Use `symbex` for token-efficient code exploration:
 symbex -s -d cass/             # all signatures
 symbex '*Client*' -s -d cass/  # find classes/functions matching pattern
 ```
+
+## Commits and releases
+
+- Commit subjects follow Conventional Commits: `type(scope): description`, type in `feat fix docs refactor perf test build ci chore style`. CI runs `cz check` on pull requests; git-cliff derives `CHANGELOG.md` and the next version from these subjects.
+- Releases: `uv run poe release` locally, then `.github/workflows/release.yml` publishes to PyPI via trusted publishing on the `v*` tag. Never publish by hand.
+- Docs live in `docs/` and deploy from `.github/workflows/docs.yml` to https://eshinjolly.com/cass. `docs/reference/cli.md` is generated and gitignored.
 
 ## Style
 
