@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.1.0
         with:
           python-version: "3.11"
           enable-cache: true
@@ -26,7 +26,7 @@ jobs:
       id-token: write   # required for PyPI trusted publishing
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.1.0
       - name: Check tag matches pyproject version
         run: |
           version="$(uv version --short)"
