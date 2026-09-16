@@ -36,6 +36,13 @@ assignments_app = typer.Typer(
 )
 canvas_app.add_typer(assignments_app, name="assignments", rich_help_panel="Browse")
 
+groups_app = typer.Typer(
+    invoke_without_command=True,
+    no_args_is_help=False,
+    help="Assignment groups — list, create, delete.",
+)
+assignments_app.add_typer(groups_app, name="groups")
+
 quizzes_app = typer.Typer(
     invoke_without_command=True,
     no_args_is_help=False,
@@ -424,15 +431,19 @@ def assignments_callback(
         report.render_list(headers, rows, title=title)
 
 
-@assignments_app.command(name="groups")
-def assignment_groups(
+@groups_app.callback()
+def groups_callback(
+    ctx: typer.Context,
     csv_out: str = typer.Option("", "--csv", help="Export as CSV file"),
     save: str = typer.Option("", "--save", help="Save output as markdown file"),
 ) -> None:
     """Show assignment groups with weights."""
+    if ctx.invoked_subcommand is not None:
+        return
+    require_canvas()
+
     from . import report
 
-    require_canvas()
     with client() as c:
         groups = c.list_assignment_groups()
 
@@ -450,6 +461,38 @@ def assignment_groups(
         report.render_list(headers, rows, title="Assignment Groups")
 
 
+@groups_app.command(name="create")
+def groups_create(
+    name: str = typer.Argument(..., help="Group name (e.g. 'Homeworks')"),
+    weight: float | None = typer.Option(
+        None, "--weight", help="Percent of final grade (weighted courses only)"
+    ),
+    position: int | None = typer.Option(None, "--position", help="Position in list"),
+) -> None:
+    """Create an assignment group."""
+    require_canvas()
+    with client() as c:
+        g = c.create_assignment_group(name, position=position, group_weight=weight)
+    console.print(f"[green]Created group:[/green] {g.name} (id={g.id})")
+
+
+@groups_app.command(name="delete")
+def groups_delete(
+    id_or_name: str = typer.Argument(..., help="Group ID or name"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
+) -> None:
+    """Delete an assignment group and every assignment in it."""
+    require_canvas()
+    with client() as c:
+        g = c.resolve_assignment_group(id_or_name)
+        if not yes and not typer.confirm(
+            f"Delete group '{g.name}' and all of its assignments?"
+        ):
+            raise typer.Abort()
+        c.delete_assignment_group(g.id)
+    console.print(f"[red]Deleted group:[/red] {g.name}")
+
+
 @assignments_app.command(name="create")
 def assignments_create(
     name: str = typer.Argument(..., help="Assignment name"),
@@ -464,11 +507,14 @@ def assignments_create(
         help="Submission type (online_url, online_upload, online_text_entry, etc.)",
     ),
     publish: bool = typer.Option(False, "--publish", help="Publish immediately"),
+    description: str | None = typer.Option(
+        None, "--description", "-d", help="HTML description"
+    ),
 ) -> None:
     """Create a new assignment."""
     require_canvas()
     with client() as c:
-        group_id = resolve_assignment_group(c, group)
+        group_id = c.resolve_assignment_group(group).id
         a = c.create_assignment(
             name,
             points_possible=points,
@@ -476,6 +522,7 @@ def assignments_create(
             submission_types=[sub_type],
             published=publish,
             assignment_group_id=group_id,
+            description=description,
         )
     console.print(f"[green]Created assignment:[/green] {a.name} (id={a.id})")
 
@@ -1135,19 +1182,6 @@ def sync(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def resolve_assignment_group(c: CanvasClient, group_name: str) -> int:
-    """Resolve an assignment group name to its Canvas ID (case-insensitive)."""
-    groups = c.list_assignment_groups()
-    key = group_name.lower()
-    for g in groups:
-        if g.name.lower() == key:
-            return g.id
-    names = ", ".join(g.name for g in sorted(groups, key=lambda g: g.position))
-    console.print(f"[red]Unknown assignment group:[/red] {group_name}")
-    console.print(f"[dim]Available groups: {names}[/dim]")
-    raise typer.Exit(code=1)
 
 
 def pub(val: bool | None) -> str:

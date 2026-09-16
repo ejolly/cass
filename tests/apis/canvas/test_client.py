@@ -636,6 +636,35 @@ class TestCanvasClient:
         with pytest.raises(TypeError):
             client.create_quiz("Q", points_possible=5)  # pyright: ignore[reportCallIssue]
 
+    def test_create_assignment_group_sends_top_level_params(self, mock_client):
+        """The Assignment Groups API takes name/position/group_weight unnested."""
+        client, transport = mock_client
+        transport.add(json_data={"id": 9, "name": "Labs", "position": 2})
+        client.create_assignment_group("Labs", position=2, group_weight=25.0)
+        body = transport.requests[0].content.decode()
+        assert "name=Labs" in body
+        assert "position=2" in body
+        assert "group_weight=25.0" in body
+        assert "assignment_group%5B" not in body
+
+    def test_delete_assignment_group(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data={"id": 9})
+        client.delete_assignment_group(9)
+        req = transport.requests[0]
+        assert req.method == "DELETE"
+        assert str(req.url).endswith("/courses/1/assignment_groups/9")
+
+    def test_resolve_assignment_group_by_id_or_name(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data=[{"id": 9, "name": "Labs", "position": 1}])
+        assert client.resolve_assignment_group("labs").id == 9
+        transport.add(json_data=[{"id": 9, "name": "Labs", "position": 1}])
+        assert client.resolve_assignment_group("9").name == "Labs"
+        transport.add(json_data=[{"id": 9, "name": "Labs", "position": 1}])
+        with pytest.raises(RuntimeError, match="Assignment group not found: nope"):
+            client.resolve_assignment_group("nope")
+
     def test_create_assignment(self, mock_client):
         client, transport = mock_client
         transport.add(

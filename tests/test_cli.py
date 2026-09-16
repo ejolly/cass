@@ -822,6 +822,84 @@ class TestCanvasTabsAndFiles:
         assert "18962999" in result.stdout
 
 
+class TestCanvasAssignments:
+    @pytest.fixture
+    def fake_client(self, monkeypatch):
+        from cass.apis.canvas.schema import (
+            CanvasAssignmentGroup,
+            CanvasAssignmentResponse,
+        )
+
+        fake = MagicMock()
+        fake.__enter__.return_value = fake
+        fake.list_assignment_groups.return_value = [
+            CanvasAssignmentGroup(id=9, name="Labs", position=1)
+        ]
+        fake.resolve_assignment_group.return_value = CanvasAssignmentGroup(
+            id=9, name="Labs", position=1
+        )
+        fake.create_assignment_group.return_value = CanvasAssignmentGroup(
+            id=10, name="Homeworks", position=2, group_weight=40.0
+        )
+        fake.create_assignment.return_value = CanvasAssignmentResponse(id=1, name="HW1")
+        monkeypatch.setattr("cass.cli.canvas.require_canvas", lambda: None)
+        monkeypatch.setattr("cass.cli.canvas.client", lambda: fake)
+        return fake
+
+    def test_create_passes_description(self, fake_client):
+        result = runner.invoke(
+            app,
+            [
+                "canvas",
+                "assignments",
+                "create",
+                "HW1",
+                "--group",
+                "Labs",
+                "-d",
+                "<p>Do it</p>",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        kwargs = fake_client.create_assignment.call_args.kwargs
+        assert kwargs["description"] == "<p>Do it</p>"
+        assert kwargs["assignment_group_id"] == 9
+
+    def test_groups_lists(self, fake_client):
+        result = runner.invoke(app, ["canvas", "assignments", "groups"])
+        assert result.exit_code == 0, result.output
+        assert "Labs" in result.stdout
+
+    def test_groups_create(self, fake_client):
+        result = runner.invoke(
+            app,
+            [
+                "canvas",
+                "assignments",
+                "groups",
+                "create",
+                "Homeworks",
+                "--weight",
+                "40",
+                "--position",
+                "2",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert "id=10" in result.stdout
+        fake_client.create_assignment_group.assert_called_once_with(
+            "Homeworks", position=2, group_weight=40.0
+        )
+
+    def test_groups_delete(self, fake_client):
+        result = runner.invoke(
+            app, ["canvas", "assignments", "groups", "delete", "Labs", "-y"]
+        )
+        assert result.exit_code == 0, result.output
+        fake_client.resolve_assignment_group.assert_called_once_with("Labs")
+        fake_client.delete_assignment_group.assert_called_once_with(9)
+
+
 class TestCanvasCalendar:
     def test_when_converts_utc_to_local(self, monkeypatch):
         from cass.cli.canvas import when

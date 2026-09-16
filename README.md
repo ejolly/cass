@@ -118,7 +118,7 @@ cass push --yes   # skip confirmation
 cass canvas                # course overview
 cass canvas people         # enrolled students
 cass canvas modules        # list / create / publish modules
-cass canvas assignments    # list / create assignments
+cass canvas assignments    # list / create assignments (and groups)
 cass canvas calendar       # list / create / update / delete events
 cass canvas upload file.pdf
 cass canvas announce "Title" "Body"

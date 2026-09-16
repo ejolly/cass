@@ -622,16 +622,38 @@ class CanvasClient:
         Returns:
             The created assignment group.
         """
-        params: dict[str, object] = {"assignment_group[name]": name}
+        # Unlike most Canvas create endpoints, these params are not nested.
+        params: dict[str, object] = {"name": name}
         if position is not None:
-            params["assignment_group[position]"] = position
+            params["position"] = position
         if group_weight is not None:
-            params["assignment_group[group_weight]"] = group_weight
+            params["group_weight"] = group_weight
         resp = self._client.post(self._course("/assignment_groups"), data=params)
         resp.raise_for_status()
         return msgspec.convert(resp.json(), CanvasAssignmentGroup, strict=False)
 
     # --- Submissions ---
+
+    def delete_assignment_group(self, group_id: int) -> None:
+        """Delete an assignment group (Canvas also deletes its assignments)."""
+        resp = self._client.delete(self._course(f"/assignment_groups/{group_id}"))
+        resp.raise_for_status()
+
+    def resolve_assignment_group(self, id_or_name: str) -> CanvasAssignmentGroup:
+        """Resolve an assignment group by numeric ID or name (case-insensitive).
+
+        Raises:
+            RuntimeError: If no group matches; the message lists the available groups.
+        """
+        groups = self.list_assignment_groups()
+        name_lower = id_or_name.lower()
+        for g in groups:
+            if str(g.id) == id_or_name or g.name.lower() == name_lower:
+                return g
+        names = ", ".join(g.name for g in sorted(groups, key=lambda g: g.position))
+        raise RuntimeError(
+            f"Assignment group not found: {id_or_name} (available: {names})"
+        )
 
     def list_submissions(self, assignment_id: int) -> list[CanvasSubmissionResponse]:
         """List submissions for an assignment.
