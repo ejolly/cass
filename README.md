@@ -111,8 +111,17 @@ cass canvas people         # enrolled students
 cass canvas modules        # list / create / publish modules
 cass canvas assignments    # list / create assignments (and groups)
 cass canvas calendar       # list / create / update / delete events
+cass canvas quizzes                       # list quizzes
+cass canvas quizzes --id "Survey 1"       # settings + questions
+cass canvas quizzes export "Survey 1" -o quizzes/survey-1.toml
+cass canvas quizzes create --from quizzes/survey-1.toml [--publish] [--create-groups]
+cass canvas quizzes update "Survey 1" --from quizzes/survey-1.toml
+cass canvas sync [--apply] [--create-groups]   # reconcile [[canvas.*]] declarations
 cass canvas upload file.pdf
 cass canvas announce "Title" "Body"
+
+# Another course's config (or set CASS_CONFIG); credentials resolve beside that file
+cass --config ../f25/cass.toml canvas quizzes
 
 # Data management
 # query also accepts --where, --order, and --limit
@@ -136,7 +145,56 @@ Running `cass` with no arguments shows help.
 [canvas]
 base_url = "https://canvas.ucsd.edu"
 course_id = 72335
+time_zone = "America/Los_Angeles"   # written by `cass init`; times you type are in this zone
+
+[[canvas.quizzes]]
+file = "quizzes/09-25-participation.toml"   # relative to this file; see below
 ```
+
+`cass` reads times on the command line and in config files (`--due`, `--start`,
+`due_at`, quiz `unlock_at`/`due_at`/`lock_at`) in the course time zone unless
+they carry an explicit offset. `YYYY-MM-DD` means midnight; `YYYY-MM-DD HH:MM`
+is the usual form.
+
+### Quiz files
+
+One TOML file per quiz. `cass canvas quizzes export` writes this format and
+`create --from` reads it, so a file round-trips.
+
+```toml
+title = "09-25 Participation Survey"
+type = "graded_survey"          # practice_quiz | assignment | graded_survey | survey
+group = "Attendance & Participation"
+points = 2                      # graded_survey only; other types sum question points
+unlock_at = "2026-09-25 14:15"  # course time zone unless an offset is given
+due_at = "2026-09-25 17:00"
+attempts = 1                    # -1 = unlimited
+hide_results = "always"         # "" | always | until_after_last_attempt
+
+[[questions]]
+type = "essay"
+text = "<p>What are you most hoping to get out of this course?</p>"
+
+[[questions]]
+type = "multiple_choice"
+text = "<p>Which gamble does your calculation recommend?</p>"
+points = 1
+answers = [{ text = "A", correct = true }, { text = "B" }]
+```
+
+- `title` and `type` are required; every other setting has a default
+  (`description`, `lock_at`, `time_limit`, `scoring_policy`, `shuffle_answers`,
+  `one_question_at_a_time`, `published`).
+- Question `type` aliases: `essay`, `multiple_choice`, `multiple_answers`,
+  `true_false`, `short_answer`, `numerical`, `text_only`. Other Canvas
+  question types pass through verbatim.
+- Question `points` default to 0 for surveys and 1 otherwise; `name` defaults
+  to `Question N`.
+- `answers` are required for `multiple_choice`, `multiple_answers`, and
+  `true_false`; `correct = true` marks the right answer.
+- `cass canvas sync` creates quizzes listed under `[[canvas.quizzes]]` that are
+  missing on Canvas (matched by title) and updates settings that differ.
+  Questions on an existing quiz are never modified.
 
 ## Development
 

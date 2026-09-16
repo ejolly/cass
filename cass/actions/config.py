@@ -1,7 +1,8 @@
 """Config discovery, loading, and writing for cass.
 
 Searches for ``cass.toml`` starting from the current directory and walking
-upward.  Config is loaded lazily on first access via ``get_config()``.
+upward, unless ``set_config_path`` points at an explicit file (``--config``).
+Config is loaded lazily on first access via ``get_config()``.
 """
 
 from __future__ import annotations
@@ -39,12 +40,21 @@ class CanvasAssignmentSpec:
 
 
 @dataclass
+class CanvasQuizRef:
+    """A quiz file declared in cass.toml, resolved relative to the config file."""
+
+    file: Path
+
+
+@dataclass
 class Config:
     root: Path
     canvas_base_url: str = ""
     canvas_course_id: int = 0
+    canvas_time_zone: str = ""
     canvas_modules: list[CanvasModuleSpec] = field(default_factory=list)
     canvas_assignments: list[CanvasAssignmentSpec] = field(default_factory=list)
+    canvas_quizzes: list[CanvasQuizRef] = field(default_factory=list)
     motherduck_db: str = ""
 
     @property
@@ -67,8 +77,43 @@ def parse_canvas_course_url(raw: str) -> tuple[str, int] | None:
     return match.group(1), int(match.group(2))
 
 
-def find_project_root(start: Path | None = None) -> Path:
-    """Walk up from *start* (default: cwd) to find cass.toml."""
+_config_path_override: Path | None = None
+
+
+def set_config_path(path: Path | None) -> None:
+    """Point config discovery at an explicit ``cass.toml`` (``--config``).
+
+    Pass ``None`` to return to walking up from the working directory.
+
+    Raises:
+        SystemExit: If *path* does not exist.
+    """
+    global _config_path_override
+    if path is not None:
+        path = _existing_config(path)
+    _config_path_override = path
+    reset_config()
+
+
+def _existing_config(path: Path) -> Path:
+    resolved = path.expanduser().resolve()
+    if not resolved.is_file():
+        raise SystemExit(f"Config file not found: {resolved}")
+    return resolved
+
+
+def find_project_root(
+    start: Path | None = None, config_path: Path | None = None
+) -> Path:
+    """Find the project root.
+
+    With *config_path* (or a path set via ``set_config_path``) the root is that
+    file's directory. Otherwise walk up from *start* (default: cwd) looking
+    for ``cass.toml``.
+    """
+    explicit = config_path or _config_path_override
+    if explicit is not None:
+        return _existing_config(explicit).parent
     current = (start or Path.cwd()).resolve()
     while True:
         if (current / CONFIG_FILENAME).exists():
@@ -83,28 +128,33 @@ def find_project_root(start: Path | None = None) -> Path:
     )
 
 
+def config_file() -> Path:
+    """Return the config file in use (explicit path or ``<root>/cass.toml``)."""
+    if _config_path_override is not None:
+        return _config_path_override
+    return find_project_root() / CONFIG_FILENAME
+
+
 def config_file_path() -> Path | None:
     """Return the path to the config file, or None if it doesn't exist."""
     try:
-        root = find_project_root()
+        path = config_file()
     except SystemExit:
         return None
-    path = root / CONFIG_FILENAME
     return path if path.exists() else None
 
 
 def load_config() -> Config:
-    root = find_project_root()
-    raw = read_config_data(root / CONFIG_FILENAME)
+    path = config_file()
+    root = path.parent
+    raw = read_config_data(path)
 
     canvas = raw.get("canvas", {})
 
     has_cv = "base_url" in canvas and "course_id" in canvas
 
     if not has_cv:
-        raise SystemExit(
-            f"Invalid config: {root / CONFIG_FILENAME} must have a [canvas] section."
-        )
+        raise SystemExit(f"Invalid config: {path} must have a [canvas] section.")
 
     # Parse [[canvas.modules]] and [[canvas.assignments]] if present
     module_specs = [
@@ -128,6 +178,12 @@ def load_config() -> Config:
         if "name" in a
     ]
 
+    quiz_refs = [
+        CanvasQuizRef(file=(root / q["file"]).resolve())
+        for q in canvas.get("quizzes", [])
+        if "file" in q
+    ]
+
     # Parse [database] section
     database = raw.get("database", {})
     motherduck_db = database.get("motherduck", "")
@@ -136,8 +192,10 @@ def load_config() -> Config:
         root=root,
         canvas_base_url=canvas.get("base_url", ""),
         canvas_course_id=canvas.get("course_id", 0),
+        canvas_time_zone=canvas.get("time_zone", ""),
         canvas_modules=module_specs,
         canvas_assignments=assignment_specs,
+        canvas_quizzes=quiz_refs,
         motherduck_db=motherduck_db,
     )
 
@@ -166,11 +224,18 @@ def read_config_data(path: Path) -> dict[str, Any]:
 
 
 def _format_toml_string(value: str) -> str:
-    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    escaped = (
+        value.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+        .replace("\t", "\\t")
+    )
     return f'"{escaped}"'
 
 
-def _format_toml_value(value: object) -> str:
+def format_toml_value(value: object) -> str:
+    """Render a scalar or flat list as a TOML value."""
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, str):
@@ -178,7 +243,7 @@ def _format_toml_value(value: object) -> str:
     if isinstance(value, int | float):
         return str(value)
     if isinstance(value, list):
-        return "[" + ", ".join(_format_toml_value(item) for item in value) + "]"
+        return "[" + ", ".join(format_toml_value(item) for item in value) + "]"
     msg = f"Unsupported TOML value: {value!r}"
     raise TypeError(msg)
 
@@ -205,7 +270,7 @@ def _write_table(
     if path:
         lines.append(f"[{'.'.join(path)}]")
     for key, value in scalar_items:
-        lines.append(f"{key} = {_format_toml_value(value)}")
+        lines.append(f"{key} = {format_toml_value(value)}")
 
     for key, value in nested_tables:
         if lines and lines[-1] != "":
@@ -224,14 +289,14 @@ def _write_table(
                 ):
                     msg = f"Unsupported nested TOML table value: {item_value!r}"
                     raise TypeError(msg)
-                lines.append(f"{item_key} = {_format_toml_value(item_value)}")
+                lines.append(f"{item_key} = {format_toml_value(item_value)}")
 
 
 def _dump_config_data(data: dict[str, Any]) -> str:
     lines: list[str] = []
     for key, value in data.items():
         if not isinstance(value, dict):
-            lines.append(f"{key} = {_format_toml_value(value)}")
+            lines.append(f"{key} = {format_toml_value(value)}")
             continue
         if lines:
             lines.append("")
@@ -244,6 +309,7 @@ def update_config(
     *,
     canvas_base_url: str | None = None,
     canvas_course_id: int | None = None,
+    canvas_time_zone: str | None = None,
 ) -> None:
     """Update Canvas settings in ``cass.toml`` while preserving other data.
 
@@ -253,7 +319,9 @@ def update_config(
     raw = read_config_data(path)
     raw.pop("classroom", None)
 
-    if canvas_base_url is not None or canvas_course_id is not None:
+    if any(
+        v is not None for v in (canvas_base_url, canvas_course_id, canvas_time_zone)
+    ):
         canvas = raw.setdefault("canvas", {})
         if not isinstance(canvas, dict):
             msg = "Invalid config: [canvas] must be a table."
@@ -262,6 +330,8 @@ def update_config(
             canvas["base_url"] = canvas_base_url
         if canvas_course_id is not None:
             canvas["course_id"] = canvas_course_id
+        if canvas_time_zone is not None:
+            canvas["time_zone"] = canvas_time_zone
 
     path.write_text(_dump_config_data(raw))
     reset_config()

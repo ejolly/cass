@@ -41,6 +41,12 @@ def fetch_course_name(course_id: int) -> str:
         return c.get_course().name
 
 
+def fetch_course_time_zone() -> str:
+    """Read the course's IANA time zone from Canvas."""
+    with CanvasClient() as c:
+        return c.get_course().time_zone
+
+
 def fetch_students_with_sections(
     course_id: int,
 ) -> tuple[list[CanvasStudentResponse], dict[int, str]]:

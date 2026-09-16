@@ -17,6 +17,7 @@ from cass.apis.canvas.schema import (
     CanvasModuleItem,
     CanvasProgress,
     CanvasQuiz,
+    CanvasQuizQuestion,
     CanvasSection,
     CanvasStudentResponse,
     CanvasSubmissionResponse,
@@ -361,6 +362,50 @@ class TestModels:
         assert p.completion is None
         assert p.message is None
 
+    def test_canvas_quiz_settings(self):
+        data = {
+            "id": 265866,
+            "title": "09-25 Participation Survey",
+            "quiz_type": "graded_survey",
+            "points_possible": 2.0,
+            "assignment_group_id": 296820,
+            "allowed_attempts": 1,
+            "scoring_policy": "keep_highest",
+            "hide_results": "always",
+            "shuffle_answers": False,
+            "one_question_at_a_time": False,
+            "show_correct_answers": False,
+            "unlock_at": "2026-09-25T21:15:00Z",
+            "due_at": "2026-09-26T00:00:00Z",
+            "lock_at": None,
+            "question_count": 3,
+            "published": False,
+        }
+        q = msgspec.convert(data, CanvasQuiz, strict=False)
+        assert q.allowed_attempts == 1
+        assert q.hide_results == "always"
+        assert q.unlock_at == "2026-09-25T21:15:00Z"
+        assert q.lock_at is None
+        assert q.assignment_group_id == 296820
+
+    def test_canvas_quiz_question(self):
+        data = {
+            "id": 2491726,
+            "quiz_id": 265866,
+            "position": 1,
+            "question_name": "Question 1",
+            "question_type": "multiple_choice_question",
+            "question_text": "<p>Which?</p>",
+            "points_possible": 1.0,
+            "answers": [
+                {"id": 1, "text": "A", "weight": 100, "html": ""},
+                {"id": 2, "text": "B", "weight": 0},
+            ],
+        }
+        q = msgspec.convert(data, CanvasQuizQuestion, strict=False)
+        assert q.answers[0].weight == 100.0
+        assert q.answers[1].text == "B"
+
 
 # --- CanvasClient unit tests (mocked HTTP) ---
 
@@ -402,6 +447,7 @@ def mock_client(monkeypatch):
     client._base_url = "https://canvas.example.com/api/v1"
     client._token = "test-token"
     client.course_id = 1
+    client._time_zone = "America/Los_Angeles"
     client._http = httpx.Client(
         base_url="https://canvas.example.com/api/v1",
         headers={
@@ -415,6 +461,19 @@ def mock_client(monkeypatch):
 
 
 class TestCanvasClient:
+    def test_time_zone_from_config(self, mock_client):
+        client, _ = mock_client
+        assert client.time_zone == "America/Los_Angeles"
+
+    def test_time_zone_fetched_once_when_missing(self, mock_client, capsys):
+        client, transport = mock_client
+        client._time_zone = ""
+        transport.add(json_data={"id": 1, "name": "C", "time_zone": "America/New_York"})
+        assert client.time_zone == "America/New_York"
+        assert client.time_zone == "America/New_York"
+        assert len(transport.requests) == 1
+        assert "cass init" in capsys.readouterr().err
+
     def test_get_course(self, mock_client):
         client, transport = mock_client
         transport.add(
@@ -628,13 +687,149 @@ class TestCanvasClient:
         )
         assert "module_item%5Btitle%5D=Custom" in transport.requests[0].content.decode()
 
-    def test_create_quiz_has_no_points_param(self, mock_client):
+    def test_request_is_course_relative_and_raises(self, mock_client):
         client, transport = mock_client
-        transport.add(json_data={"id": 20, "title": "Q", "quiz_type": "assignment"})
-        client.create_quiz("Q")
-        assert "points" not in transport.requests[0].content.decode()
-        with pytest.raises(TypeError):
-            client.create_quiz("Q", points_possible=5)  # pyright: ignore[reportCallIssue]
+        transport.add(json_data={"ok": True})
+        resp = client.request("GET", client._course("/quizzes/1/statistics"))
+        assert resp.json() == {"ok": True}
+        assert str(transport.requests[0].url).endswith(
+            "/courses/1/quizzes/1/statistics"
+        )
+        transport.add(404, json_data={"errors": []})
+        with pytest.raises(httpx.HTTPStatusError):
+            client.request("GET", "/nope")
+
+    def test_create_quiz_posts_questions_then_resaves(self, mock_client):
+        import json
+
+        from cass.actions.quizzes import AnswerSpec, QuestionSpec, QuizSpec
+
+        client, transport = mock_client
+        spec = QuizSpec(
+            title="S",
+            quiz_type="graded_survey",
+            points=2,
+            due_at="2026-09-25 17:00",
+            hide_results="always",
+            published=True,
+            questions=[
+                QuestionSpec(text="<p>Hi</p>"),
+                QuestionSpec(
+                    text="<p>?</p>",
+                    type="multiple_choice_question",
+                    points=1,
+                    answers=[AnswerSpec("A", True), AnswerSpec("B")],
+                ),
+            ],
+        )
+        transport.add(json_data={"id": 20, "title": "S", "quiz_type": "graded_survey"})
+        transport.add(json_data={"id": 100, "question_type": "essay_question"})
+        transport.add(
+            json_data={"id": 101, "question_type": "multiple_choice_question"}
+        )
+        transport.add(json_data={"id": 20, "title": "S"})
+        transport.add(
+            json_data={
+                "id": 20,
+                "title": "S",
+                "quiz_type": "graded_survey",
+                "question_count": 2,
+                "points_possible": 2.0,
+            }
+        )
+
+        quiz = client.create_quiz(spec, assignment_group_id=9)
+
+        assert quiz.question_count == 2
+        assert [(r.method, r.url.path) for r in transport.requests] == [
+            ("POST", "/api/v1/courses/1/quizzes"),
+            ("POST", "/api/v1/courses/1/quizzes/20/questions"),
+            ("POST", "/api/v1/courses/1/quizzes/20/questions"),
+            ("PUT", "/api/v1/courses/1/quizzes/20"),
+            ("GET", "/api/v1/courses/1/quizzes/20"),
+        ]
+        body = transport.requests[0].content.decode()
+        assert "quiz%5Bpoints_possible%5D=2" in body
+        assert "quiz%5Bdue_at%5D=2026-09-25T17%3A00%3A00-07%3A00" in body
+        assert "quiz%5Bassignment_group_id%5D=9" in body
+        assert "quiz%5Bpublished%5D=false" in body  # published only after questions
+        q1 = json.loads(transport.requests[1].content)["question"]
+        assert q1["question_name"] == "Question 1"
+        assert q1["points_possible"] == 0  # survey default
+        q2 = json.loads(transport.requests[2].content)["question"]
+        assert q2["answers"] == [
+            {"answer_text": "A", "answer_weight": 100},
+            {"answer_text": "B", "answer_weight": 0},
+        ]
+        assert "quiz%5Bpublished%5D=true" in transport.requests[3].content.decode()
+
+    def test_create_quiz_deletes_partial_quiz_on_failure(self, mock_client):
+        from cass.actions.quizzes import QuestionSpec, QuizSpec
+
+        client, transport = mock_client
+        transport.add(json_data={"id": 20, "title": "S", "quiz_type": "assignment"})
+        transport.add(400, json_data={"errors": [{"message": "bad question"}]})
+        transport.add(json_data={"id": 20})
+        spec = QuizSpec(
+            title="S", quiz_type="assignment", questions=[QuestionSpec(text="x")]
+        )
+        with pytest.raises(httpx.HTTPStatusError):
+            client.create_quiz(spec)
+        assert transport.requests[2].method == "DELETE"
+        assert transport.requests[2].url.path == "/api/v1/courses/1/quizzes/20"
+
+    def test_update_quiz_sends_only_changes(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data={"id": 20, "title": "S", "allowed_attempts": 2})
+        client.update_quiz(20, {"allowed_attempts": 2})
+        assert transport.requests[0].content.decode() == "quiz%5Ballowed_attempts%5D=2"
+
+    def test_list_quiz_questions(self, mock_client):
+        client, transport = mock_client
+        transport.add(
+            json_data=[
+                {"id": 2, "position": 2, "question_type": "essay_question"},
+                {"id": 1, "position": 1, "question_type": "essay_question"},
+            ]
+        )
+        questions, fallback = client.list_quiz_questions(20)
+        assert fallback is False
+        assert [q.id for q in questions] == [1, 2]
+
+    def test_list_quiz_questions_falls_back_to_statistics_on_403(self, mock_client):
+        client, transport = mock_client
+        transport.add(403, json_data={"status": "unauthorized"})
+        transport.add(
+            json_data={
+                "quiz_statistics": [
+                    {
+                        "question_statistics": [
+                            {
+                                "id": "7",
+                                "question_type": "multiple_choice_question",
+                                "question_text": "<p>?</p>",
+                                "position": 1,
+                                "answers": [
+                                    {"id": "1", "text": "A", "correct": True},
+                                    {"id": "2", "text": "B", "correct": False},
+                                ],
+                            }
+                        ]
+                    }
+                ]
+            }
+        )
+        questions, fallback = client.list_quiz_questions(20)
+        assert fallback is True
+        assert questions[0].id == 7
+        assert questions[0].answers[0].weight == 100.0
+        assert transport.requests[1].url.path.endswith("/quizzes/20/statistics")
+
+    def test_list_quiz_questions_reraises_other_errors(self, mock_client):
+        client, transport = mock_client
+        transport.add(404, json_data={})
+        with pytest.raises(httpx.HTTPStatusError):
+            client.list_quiz_questions(20)
 
     def test_create_assignment_group_sends_top_level_params(self, mock_client):
         """The Assignment Groups API takes name/position/group_weight unnested."""

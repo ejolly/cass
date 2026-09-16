@@ -47,6 +47,20 @@ class TestSameInstant:
         assert not same_instant("soon", "later")
 
 
+class TestResolveGroupIds:
+    def test_case_insensitive_and_missing(self):
+        from cass.apis.canvas.schema import CanvasAssignmentGroup
+        from cass.apis.canvas.sync import resolve_group_ids
+
+        client = MagicMock()
+        client.list_assignment_groups.return_value = [
+            CanvasAssignmentGroup(id=9, name="Labs")
+        ]
+        ids, missing = resolve_group_ids(client, ["labs", "Homework", "LABS"])
+        assert ids == {"labs": 9}
+        assert missing == ["Homework"]
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

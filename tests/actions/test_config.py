@@ -234,3 +234,70 @@ class TestMotherDuck:
         cfg = load_config()
         assert cfg.motherduck_db == ""
         assert cfg.has_motherduck is False
+
+
+class TestExplicitConfigPath:
+    def test_find_project_root_with_explicit_file(self, tmp_path):
+        other = tmp_path / "f25" / "cass_f25.toml"
+        other.parent.mkdir()
+        other.write_text('[canvas]\nbase_url = "https://c.edu"\ncourse_id = 5\n')
+        assert find_project_root(config_path=other) == other.parent
+
+    def test_explicit_missing_file_exits_with_path(self, tmp_path):
+        missing = tmp_path / "nope.toml"
+        with pytest.raises(SystemExit, match=r"nope\.toml"):
+            find_project_root(config_path=missing)
+
+    def test_set_config_path_drives_load_config(self, tmp_path, monkeypatch):
+        from cass.actions.config import config_file, load_config, set_config_path
+
+        other = tmp_path / "f25" / "cass_f25.toml"
+        other.parent.mkdir()
+        other.write_text('[canvas]\nbase_url = "https://c.edu"\ncourse_id = 5\n')
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        monkeypatch.chdir(elsewhere)
+        set_config_path(other)
+        try:
+            assert config_file() == other.resolve()
+            cfg = load_config()
+            assert cfg.canvas_course_id == 5
+            assert cfg.root == other.parent.resolve()
+        finally:
+            set_config_path(None)
+
+
+class TestTimeZoneAndQuizRefs:
+    def test_time_zone_and_quizzes(self, tmp_path, monkeypatch):
+        toml = tmp_path / "cass.toml"
+        toml.write_text(
+            '[canvas]\nbase_url = "https://canvas.example.com"\ncourse_id = 1\n'
+            'time_zone = "America/Los_Angeles"\n\n'
+            '[[canvas.quizzes]]\nfile = "quizzes/09-25.toml"\n'
+        )
+        monkeypatch.chdir(tmp_path)
+        reset_config()
+        from cass.actions.config import load_config
+
+        cfg = load_config()
+        assert cfg.canvas_time_zone == "America/Los_Angeles"
+        assert (
+            cfg.canvas_quizzes[0].file
+            == (tmp_path / "quizzes" / "09-25.toml").resolve()
+        )
+
+    def test_time_zone_defaults_empty(self, tmp_path, monkeypatch):
+        toml = tmp_path / "cass.toml"
+        toml.write_text('[canvas]\nbase_url = "https://c.edu"\ncourse_id = 1\n')
+        monkeypatch.chdir(tmp_path)
+        reset_config()
+        from cass.actions.config import load_config
+
+        assert load_config().canvas_time_zone == ""
+        assert load_config().canvas_quizzes == []
+
+    def test_update_writes_time_zone(self, tmp_path):
+        path = tmp_path / "cass.toml"
+        path.write_text('[canvas]\nbase_url = "https://c.edu"\ncourse_id = 1\n')
+        update_config(path, canvas_time_zone="America/Los_Angeles")
+        assert 'time_zone = "America/Los_Angeles"' in path.read_text()

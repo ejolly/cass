@@ -227,7 +227,6 @@ dependencies = [
     { name = "ibis-framework", extra = ["duckdb", "sqlite"] },
     { name = "msgspec" },
     { name = "nicegui" },
-    { name = "pytz" },
     { name = "rich" },
     { name = "sqlite-utils" },
     { name = "typer" },
@@ -252,7 +251,6 @@ requires-dist = [
     { name = "ibis-framework", extras = ["duckdb", "sqlite"], specifier = ">=12.0.0" },
     { name = "msgspec", specifier = ">=0.20.0" },
     { name = "nicegui", specifier = ">=3.8.0" },
-    { name = "pytz", specifier = ">=2024.1" },
     { name = "rich", specifier = ">=14.3.3" },
     { name = "sqlite-utils", specifier = ">=3.39" },
     { name = "typer", specifier = ">=0.24.1" },
@@ -1692,15 +1690,6 @@ wheels = [
 [package.optional-dependencies]
 asyncio-client = [
     { name = "aiohttp" },
-]
-
-[[package]]
-name = "pytz"
-version = "2026.1.post1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/56/db/b8721d71d945e6a8ac63c0fc900b2067181dbb50805958d4d4661cf7d277/pytz-2026.1.post1.tar.gz", hash = "sha256:3378dde6a0c3d26719182142c56e60c7f9af7e968076f31aae569d72a0358ee1", size = 321088, upload-time = "2026-03-03T07:47:50.683Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/10/99/781fe0c827be2742bcc775efefccb3b048a3a9c6ce9aec0cbf4a101677e5/pytz-2026.1.post1-py2.py3-none-any.whl", hash = "sha256:f2fd16142fda348286a75e1a524be810bb05d444e5a081f37f7affc635035f7a", size = 510489, upload-time = "2026-03-03T07:47:49.167Z" },
 ]
 
 [[package]]

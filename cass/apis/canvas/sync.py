@@ -8,14 +8,30 @@ from __future__ import annotations
 __docformat__ = "google"
 
 import json
+from collections.abc import Iterable
 from datetime import date, datetime
 from typing import TYPE_CHECKING
 
 import sqlite_utils
 
+from .times import same_instant
+
 if TYPE_CHECKING:
     from ...db.schema import CanvasGrade
     from .client import CanvasClient
+
+__all__ = [
+    "build_grade_push_data",
+    "build_push_preview",
+    "get_post_manually_map",
+    "is_valid_grade",
+    "push_assignments",
+    "push_grades",
+    "resolve_group_ids",
+    "resolve_row_name",
+    "same_instant",
+    "values_equal",
+]
 
 
 def values_equal(a: object, b: object) -> bool:
@@ -27,22 +43,6 @@ def values_equal(a: object, b: object) -> bool:
     if isinstance(b, (datetime, date)) and isinstance(a, str):
         return b.isoformat() == a or str(b) == a
     return False
-
-
-def same_instant(a: str | None, b: str | None) -> bool:
-    """Compare two ISO timestamps by the moment they name, not their spelling.
-
-    Canvas returns UTC (``...Z``) while cass.toml may use a local offset.
-    Unparseable values fall back to plain string comparison.
-    """
-    if not a and not b:
-        return True
-    if not a or not b:
-        return False
-    try:
-        return datetime.fromisoformat(a) == datetime.fromisoformat(b)
-    except ValueError:
-        return a == b
 
 
 def resolve_row_name(
@@ -219,6 +219,26 @@ def push_grades(
             )
 
     return results
+
+
+def resolve_group_ids(
+    client: CanvasClient, names: Iterable[str]
+) -> tuple[dict[str, int], list[str]]:
+    """Map assignment group names to IDs, case-insensitively.
+
+    Returns:
+        ``(ids keyed by lower-cased name, names with no live match)``.
+    """
+    live = {g.name.lower(): g.id for g in client.list_assignment_groups()}
+    ids: dict[str, int] = {}
+    missing: list[str] = []
+    for name in names:
+        key = name.lower()
+        if key in live:
+            ids[key] = live[key]
+        elif name not in missing:
+            missing.append(name)
+    return ids, missing
 
 
 def push_assignments(

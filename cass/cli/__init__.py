@@ -32,6 +32,12 @@ def version_callback(value: bool) -> None:
 @app.callback()
 def main(
     ctx: typer.Context,
+    config: str | None = typer.Option(
+        None,
+        "--config",
+        envvar="CASS_CONFIG",
+        help="Path to a cass.toml (default: search upward from the working directory)",
+    ),
     version: bool = typer.Option(
         False,
         "--version",
@@ -42,6 +48,10 @@ def main(
     ),
 ) -> None:
     """cass — Canvas grading CLI."""
+    if config is not None:
+        from ..actions.config import set_config_path
+
+        set_config_path(Path(config))
     if ctx.invoked_subcommand is None:
         console.print(ctx.get_help())
         raise typer.Exit()
@@ -318,6 +328,8 @@ def _prompt_canvas_token() -> str:
 @app.command()
 def init() -> None:
     """Initialize or repair the local cass setup."""
+    import httpx
+
     from ..actions.config import (
         CONFIG_FILENAME,
         config_file_path,
@@ -327,6 +339,8 @@ def init() -> None:
         update_config,
     )
     from ..actions.doctor import check_prerequisites
+    from ..apis.canvas.auth import CanvasAuthError
+    from ..apis.canvas.matching import fetch_course_time_zone
     from ..apis.canvas.matching import save_token as canvas_save_token
 
     cfg_path = config_file_path()
@@ -400,6 +414,22 @@ def init() -> None:
             f"[green]Using session cookie from {saved_credentials}[/green] "
             "[dim](delete it to switch back to an API token)[/dim]"
         )
+
+    if canvas_base_url and canvas_course_id:
+        current = read_config_data(toml_path).get("canvas", {})
+        if isinstance(current, dict) and not current.get("time_zone"):
+            reset_config()
+            try:
+                time_zone = fetch_course_time_zone()
+            except (CanvasAuthError, httpx.HTTPError, RuntimeError) as exc:
+                console.print(
+                    f"[yellow]Could not read the course time zone: {exc}[/yellow]"
+                )
+            else:
+                if time_zone:
+                    update_config(toml_path, canvas_time_zone=time_zone)
+                    changed = True
+                    console.print(f"[green]Saved time_zone[/green] {time_zone}")
 
     if "classroom" in raw:
         update_config(toml_path)

@@ -186,8 +186,38 @@ class CanvasQuiz(msgspec.Struct):
     question_count: int = 0
     points_possible: float | None = None
     assignment_id: int | None = None
+    assignment_group_id: int | None = None
     html_url: str = ""
     description: str | None = None
+    due_at: str | None = None
+    unlock_at: str | None = None
+    lock_at: str | None = None
+    allowed_attempts: int = 1
+    scoring_policy: str = "keep_highest"
+    hide_results: str | None = None
+    shuffle_answers: bool = False
+    one_question_at_a_time: bool = False
+    show_correct_answers: bool = True
+
+
+class CanvasQuizAnswer(msgspec.Struct):
+    """One answer on a Canvas quiz question."""
+
+    id: int = 0
+    text: str = ""
+    weight: float = 0.0
+
+
+class CanvasQuizQuestion(msgspec.Struct):
+    """Canvas quiz question with its answers."""
+
+    id: int
+    question_name: str = ""
+    question_text: str = ""
+    question_type: str = ""
+    points_possible: float | None = None  # null on a freshly posted question
+    position: int | None = None  # null until the quiz is re-saved
+    answers: list[CanvasQuizAnswer] = []
 
 
 # --- Files & Folders ---
