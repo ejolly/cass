@@ -5,6 +5,7 @@ from __future__ import annotations
 __docformat__ = "google"
 
 import shutil
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -636,3 +637,124 @@ class TestSessionCookieAuth:
             run()
         assert exc.value.code == 1
         assert "Canvas rejected the session cookie" in capsys.readouterr().out
+
+
+class TestCanvasCalendar:
+    def test_when_converts_utc_to_local(self, monkeypatch):
+        from cass.cli.canvas import when
+
+        monkeypatch.setenv("TZ", "America/Los_Angeles")
+        time.tzset()
+        assert when("2026-09-22T17:00:00Z") == "2026-09-22 10:00"
+        assert when(None) == ""
+
+    @pytest.fixture
+    def calendar_client(self, monkeypatch):
+        from cass.apis.canvas.schema import CanvasCalendarEvent
+
+        fake = MagicMock()
+        fake.__enter__.return_value = fake
+        fake.list_calendar_events.return_value = [
+            CanvasCalendarEvent(
+                id=234,
+                title="Midterm review",
+                start_at="2026-10-19T15:00:00-07:00",
+                end_at="2026-10-19T16:00:00-07:00",
+                location_name="Room 237",
+            ),
+            CanvasCalendarEvent(
+                id=236,
+                title="Holiday",
+                start_at="2026-10-20T07:00:00Z",
+                end_at="2026-10-20T07:00:00Z",
+                all_day=True,
+                all_day_date="2026-10-20",
+            ),
+        ]
+        fake.create_calendar_event.return_value = CanvasCalendarEvent(
+            id=235, title="Office hours"
+        )
+        fake.update_calendar_event.return_value = CanvasCalendarEvent(
+            id=235, title="OH (moved)"
+        )
+        monkeypatch.setattr("cass.cli.canvas.require_canvas", lambda: None)
+        monkeypatch.setattr("cass.cli.canvas.client", lambda: fake)
+        return fake
+
+    def test_list_renders_events(self, calendar_client):
+        result = runner.invoke(app, ["canvas", "calendar"])
+        assert result.exit_code == 0, result.output
+        assert "Midterm review" in result.stdout
+        assert "Room 237" in result.stdout
+        assert "Holiday" in result.stdout
+        calendar_client.list_calendar_events.assert_called_once_with(
+            start_date=None, end_date=None
+        )
+
+    def test_list_shows_all_day_date_not_utc_midnight(
+        self, calendar_client, monkeypatch
+    ):
+        # UTC+9: 2026-10-20T07:00Z would render as 2026-10-20 16:00 if converted
+        monkeypatch.setenv("TZ", "Asia/Tokyo")
+        time.tzset()
+        result = runner.invoke(app, ["canvas", "calendar"])
+        assert result.exit_code == 0, result.output
+        holiday = next(line for line in result.stdout.splitlines() if "Holiday" in line)
+        assert "2026-10-20" in holiday
+        assert "16:00" not in holiday
+
+    def test_list_passes_date_range(self, calendar_client):
+        result = runner.invoke(
+            app, ["canvas", "calendar", "--from", "2026-10-01", "--to", "2026-10-31"]
+        )
+        assert result.exit_code == 0, result.output
+        calendar_client.list_calendar_events.assert_called_once_with(
+            start_date="2026-10-01", end_date="2026-10-31"
+        )
+
+    def test_create(self, calendar_client):
+        result = runner.invoke(
+            app,
+            [
+                "canvas",
+                "calendar",
+                "create",
+                "Office hours",
+                "--start",
+                "2026-10-20T10:00:00",
+                "--end",
+                "2026-10-20T11:00:00",
+                "--location",
+                "Room 237",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert "id=235" in result.stdout
+        calendar_client.create_calendar_event.assert_called_once_with(
+            "Office hours",
+            start_at="2026-10-20T10:00:00",
+            end_at="2026-10-20T11:00:00",
+            description=None,
+            location_name="Room 237",
+            all_day=False,
+        )
+
+    def test_update_only_sends_given_fields(self, calendar_client):
+        result = runner.invoke(
+            app, ["canvas", "calendar", "update", "235", "--title", "OH (moved)"]
+        )
+        assert result.exit_code == 0, result.output
+        calendar_client.update_calendar_event.assert_called_once_with(
+            235, title="OH (moved)"
+        )
+
+    def test_update_with_nothing_to_change(self, calendar_client):
+        result = runner.invoke(app, ["canvas", "calendar", "update", "235"])
+        assert result.exit_code == 0, result.output
+        assert "Nothing to update" in result.stdout
+        calendar_client.update_calendar_event.assert_not_called()
+
+    def test_delete_with_yes(self, calendar_client):
+        result = runner.invoke(app, ["canvas", "calendar", "delete", "235", "-y"])
+        assert result.exit_code == 0, result.output
+        calendar_client.delete_calendar_event.assert_called_once_with(235)

@@ -8,6 +8,7 @@ from cass.apis.canvas.schema import (
     CanvasAnnouncement,
     CanvasAssignmentGroup,
     CanvasAssignmentResponse,
+    CanvasCalendarEvent,
     CanvasCourse,
     CanvasEnrollment,
     CanvasFile,
@@ -260,6 +261,25 @@ class TestModels:
         a = msgspec.convert(data, CanvasAnnouncement, strict=False)
         assert a.user_name == "Dr. Smith"
 
+    def test_canvas_calendar_event(self):
+        data = {
+            "id": 234,
+            "title": "Midterm review",
+            "start_at": "2026-10-19T15:00:00-07:00",
+            "end_at": "2026-10-19T16:00:00-07:00",
+            "description": "<b>Bring questions</b>",
+            "location_name": "Room 237",
+            "context_code": "course_123",
+            "workflow_state": "active",
+            "all_day": False,
+            "html_url": "https://canvas.example.com/calendar?event_id=234",
+            "child_events": [],
+        }
+        e = msgspec.convert(data, CanvasCalendarEvent, strict=False)
+        assert e.id == 234
+        assert e.location_name == "Room 237"
+        assert e.all_day is False
+
     def test_canvas_submission_response(self):
         """CanvasSubmissionResponse with all fields from real API."""
         data = {
@@ -469,6 +489,75 @@ class TestCanvasClient:
         anns = client.list_announcements()
         assert len(anns) == 1
         assert anns[0].user_name == "Prof"
+
+    def test_list_calendar_events_defaults_to_all_events(self, mock_client):
+        client, transport = mock_client
+        transport.add(
+            json_data=[
+                {"id": 234, "title": "Midterm review", "context_code": "course_1"},
+            ]
+        )
+        events = client.list_calendar_events()
+        assert len(events) == 1
+        assert events[0].title == "Midterm review"
+        url = str(transport.requests[0].url)
+        assert "/calendar_events?" in url
+        assert "context_codes[]=course_1" in url
+        assert "type=event" in url
+        assert "all_events=true" in url
+
+    def test_list_calendar_events_with_date_range(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data=[])
+        client.list_calendar_events(start_date="2026-10-01", end_date="2026-10-31")
+        url = str(transport.requests[0].url)
+        assert "start_date=2026-10-01" in url
+        assert "end_date=2026-10-31" in url
+        assert "all_events" not in url
+
+    def test_create_calendar_event(self, mock_client):
+        client, transport = mock_client
+        transport.add(
+            json_data={
+                "id": 235,
+                "title": "Office hours",
+                "start_at": "2026-10-20T10:00:00Z",
+                "context_code": "course_1",
+            }
+        )
+        event = client.create_calendar_event(
+            "Office hours",
+            start_at="2026-10-20T10:00:00Z",
+            end_at="2026-10-20T11:00:00Z",
+            location_name="Room 237",
+        )
+        assert event.id == 235
+        req = transport.requests[0]
+        assert req.method == "POST"
+        assert str(req.url).endswith("/calendar_events")
+        body = req.content.decode()
+        assert "calendar_event%5Bcontext_code%5D=course_1" in body
+        assert "calendar_event%5Btitle%5D=Office+hours" in body
+        assert "calendar_event%5Blocation_name%5D=Room+237" in body
+        assert "description" not in body
+
+    def test_update_calendar_event(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data={"id": 235, "title": "OH (moved)"})
+        event = client.update_calendar_event(235, title="OH (moved)")
+        assert event.title == "OH (moved)"
+        req = transport.requests[0]
+        assert req.method == "PUT"
+        assert str(req.url).endswith("/calendar_events/235")
+        assert "calendar_event%5Btitle%5D=OH" in req.content.decode()
+
+    def test_delete_calendar_event(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data={"id": 235})
+        client.delete_calendar_event(235)
+        req = transport.requests[0]
+        assert req.method == "DELETE"
+        assert str(req.url).endswith("/calendar_events/235")
 
     def test_list_tabs(self, mock_client):
         client, transport = mock_client

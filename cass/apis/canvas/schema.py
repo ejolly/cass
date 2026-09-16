@@ -232,6 +232,25 @@ class CanvasAnnouncement(msgspec.Struct):
     user_name: str = ""
 
 
+# --- Calendar ---
+
+
+class CanvasCalendarEvent(msgspec.Struct):
+    """Canvas calendar event (type=event; assignment due dates are not included)."""
+
+    id: int
+    title: str
+    start_at: str | None = None
+    end_at: str | None = None
+    description: str | None = None
+    location_name: str | None = None
+    all_day: bool = False
+    all_day_date: str | None = None
+    context_code: str = ""
+    workflow_state: str = ""
+    html_url: str = ""
+
+
 # --- Tabs ---
 
 
