@@ -9,7 +9,6 @@ from cass.actions.config import (
     Config,
     find_project_root,
     parse_canvas_course_url,
-    parse_classroom_url,
     reset_config,
     update_config,
     write_config,
@@ -42,13 +41,7 @@ class TestFindProjectRoot:
 class TestWriteConfig:
     def test_canvas_required(self, tmp_path, monkeypatch):
         path = tmp_path / "cass.toml"
-        write_config(
-            path,
-            classroom_url="https://classroom.github.com/classrooms/42-course",
-            classroom_url_id=42,
-            classroom_gh_id=4200,
-            org="my-org",
-        )
+        write_config(path)
         monkeypatch.chdir(tmp_path)
 
         from cass.actions.config import load_config
@@ -56,19 +49,15 @@ class TestWriteConfig:
         with pytest.raises(SystemExit, match="must have a \\[canvas\\] section"):
             load_config()
 
-    def test_both(self, tmp_path):
+    def test_canvas_only(self, tmp_path):
         path = tmp_path / "cass.toml"
         write_config(
             path,
-            classroom_url="https://classroom.github.com/classrooms/42-course",
-            classroom_url_id=42,
-            classroom_gh_id=4200,
-            org="my-org",
             canvas_base_url="https://canvas.example.com",
             canvas_course_id=999,
         )
         content = path.read_text()
-        assert "[classroom]" in content
+        assert "[classroom]" not in content
         assert "[canvas]" in content
         assert 'base_url = "https://canvas.example.com"' in content
         assert "course_id = 999" in content
@@ -81,41 +70,28 @@ class TestWriteConfig:
             '[database]\nmotherduck = "cass_prod"\n'
         )
 
-        update_config(
-            path,
-            classroom_url="https://classroom.github.com/classrooms/42-course",
-            classroom_url_id=42,
-            classroom_gh_id=4200,
-            org="test-org",
-        )
+        update_config(path, canvas_course_id=2)
 
         content = path.read_text()
         assert 'name = "HW1"' in content
         assert 'motherduck = "cass_prod"' in content
-        assert "[classroom]" in content
-        assert "gh_id = 4200" in content
-        assert 'org = "test-org"' in content
+        assert "course_id = 2" in content
+        assert "[classroom]" not in content
 
-    def test_update_preserves_partial_classroom(self, tmp_path):
+    def test_update_drops_stale_classroom_section(self, tmp_path):
         path = tmp_path / "cass.toml"
         path.write_text(
+            "[classroom]\n"
+            'url = "https://classroom.github.com/classrooms/42-course"\n'
+            "url_id = 42\ngh_id = 4200\n\n"
             '[canvas]\nbase_url = "https://canvas.example.com"\ncourse_id = 1\n'
         )
 
-        update_config(
-            path,
-            classroom_url="https://classroom.github.com/classrooms/42-course",
-            classroom_url_id=42,
-            classroom_gh_id=0,
-            org="",
-        )
+        update_config(path)
 
         content = path.read_text()
-        assert "[classroom]" in content
-        assert 'url = "https://classroom.github.com/classrooms/42-course"' in content
-        assert "url_id = 42" in content
-        assert "gh_id = 0" in content
-        assert 'org = ""' in content
+        assert "[classroom]" not in content
+        assert "course_id = 1" in content
 
 
 class TestSetupParsing:
@@ -129,83 +105,8 @@ class TestSetupParsing:
         ) == ("https://canvas.example.com", 123)
         assert parse_canvas_course_url("https://canvas.example.com/course/123") is None
 
-    def test_parse_classroom_url(self):
-        assert parse_classroom_url("https://classroom.github.com/classrooms/456") == 456
-        assert (
-            parse_classroom_url(
-                "https://classroom.github.com/classrooms/232475786-201b-w26"
-            )
-            == 232475786
-        )
-        assert (
-            parse_classroom_url(
-                "https://classroom.github.com/classrooms/456/assignments"
-            )
-            == 456
-        )
-
 
 class TestConfigProperties:
-    @pytest.mark.parametrize(
-        "classroom_url, classroom_url_id, expected",
-        [
-            ("https://classroom.github.com/classrooms/42-course", 42, True),
-            ("", 0, False),
-        ],
-        ids=["present", "missing"],
-    )
-    def test_has_classroom_url(
-        self, classroom_url, classroom_url_id, expected, tmp_path
-    ):
-        cfg = Config(
-            root=tmp_path,
-            classroom_url=classroom_url,
-            classroom_url_id=classroom_url_id,
-            org="",
-        )
-        assert cfg.has_classroom_url is expected
-
-    @pytest.mark.parametrize(
-        "classroom_url, classroom_url_id, classroom_gh_id, expected",
-        [
-            ("https://classroom.github.com/classrooms/42-course", 42, 4200, True),
-            ("", 0, 4200, False),
-            ("https://classroom.github.com/classrooms/42-course", 42, 0, False),
-            ("", 0, 0, False),
-        ],
-        ids=["resolved", "no-url", "no-gh-id", "neither"],
-    )
-    def test_has_classroom(
-        self, classroom_url, classroom_url_id, classroom_gh_id, expected, tmp_path
-    ):
-        cfg = Config(
-            root=tmp_path,
-            classroom_url=classroom_url,
-            classroom_url_id=classroom_url_id,
-            classroom_gh_id=classroom_gh_id,
-        )
-        assert cfg.has_classroom is expected
-
-    @pytest.mark.parametrize(
-        "classroom_url, classroom_url_id, classroom_gh_id, expected",
-        [
-            ("https://classroom.github.com/classrooms/42-course", 42, 0, True),
-            ("https://classroom.github.com/classrooms/42-course", 42, 4200, False),
-            ("", 0, 0, False),
-        ],
-        ids=["pending", "configured", "missing"],
-    )
-    def test_classroom_needs_resolution(
-        self, classroom_url, classroom_url_id, classroom_gh_id, expected, tmp_path
-    ):
-        cfg = Config(
-            root=tmp_path,
-            classroom_url=classroom_url,
-            classroom_url_id=classroom_url_id,
-            classroom_gh_id=classroom_gh_id,
-        )
-        assert cfg.classroom_needs_resolution is expected
-
     @pytest.mark.parametrize(
         "base_url, course_id, expected",
         [
@@ -276,6 +177,20 @@ class TestCanvasDeclarations:
         cfg = load_config()
         assert cfg.canvas_modules == []
         assert cfg.canvas_assignments == []
+
+    def test_load_ignores_classroom_section(self, tmp_path, monkeypatch):
+        toml = tmp_path / "cass.toml"
+        toml.write_text(
+            '[classroom]\nurl = "https://classroom.github.com/classrooms/42"\n\n'
+            '[canvas]\nbase_url = "https://canvas.example.com"\ncourse_id = 5\n'
+        )
+        monkeypatch.chdir(tmp_path)
+        reset_config()
+        from cass.actions.config import load_config
+
+        cfg = load_config()
+        assert cfg.canvas_course_id == 5
+        assert not hasattr(cfg, "classroom_url")
 
 
 class TestMotherDuck:

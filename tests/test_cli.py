@@ -17,7 +17,6 @@ from typer.testing import CliRunner
 from cass import db
 from cass.actions.config import load_config, reset_config
 from cass.cli import app
-from cass.db.schema import Assignment, Student
 
 runner = CliRunner()
 
@@ -103,21 +102,6 @@ class TestStatus:
         assert "assignments:" in result.stdout
         assert "pending change" in result.stdout
 
-    def test_status_shows_pending_github_setup(self, tmp_path, monkeypatch):
-        monkeypatch.chdir(tmp_path)
-        (tmp_path / "cass.toml").write_text(
-            "[classroom]\n"
-            'url = "https://classroom.github.com/classrooms/42-course"\n'
-            "url_id = 42\n"
-            "gh_id = 0\n"
-            'org = ""\n\n'
-            '[canvas]\nbase_url = "https://canvas.example.com"\ncourse_id = 1\n'
-        )
-
-        result = runner.invoke(app, ["status"])
-        assert result.exit_code == 0
-        assert "gh ID unresolved" in result.stdout
-
 
 class TestPull:
     def test_pull_blocks_when_pending(self, project_db):
@@ -132,75 +116,6 @@ class TestPull:
         assert "Pull blocked" in result.stdout
         assert "cass push" in result.stdout
         assert "cass revert" in result.stdout
-
-
-class TestPullRepos:
-    def test_pull_repos_passes_filtered_assignments_to_shared_fetch(
-        self, tmp_path, monkeypatch
-    ) -> None:
-        monkeypatch.chdir(tmp_path)
-        (tmp_path / "cass.toml").write_text(
-            "[classroom]\n"
-            'url = "https://classroom.github.com/classrooms/42-course"\n'
-            "url_id = 42\n"
-            "gh_id = 4200\n"
-            'org = "test-org"\n\n'
-            '[canvas]\nbase_url = "https://canvas.example.com"\ncourse_id = 1\n'
-        )
-
-        assignments = [
-            Assignment(
-                slug="hw-01",
-                title="HW 01",
-                gh_assignment_slug="hw-01",
-                canvas_assignment_id=1,
-                points_possible=10.0,
-                deadline=None,
-            ),
-            Assignment(
-                slug="lab-02",
-                title="Lab 02",
-                gh_assignment_slug="lab-02",
-                canvas_assignment_id=2,
-                points_possible=10.0,
-                deadline=None,
-            ),
-        ]
-        students = [
-            Student(canvas_id=1, name="Alice", github_username="alice-gh"),
-        ]
-        captured_targets: list[Assignment] = []
-        captured_roster: list[Student] = []
-
-        class FakeClient:
-            async def __aenter__(self):
-                return self
-
-            async def __aexit__(self, *_args):
-                return None
-
-        async def fake_pull_gh(client, targets, roster, **kwargs):
-            del client, kwargs
-            captured_targets.extend(targets)
-            captured_roster.extend(roster)
-            return {
-                "cloned": 0,
-                "updated": 0,
-                "up_to_date": 1,
-                "skipped": 0,
-                "errors": 0,
-            }
-
-        monkeypatch.setattr("cass.db.load_students", lambda: students)
-        monkeypatch.setattr("cass.db.load_assignments", lambda: assignments)
-        monkeypatch.setattr("cass.apis.github.client.GitHubClient", FakeClient)
-        monkeypatch.setattr("cass.apis.github.fetch.pull_gh", fake_pull_gh)
-
-        result = runner.invoke(app, ["pull-repos", "--assignment", "hw-01"])
-
-        assert result.exit_code == 0
-        assert [a.slug for a in captured_targets] == ["hw-01"]
-        assert captured_roster == students
 
 
 class TestView:
@@ -334,7 +249,7 @@ class TestQuery:
         assert "students table" in result.stdout
         mock.assert_called_once_with(
             db.db_path(),
-            "students",
+            "canvas_students",
             where="",
             order="",
             limit=5,
@@ -403,187 +318,44 @@ class TestInit:
             in (tmp_path / "cass.toml").read_text()
         )
 
-    def test_init_uses_urls_for_canvas_and_github(self, tmp_path, monkeypatch):
+    def test_init_fresh_project_asks_only_for_canvas(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         monkeypatch.setattr("cass.actions.doctor.check_prerequisites", list)
         monkeypatch.setattr(
             "cass.apis.canvas.matching.save_token",
             lambda token: (tmp_path / ".canvastoken").write_text(f"{token}\n"),
         )
-        from cass.apis.github.service import (
-            ClassroomResolutionResult,
-            ResolvedClassroom,
-        )
-
-        monkeypatch.setattr(
-            "cass.apis.github.service.resolve_classroom_direct",
-            lambda classroom_url: ClassroomResolutionResult(
-                url=classroom_url,
-                url_id=123456,
-                resolved=ResolvedClassroom(
-                    url=classroom_url,
-                    url_id=123456,
-                    gh_id=4200,
-                    slug="test-course",
-                    title="Test Course",
-                    org="test-org",
-                ),
-                gh_account="ejolly",
-            ),
-        )
 
         result = runner.invoke(
             app,
             ["init"],
-            input=(
-                "https://canvas.example.com/courses/99\n"
-                "secret-token\n"
-                "https://classroom.github.com/classrooms/123456-test-course\n"
-            ),
+            input="https://canvas.example.com/courses/99\nsecret-token\n",
         )
 
         assert result.exit_code == 0
-        assert "Canvas course ID" not in result.stdout
-        assert "GitHub org" not in result.stdout
-        assert "Classroom ID" not in result.stdout
-        assert "ejolly" in result.stdout
-
+        assert "GitHub" not in result.stdout
         cfg = load_config()
         assert cfg.canvas_base_url == "https://canvas.example.com"
         assert cfg.canvas_course_id == 99
-        assert (
-            cfg.classroom_url
-            == "https://classroom.github.com/classrooms/123456-test-course"
-        )
-        assert cfg.classroom_url_id == 123456
-        assert cfg.classroom_gh_id == 4200
-        assert cfg.org == "test-org"
+        assert "[classroom]" not in (tmp_path / "cass.toml").read_text()
 
-    def test_init_saves_partial_classroom_when_github_resolution_fails(
-        self, tmp_path, monkeypatch
-    ):
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.setattr("cass.actions.doctor.check_prerequisites", list)
-        monkeypatch.setattr(
-            "cass.apis.canvas.matching.save_token",
-            lambda token: (tmp_path / ".canvastoken").write_text(f"{token}\n"),
-        )
-        from cass.apis.github.service import ClassroomResolutionResult
-
-        monkeypatch.setattr(
-            "cass.apis.github.service.resolve_classroom_direct",
-            lambda classroom_url: ClassroomResolutionResult(
-                url=classroom_url,
-                url_id=42,
-                error_code="gh_auth_invalid",
-                error_detail="GitHub authentication is invalid.",
-                recovery_hint="Run `gh auth login -h github.com`.",
-            ),
-        )
-
-        result = runner.invoke(
-            app,
-            ["init"],
-            input=(
-                "https://canvas.example.com/courses/7\n"
-                "secret-token\n"
-                "https://classroom.github.com/classrooms/42-test-course\n"
-            ),
-        )
-
-        assert result.exit_code == 0
-        cfg = load_config()
-        assert cfg.classroom_url_id == 42
-        assert cfg.classroom_gh_id == 0
-        assert cfg.org == ""
-        assert cfg.classroom_needs_resolution is True
-        assert "setup is incomplete" in result.stdout
-
-    def test_init_retries_unresolved_classroom_before_prompting(
-        self, tmp_path, monkeypatch
-    ):
-        """Rerunning init with a saved unresolved classroom auto-retries."""
+    def test_init_drops_stale_classroom_section(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         (tmp_path / "cass.toml").write_text(
             "[classroom]\n"
             'url = "https://classroom.github.com/classrooms/42-course"\n'
-            "url_id = 42\n"
-            "gh_id = 0\n"
-            '\n[canvas]\nbase_url = "https://canvas.example.com"\ncourse_id = 1\n'
+            "url_id = 42\ngh_id = 4200\n\n"
+            '[canvas]\nbase_url = "https://canvas.example.com"\ncourse_id = 7\n'
         )
         (tmp_path / ".canvastoken").write_text("secret-token\n")
         monkeypatch.setattr("cass.actions.doctor.check_prerequisites", list)
-        monkeypatch.setattr(
-            "cass.apis.canvas.matching.save_token",
-            lambda token: None,
-        )
-
-        from cass.apis.github.service import (
-            ClassroomResolutionResult,
-            ResolvedClassroom,
-        )
-
-        monkeypatch.setattr(
-            "cass.apis.github.service.resolve_classroom_direct",
-            lambda url: ClassroomResolutionResult(
-                url=url,
-                url_id=42,
-                resolved=ResolvedClassroom(
-                    url=url,
-                    url_id=42,
-                    gh_id=4200,
-                    slug="course",
-                    title="My Course",
-                    org="test-org",
-                ),
-                gh_account="ejolly",
-            ),
-        )
 
         result = runner.invoke(app, ["init"])
 
         assert result.exit_code == 0
-        assert "retrying resolution" in result.stdout
-        assert "GitHub Classroom configured" in result.stdout
-        cfg = load_config()
-        assert cfg.classroom_gh_id == 4200
-
-    def test_init_shows_auth_failure_on_retry(self, tmp_path, monkeypatch):
-        """Retry shows specific failure when auth is bad."""
-        monkeypatch.chdir(tmp_path)
-        (tmp_path / "cass.toml").write_text(
-            "[classroom]\n"
-            'url = "https://classroom.github.com/classrooms/42-course"\n'
-            "url_id = 42\n"
-            "gh_id = 0\n"
-            '\n[canvas]\nbase_url = "https://canvas.example.com"\ncourse_id = 1\n'
-        )
-        (tmp_path / ".canvastoken").write_text("secret-token\n")
-        monkeypatch.setattr("cass.actions.doctor.check_prerequisites", list)
-        monkeypatch.setattr(
-            "cass.apis.canvas.matching.save_token",
-            lambda token: None,
-        )
-
-        from cass.apis.github.service import ClassroomResolutionResult
-
-        monkeypatch.setattr(
-            "cass.apis.github.service.resolve_classroom_direct",
-            lambda url: ClassroomResolutionResult(
-                url=url,
-                url_id=42,
-                error_code="gh_auth_invalid",
-                error_detail="GitHub authentication is invalid.",
-                recovery_hint="Run `gh auth login -h github.com`.",
-            ),
-        )
-
-        result = runner.invoke(app, ["init"])
-
-        assert result.exit_code == 0
-        assert "retrying resolution" in result.stdout
-        assert "setup is incomplete" in result.stdout
-        assert "gh auth login" in result.stdout
+        assert "[classroom]" not in (tmp_path / "cass.toml").read_text()
+        assert "course_id = 7" in (tmp_path / "cass.toml").read_text()
+        assert "Removed obsolete [classroom] section." in result.stdout
 
 
 class TestSessionCookieAuth:

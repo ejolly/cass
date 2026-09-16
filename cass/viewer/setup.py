@@ -144,11 +144,18 @@ def pull_progress_page(on_complete: Any) -> None:
 
         async def run_pull() -> None:
             try:
+                from nicegui import run
+
                 from ..actions.config import get_config
-                from ..actions.pull import pull_all_async
+                from ..actions.pull import pull_all
 
                 cfg = get_config()
-                await pull_all_async(cfg, on_progress=on_progress)
+                loop = asyncio.get_running_loop()
+
+                def threadsafe_progress(step: str, detail: str) -> None:
+                    loop.call_soon_threadsafe(on_progress, step, detail)
+
+                await run.io_bound(pull_all, cfg, threadsafe_progress)
                 progress.value = 1.0
                 for lbl in step_labels.values():
                     lbl.classes(replace="text-sm font-mono v-text-success")

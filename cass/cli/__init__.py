@@ -5,7 +5,6 @@ from __future__ import annotations
 __docformat__ = "google"
 
 import tomllib
-from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
@@ -24,15 +23,6 @@ app.add_typer(canvas_app, name="canvas")
 console = Console()
 
 
-@dataclass
-class State:
-    no_cache: bool = False
-    ttl: float = 6.0
-
-
-state = State()
-
-
 def version_callback(value: bool) -> None:
     if value:
         console.print(f"cass {__version__}")
@@ -42,10 +32,6 @@ def version_callback(value: bool) -> None:
 @app.callback()
 def main(
     ctx: typer.Context,
-    no_cache: bool = typer.Option(
-        False, "--no-cache", help="Force API refresh (bypass cache)"
-    ),
-    ttl: float = typer.Option(6.0, "--ttl", help="Cache TTL in hours"),
     version: bool = typer.Option(
         False,
         "--version",
@@ -56,29 +42,9 @@ def main(
     ),
 ) -> None:
     """cass — Classroom Assignment Grading CLI."""
-    state.no_cache = no_cache
-    state.ttl = ttl
     if ctx.invoked_subcommand is None:
         console.print(ctx.get_help())
         raise typer.Exit()
-
-
-def require_classroom() -> None:
-    from ..actions.config import get_config
-
-    cfg = get_config()
-    if not cfg.has_classroom:
-        console.print(
-            "[red]This command requires GitHub Classroom configuration.[/red]"
-        )
-        if cfg.classroom_needs_resolution:
-            console.print(
-                "GitHub Classroom URL is saved, but the gh-classroom ID is unresolved. "
-                "Fix gh auth/Classroom access and rerun [bold]cass init[/bold]."
-            )
-        else:
-            console.print("Add a \\[classroom] section to cass.toml.")
-        raise typer.Exit(code=1)
 
 
 def require_canvas() -> None:
@@ -224,19 +190,8 @@ def status() -> None:
     cfg = get_config()
     console.print("\n[bold]cass status[/bold]\n")
     console.print(f"Config: {cfg_path}")
-    gh_status = "GitHub Classroom [dim]not configured[/dim]"
-    if cfg.has_classroom:
-        gh_status = "GitHub Classroom"
-    elif cfg.classroom_needs_resolution:
-        gh_status = "GitHub Classroom [yellow]URL saved; gh ID unresolved[/yellow]"
     console.print(
-        "Integrations: "
-        + ", ".join(
-            [
-                "Canvas" if cfg.has_canvas else "Canvas [dim]not configured[/dim]",
-                gh_status,
-            ]
-        )
+        "Canvas: " + ("configured" if cfg.has_canvas else "[dim]not configured[/dim]")
     )
     if cfg.has_canvas:
         from ..apis.canvas.auth import find_auth
@@ -261,10 +216,12 @@ def status() -> None:
     tables = {table.name for table in conn.tables}
     console.print("\n[bold]Data[/bold]")
     console.print(
-        f"  students: {conn['students'].count if 'students' in tables else 0}"
+        "  students: "
+        f"{conn['canvas_students'].count if 'canvas_students' in tables else 0}"
     )
     console.print(
-        f"  assignments: {conn['assignments'].count if 'assignments' in tables else 0}"
+        "  assignments: "
+        f"{conn['canvas_assignments'].count if 'canvas_assignments' in tables else 0}"
     )
     if (
         "canvas_grades" in tables
@@ -278,8 +235,6 @@ def status() -> None:
         )
     if "canvas_submissions" in tables:
         console.print(f"  canvas submissions: {conn['canvas_submissions'].count}")
-    if cfg.has_classroom and "gh_submissions" in tables:
-        console.print(f"  github submissions: {conn['gh_submissions'].count}")
 
     pending = db.get_pending_changes(conn)
     total = _pending_count(pending)
@@ -360,46 +315,6 @@ def _prompt_canvas_token() -> str:
         console.print("[red]A Canvas API token is required.[/red]")
 
 
-def _prompt_classroom_url() -> str:
-    console.print("\n[bold]GitHub Classroom[/bold]")
-    console.print(
-        "Optional. Paste the classroom URL to enable GitHub pulls, "
-        "or press Enter to skip it for now."
-    )
-    return typer.prompt(
-        "GitHub Classroom URL",
-        default="",
-        show_default=False,
-    ).strip()
-
-
-def _resolve_classroom_settings(
-    classroom_url: str,
-) -> tuple[str, int, int, str, str, str]:
-    from ..apis.github.service import resolve_classroom_direct
-
-    result = resolve_classroom_direct(classroom_url)
-
-    if result.gh_account:
-        console.print(f"[dim]GitHub account: {result.gh_account}[/dim]")
-
-    if result.resolved is not None:
-        return (
-            result.resolved.url,
-            result.resolved.url_id,
-            result.resolved.gh_id,
-            result.resolved.slug,
-            result.resolved.title,
-            result.resolved.org,
-        )
-
-    # Failed — return partial with error detail as the last element
-    detail = result.error_detail
-    if result.recovery_hint:
-        detail = f"{detail} {result.recovery_hint}"
-    return result.url, result.url_id, 0, "", "", detail
-
-
 @app.command()
 def init() -> None:
     """Initialize or repair the local cass setup."""
@@ -434,33 +349,6 @@ def init() -> None:
         if isinstance(base_url, str) and isinstance(course_id, int):
             canvas_base_url = base_url
             canvas_course_id = course_id
-
-    classroom = raw.get("classroom", {})
-    classroom_url = ""
-    classroom_url_id = 0
-    classroom_gh_id = 0
-    classroom_slug = ""
-    classroom_title = ""
-    org = ""
-    if isinstance(classroom, dict):
-        existing_url = classroom.get("url", "")
-        existing_url_id = classroom.get("url_id", 0)
-        existing_gh_id = classroom.get("gh_id", 0)
-        existing_slug = classroom.get("slug", "")
-        existing_title = classroom.get("title", "")
-        existing_org = classroom.get("org", "")
-        if isinstance(existing_url, str):
-            classroom_url = existing_url
-        if isinstance(existing_url_id, int):
-            classroom_url_id = existing_url_id
-        if isinstance(existing_gh_id, int):
-            classroom_gh_id = existing_gh_id
-        if isinstance(existing_slug, str):
-            classroom_slug = existing_slug
-        if isinstance(existing_title, str):
-            classroom_title = existing_title
-        if isinstance(existing_org, str):
-            org = existing_org
 
     needs_canvas = not (canvas_base_url and canvas_course_id)
     saved_credentials = _saved_credentials_file(project_root)
@@ -513,105 +401,10 @@ def init() -> None:
             "[dim](delete it to switch back to an API token)[/dim]"
         )
 
-    if classroom_gh_id:
-        classroom_label = classroom_title or classroom_slug or classroom_url
-        console.print(
-            "[green]GitHub Classroom configured[/green] "
-            f"[dim]({classroom_label}, gh classroom {classroom_gh_id})[/dim]"
-        )
-    elif classroom_url and classroom_url_id and not classroom_gh_id:
-        # Retry resolution for previously saved but unresolved classroom
-        console.print(
-            "\n[bold]GitHub Classroom[/bold] "
-            "[dim](retrying resolution for saved URL)[/dim]"
-        )
-        (
-            classroom_url,
-            classroom_url_id,
-            classroom_gh_id,
-            classroom_slug,
-            classroom_title,
-            gh_detail,
-        ) = _resolve_classroom_settings(classroom_url)
-        if classroom_url and classroom_url_id:
-            update_config(
-                toml_path,
-                classroom_url=classroom_url,
-                classroom_url_id=classroom_url_id,
-                classroom_gh_id=classroom_gh_id,
-                classroom_slug=classroom_slug,
-                classroom_title=classroom_title,
-                org=gh_detail if classroom_gh_id else org,
-            )
-            changed = True
-        if classroom_gh_id:
-            classroom_label = classroom_title or classroom_slug or classroom_url
-            console.print(
-                "[green]GitHub Classroom configured[/green] "
-                f"[dim]({classroom_label}, "
-                f"gh classroom {classroom_gh_id})[/dim]"
-            )
-        else:
-            console.print(
-                "[yellow]GitHub Classroom URL saved, but setup is incomplete.[/yellow]"
-            )
-            console.print(
-                gh_detail
-                or "Resolve the gh-classroom ID and run [bold]cass init[/bold] again."
-            )
-    else:
-        prompt_url = _prompt_classroom_url()
-        if prompt_url:
-            (
-                classroom_url,
-                classroom_url_id,
-                classroom_gh_id,
-                classroom_slug,
-                classroom_title,
-                gh_detail,
-            ) = _resolve_classroom_settings(
-                prompt_url,
-            )
-            if classroom_url and classroom_url_id:
-                update_config(
-                    toml_path,
-                    classroom_url=classroom_url,
-                    classroom_url_id=classroom_url_id,
-                    classroom_gh_id=classroom_gh_id,
-                    classroom_slug=classroom_slug,
-                    classroom_title=classroom_title,
-                    org=gh_detail if classroom_gh_id else org,
-                )
-                changed = True
-            if classroom_gh_id:
-                classroom_label = classroom_title or classroom_slug or classroom_url
-                console.print(
-                    "[green]GitHub Classroom configured[/green] "
-                    f"[dim]({classroom_label}, gh classroom {classroom_gh_id})[/dim]"
-                )
-            elif classroom_url_id:
-                console.print(
-                    "[yellow]GitHub Classroom URL saved, but setup is "
-                    "incomplete.[/yellow]"
-                )
-                console.print(
-                    gh_detail
-                    or "Resolve the gh-classroom ID and run [bold]cass init[/bold] or "
-                    "[bold]cass pull[/bold] again."
-                )
-        else:
-            if classroom:
-                update_config(
-                    toml_path,
-                    classroom_url=None,
-                    classroom_url_id=None,
-                    classroom_gh_id=None,
-                    classroom_slug=None,
-                    classroom_title=None,
-                    org=None,
-                )
-                changed = True
-            console.print("[dim]GitHub Classroom skipped.[/dim]")
+    if "classroom" in raw:
+        update_config(toml_path)
+        changed = True
+        console.print("[dim]Removed obsolete \\[classroom] section.[/dim]")
 
     if changed and cfg_path is None:
         console.print(f"\n[green]Created {toml_path.name}[/green]")
@@ -631,8 +424,7 @@ def init() -> None:
         console.print("[green]All checks passed.[/green]")
     else:
         console.print(
-            "Some optional integrations still need attention. "
-            "Run [bold]cass init[/bold] again after fixing them."
+            "Some checks failed. Run [bold]cass init[/bold] again after fixing them."
         )
 
 
@@ -645,51 +437,32 @@ def pull(
     do_submissions: bool = typer.Option(
         False, "--submissions", help="Pull submissions only"
     ),
-    limit: int = typer.Option(0, "--limit", help="Limit number of students (0 = all)"),
 ) -> None:
-    """Fetch from APIs and update the local database."""
-    import asyncio
-
+    """Fetch from Canvas and update the local database."""
     from .. import db
     from ..actions import pull as pull_mod
     from ..actions.config import get_config
-    from ..apis.github.client import GitHubClient
 
     cfg = get_config()
-    pull_all = not any([do_students, do_assignments, do_submissions])
     if (reason := db.pull_block_reason()) is not None:
         console.print(f"[red]{reason}[/red]")
         raise typer.Exit(code=1)
 
-    if cfg.has_canvas:
-        from ..apis.canvas.matching import fetch_course_name
-        from ..db import save_meta
-
-        save_meta("course_name", fetch_course_name(cfg.canvas_course_id))
-
-    async def _pull() -> None:
-        client = None
-        if cfg.has_classroom:
-            client = GitHubClient()
-        try:
-            if pull_all or do_students:
-                await pull_mod.pull_students(
-                    client, cfg, console, state.ttl, state.no_cache
-                )
-            if pull_all or do_assignments:
-                await pull_mod.pull_assignments(
-                    client, cfg, console, state.ttl, state.no_cache
-                )
-            if pull_all or do_submissions:
-                await pull_mod.pull_submissions(
-                    client, cfg, console, state.ttl, state.no_cache
-                )
-        finally:
-            if client:
-                await client.close()
-
     try:
-        asyncio.run(_pull())
+        if not any([do_students, do_assignments, do_submissions]):
+            pull_mod.pull_all(
+                cfg,
+                on_progress=lambda step, detail: console.print(
+                    f"  [dim]{step}[/dim] {detail}"
+                ),
+            )
+            return
+        if do_students:
+            pull_mod.pull_students(cfg, console)
+        if do_assignments:
+            pull_mod.pull_assignments(cfg, console)
+        if do_submissions:
+            pull_mod.pull_submissions(cfg, console)
     except RuntimeError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from exc
@@ -818,66 +591,6 @@ def query(
     except RuntimeError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from exc
-
-
-@app.command(name="pull-repos")
-def pull_gh(
-    assignment: str = typer.Option(
-        "", "--assignment", "-a", help="Specific assignment slug (default: all)"
-    ),
-    limit_students: int = typer.Option(
-        0, "--limit-students", "-s", help="Max students to pull (0 = all)"
-    ),
-    limit_assignments: int = typer.Option(
-        0, "--limit-assignments", "-n", help="Max assignments to pull (0 = all)"
-    ),
-) -> None:
-    """Clone or update student repos from GitHub Classroom into gh-classroom/."""
-    import asyncio
-
-    from .. import db
-    from ..apis.github import fetch as fetch_mod
-    from ..apis.github.client import GitHubClient
-
-    require_classroom()
-    roster = db.load_students()
-    assignments = db.load_assignments()
-    gh_assignments = [
-        assignment_row
-        for assignment_row in assignments
-        if assignment_row.gh_assignment_slug
-    ]
-
-    if not gh_assignments:
-        console.print("[yellow]No GitHub-linked assignments found.[/yellow]")
-        raise typer.Exit(code=1)
-
-    if assignment:
-        targets = [row for row in gh_assignments if assignment in row.slug]
-        if not targets:
-            console.print(f"[red]No assignment matching '{assignment}'[/red]")
-            raise typer.Exit(code=1)
-    else:
-        targets = gh_assignments
-
-    async def _pull() -> None:
-        async with GitHubClient() as client:
-            counts = await fetch_mod.pull_gh(
-                client,
-                targets,
-                roster,
-                limit_students=limit_students,
-                limit_assignments=limit_assignments,
-            )
-        console.print(
-            f"\n[green]{counts['cloned']} cloned[/green], "
-            f"[cyan]{counts['updated']} updated[/cyan], "
-            f"[dim]{counts['up_to_date']} up-to-date[/dim], "
-            f"[dim]{counts['skipped']} skipped[/dim], "
-            f"[red]{counts['errors']} errors[/red]"
-        )
-
-    asyncio.run(_pull())
 
 
 @app.command(name="delete")

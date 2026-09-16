@@ -2,42 +2,17 @@
 
 __docformat__ = "google"
 
+import sqlite_utils
+
 from cass import db
 from cass.actions.config import Config
 from cass.db.core import _connection
 from cass.db.schema import (
-    Assignment,
     CanvasAssignment,
     CanvasGrade,
     CanvasStudent,
     CanvasSubmission,
-    GHAssignment,
-    GHStudent,
-    GHSubmission,
-    Student,
 )
-
-
-class TestGHStudents:
-    def test_roundtrip(self, db_conn):
-        gh_students = [
-            GHStudent(
-                github_username="alice-gh",
-                github_id=1,
-                name="Alice Smith",
-                email="alice@x.com",
-            ),
-            GHStudent(github_username="bob-gh", github_id=2, name="Bob Jones"),
-        ]
-        assert db.save_gh_students(gh_students) == 2
-        rows = list(
-            db_conn.execute(
-                "SELECT github_username, name FROM gh_students ORDER BY github_username"
-            ).fetchall()
-        )
-        assert len(rows) == 2
-        assert rows[0][0] == "alice-gh"
-        assert rows[0][1] == "Alice Smith"
 
 
 class TestCanvasStudents:
@@ -68,157 +43,28 @@ class TestCanvasStudents:
         ).fetchone()
         assert row[0] == "32146"
 
-
-class TestStudents:
-    def test_upsert(self, db_conn):
-        students = [
-            Student(canvas_id=100, name="Alice Smith", email="alice@ucsd.edu"),
-            Student(canvas_id=200, name="Bob Jones"),
-        ]
-        assert db.upsert_students(students) == 2
-        loaded = db.load_students(include_excluded=True)
-        assert len(loaded) == 2
-        assert loaded[0].canvas_id == 100
-        assert loaded[0].name == "Alice Smith"
-
-    def test_upsert_preserves_github_mapping(self, db_conn):
-        db.upsert_students([Student(canvas_id=100, name="Alice")])
-        db.update_student_github(100, "alice-gh")
-
-        # Re-upsert without github_username — should preserve the mapping
-        db.upsert_students([Student(canvas_id=100, name="Alice Smith")])
-        loaded = db.load_students()
-        assert loaded[0].github_username == "alice-gh"
-        assert loaded[0].name == "Alice Smith"
-
-    def test_exclude_filter(self, db_conn):
-        students = [
-            Student(canvas_id=100, name="Alice", excluded=False),
-            Student(canvas_id=200, name="Bob", excluded=True),
-            Student(canvas_id=300, name="Charlie", excluded=False),
-        ]
-        db.upsert_students(students)
-        all_students = db.load_students(include_excluded=True)
-        assert len(all_students) == 3
-        active = db.load_students(include_excluded=False)
-        assert len(active) == 2
-        assert all(not s.excluded for s in active)
-
-    def test_exist(self, db_conn):
-        assert db.students_exist() is False
-        db.upsert_students([Student(canvas_id=100, name="Alice")])
-        assert db.students_exist() is True
-
-    def test_update_github(self, db_conn):
-        db.upsert_students([Student(canvas_id=100, name="Alice")])
-        db.update_student_github(100, "Alice-GH")
-        loaded = db.load_students()
-        assert loaded[0].github_username == "alice-gh"  # lowercased
-
-
-class TestAssignments:
-    def test_roundtrip(self, db_conn):
-        assignments = [
-            Assignment(
-                slug="hw-01",
-                title="Homework 01",
-                gh_assignment_slug="hw-01",
-                canvas_assignment_id=42,
-                points_possible=1.0,
-            ),
-            Assignment(
-                slug="quiz-1",
-                title="Quiz 1",
-                canvas_assignment_id=43,
-                points_possible=50.0,
-            ),
-        ]
-        assert db.upsert_assignments(assignments) == 2
-        loaded = db.load_assignments()
-        assert len(loaded) == 2
-        assert loaded[0].slug == "hw-01"
-        assert loaded[0].gh_assignment_slug == "hw-01"
-        assert loaded[0].canvas_assignment_id == 42
-        assert loaded[1].slug == "quiz-1"
-        assert loaded[1].points_possible == 50.0
-
-    def test_load_mappings(self, db_conn):
-        assignments = [
-            Assignment(
-                slug="hw-01",
-                title="HW 01",
-                gh_assignment_slug="hw-01",
-                canvas_assignment_id=42,
-            ),
-            Assignment(slug="quiz-1", title="Quiz 1", canvas_assignment_id=43),
-        ]
-        db.upsert_assignments(assignments)
-        mappings = db.load_assignment_mappings()
-        assert mappings == {"hw-01": 42}
-
-    def test_gh_with_starter_code(self, db_conn):
-        """save_gh_assignments stores starter_code_repo and preserves submittable_files."""  # noqa: E501
-        assignments = [
-            GHAssignment(
-                slug="hw-01",
-                gh_id=1,
-                title="Homework 01",
-                starter_code_repo="org/hw-01-starter",
-            ),
-        ]
-        db.save_gh_assignments(assignments)
-        row = db_conn.execute(
-            "SELECT starter_code_repo, submittable_files "
-            "FROM gh_assignments WHERE slug = 'hw-01'"
-        ).fetchone()
-        assert row[0] == "org/hw-01-starter"
-        assert row[1] == ""  # default empty
-
-        # Simulate user editing submittable_files
-        db_conn.execute(
-            "UPDATE gh_assignments SET submittable_files = 'homework.py,homework.qmd' "
-            "WHERE slug = 'hw-01'"
+    def test_load_ids(self, db_conn):
+        db.save_canvas_students(
+            [
+                CanvasStudent(canvas_id=100, name="Alice"),
+                CanvasStudent(canvas_id=200, name="Bob"),
+            ]
         )
+        assert db.load_canvas_student_ids() == {100, 200}
 
-        # Re-save from API — should NOT overwrite submittable_files
-        db.save_gh_assignments(assignments)
-        row = db_conn.execute(
-            "SELECT submittable_files FROM gh_assignments WHERE slug = 'hw-01'"
-        ).fetchone()
-        assert row[0] == "homework.py,homework.qmd"
+
+class TestCanvasAssignments:
+    def test_load_ids_ordered(self, db_conn):
+        db.save_canvas_assignments(
+            [
+                CanvasAssignment(canvas_id=43, name="Quiz 1"),
+                CanvasAssignment(canvas_id=42, name="HW 01"),
+            ]
+        )
+        assert db.load_canvas_assignment_ids() == [42, 43]
 
 
 class TestSubmissions:
-    def test_gh_roundtrip(self, db_conn):
-        subs = [
-            GHSubmission(
-                github_username="alice",
-                assignment_slug="hw-01",
-                submitted=True,
-                commits_after_deadline=2,
-                commit_count=15,
-                passing=True,
-                gh_autograder_score="10/10",
-            ),
-            GHSubmission(
-                github_username="bob",
-                assignment_slug="hw-01",
-                submitted=True,
-                late=True,
-                lateness_seconds=3600,
-            ),
-        ]
-        assert db.save_gh_submissions(subs) == 2
-        loaded = db.load_gh_submissions()
-        assert len(loaded) == 2
-        hw01 = db.load_gh_submissions(assignment_slug="hw-01")
-        assert len(hw01) == 2
-        assert hw01[0].github_username == "alice"
-        assert hw01[0].commits_after_deadline == 2
-        assert hw01[0].passing is True
-        assert hw01[1].github_username == "bob"
-        assert hw01[1].late is True
-
     def test_canvas_roundtrip(self, db_conn):
         subs = [
             CanvasSubmission(
@@ -290,86 +136,26 @@ class TestGetDb:
         assert reopened.execute("SELECT 1").fetchone() == (1,)
         _connection(reopened).close()
 
-    def test_open_db_clears_stale_github_data_without_classroom(
-        self, tmp_path, monkeypatch
-    ):
+    def test_upgrade_drops_legacy_github_tables(self, tmp_path, monkeypatch):
         cfg = Config(root=tmp_path, canvas_base_url="https://c.edu", canvas_course_id=1)
         monkeypatch.setattr("cass.db.core.get_config", lambda: cfg)
         monkeypatch.setattr("cass.db.core._db", None)
         monkeypatch.setattr("cass.db.core._db_path", None)
 
-        db_file = db.open_db(tmp_path)
-        db_file.execute(
-            "INSERT INTO gh_students (github_username, github_id, name, email) "
-            "VALUES ('alice-gh', 1, 'Alice Smith', 'alice@test.edu')"
-        )
-        db_file.execute(
-            "INSERT INTO gh_assignments (slug, gh_id, title) "
-            "VALUES ('hw-01', 1, 'Homework 01')"
-        )
-        db_file.execute(
-            "INSERT INTO gh_submissions "
-            "(github_username, assignment_slug, fetched_at) "
-            "VALUES ('alice-gh', 'hw-01', 0.0)"
-        )
-        db_file.execute(
-            "INSERT INTO assignments (slug, title, gh_assignment_slug) "
-            "VALUES ('essay-01', 'Essay 01', 'hw-01')"
-        )
-        db_file.execute(
-            "INSERT INTO assignments (slug, title, gh_assignment_slug) "
-            "VALUES ('essay-02', 'Essay 02', 'hw-02')"
-        )
-        _connection(db_file).close()
+        legacy = sqlite_utils.Database(str(tmp_path / "cass.db"))
+        legacy.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        legacy.execute("INSERT INTO meta VALUES ('schema_version', '15')")
+        legacy.execute("CREATE TABLE gh_students (github_username TEXT PRIMARY KEY)")
+        legacy.execute("CREATE TABLE students (canvas_id INTEGER PRIMARY KEY)")
+        legacy.conn.close()
 
-        reopened = db.open_db(tmp_path)
+        upgraded = db.open_db(tmp_path)
 
-        assert reopened["gh_students"].count == 0
-        assert reopened["gh_assignments"].count == 0
-        assert reopened["gh_submissions"].count == 0
-        assert (
-            reopened.execute(
-                "SELECT COUNT(*) FROM assignments WHERE gh_assignment_slug IS NOT NULL"
-            ).fetchone()[0]
-            == 0
-        )
-        _connection(reopened).close()
-
-    def test_open_db_preserves_github_data_with_partial_classroom(
-        self, tmp_path, monkeypatch
-    ):
-        cfg = Config(
-            root=tmp_path,
-            classroom_url="https://classroom.github.com/classrooms/42-course",
-            classroom_url_id=42,
-            org="",
-            canvas_base_url="https://c.edu",
-            canvas_course_id=1,
-        )
-        monkeypatch.setattr("cass.db.core.get_config", lambda: cfg)
-        monkeypatch.setattr("cass.db.core._db", None)
-        monkeypatch.setattr("cass.db.core._db_path", None)
-        (tmp_path / "cass.toml").write_text(
-            "[classroom]\n"
-            'url = "https://classroom.github.com/classrooms/42-course"\n'
-            "url_id = 42\n"
-            "gh_id = 0\n"
-            'org = ""\n\n'
-            '[canvas]\nbase_url = "https://c.edu"\ncourse_id = 1\n'
-        )
-
-        db_file = db.open_db(tmp_path)
-        db_file.execute(
-            "INSERT INTO gh_students (github_username, github_id, name, email) "
-            "VALUES ('alice-gh', 1, 'Alice Smith', 'alice@test.edu')"
-        )
-        _connection(db_file).commit()
-        _connection(db_file).close()
-
-        reopened = db.open_db(tmp_path)
-
-        assert reopened["gh_students"].count == 1
-        _connection(reopened).close()
+        names = set(upgraded.table_names())
+        assert "gh_students" not in names
+        assert "students" not in names
+        assert db.get_meta("schema_version", upgraded) == "16"
+        _connection(upgraded).close()
 
 
 class TestSyncedShadowTables:

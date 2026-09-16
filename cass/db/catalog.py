@@ -32,15 +32,6 @@ TABLE_CAPABILITIES: dict[str, TableCapability] = {
         viewer_rank=1,
     ),
     "canvas_submissions": TableCapability(viewer_rank=2),
-    "gh_submissions": TableCapability(viewer_rank=10),
-    "gh_students": TableCapability(
-        editable=True,
-        editable_columns=frozenset({"excluded"}),
-        viewer_rank=11,
-    ),
-    "gh_assignments": TableCapability(viewer_rank=12),
-    "students": TableCapability(viewer_rank=20),
-    "assignments": TableCapability(viewer_rank=21),
 }
 
 CANVAS_WORKING_TABLES = {
@@ -62,25 +53,17 @@ CANVAS_PUSHABLE: dict[str, set[str]] = {
 }
 
 EXPORTABLE_TABLES = (
-    "students",
-    "assignments",
-    "gh_students",
     "canvas_students",
-    "gh_assignments",
     "canvas_assignments",
-    "gh_submissions",
     "canvas_submissions",
     "canvas_grades",
 )
 
 IMPORT_SIGNATURES: dict[str, set[str]] = {
-    "students": {"canvas_id", "name"},
     "canvas_grades": {"canvas_user_id", "canvas_assignment_id"},
-    "gh_submissions": {"github_username", "assignment_slug", "submitted"},
     "canvas_submissions": {
         "canvas_user_id",
         "canvas_assignment_id",
         "submitted",
     },
-    "assignments": {"slug", "title"},
 }

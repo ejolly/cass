@@ -1,8 +1,6 @@
 """Canvas LMS integration — roster fetching, submission retrieval, and grade push.
 
 All raw API calls are delegated to ``CanvasClient`` in ``client.py``.
-Matching logic (name normalization, student matching, slug utilities) has
-been moved to ``cass.actions.matching``.
 """
 
 from __future__ import annotations

@@ -14,9 +14,6 @@ from typing import Any
 
 CONFIG_FILENAME = "cass.toml"
 _CANVAS_COURSE_URL_RE = re.compile(r"^(https?://[^/]+)/courses/(\d+)(?:[/?#].*)?$")
-_GH_CLASSROOM_URL_RE = re.compile(
-    r"^https?://classroom\.github\.com/classrooms/(\d+)(?:-[^/?#]+)?(?:[/?#].*)?$"
-)
 
 
 @dataclass
@@ -42,47 +39,11 @@ class CanvasAssignmentSpec:
 @dataclass
 class Config:
     root: Path
-    classroom_url: str = ""
-    classroom_url_id: int = 0
-    classroom_gh_id: int = 0
-    classroom_slug: str = ""
-    classroom_title: str = ""
-    org: str = ""
     canvas_base_url: str = ""
     canvas_course_id: int = 0
     canvas_modules: list[CanvasModuleSpec] = field(default_factory=list)
     canvas_assignments: list[CanvasAssignmentSpec] = field(default_factory=list)
     motherduck_db: str = ""
-
-    @property
-    def has_classroom_url(self) -> bool:
-        return bool(self.classroom_url and self.classroom_url_id)
-
-    @property
-    def has_classroom(self) -> bool:
-        return bool(self.has_classroom_url and self.classroom_gh_id)
-
-    @property
-    def classroom_needs_resolution(self) -> bool:
-        return self.has_classroom_url and not self.has_classroom
-
-    @property
-    def classroom_status(self) -> str:
-        if self.has_classroom:
-            return "configured"
-        if self.classroom_needs_resolution:
-            return "pending"
-        return "missing"
-
-    @property
-    def classroom_needs_auth(self) -> bool:
-        """Backward-compatible alias for pending Classroom resolution."""
-        return self.classroom_needs_resolution
-
-    @property
-    def classroom_id(self) -> int:
-        """Return the resolved gh-classroom runtime ID."""
-        return self.classroom_gh_id
 
     @property
     def has_canvas(self) -> bool:
@@ -102,14 +63,6 @@ def parse_canvas_course_url(raw: str) -> tuple[str, int] | None:
     if not match:
         return None
     return match.group(1), int(match.group(2))
-
-
-def parse_classroom_url(raw: str) -> int | None:
-    """Extract the GitHub Classroom numeric ID from a classroom URL."""
-    match = _GH_CLASSROOM_URL_RE.match(raw.strip())
-    if not match:
-        return None
-    return int(match.group(1))
 
 
 def find_project_root(start: Path | None = None) -> Path:
@@ -142,7 +95,6 @@ def load_config() -> Config:
     root = find_project_root()
     raw = read_config_data(root / CONFIG_FILENAME)
 
-    cc = raw.get("classroom", {})
     canvas = raw.get("canvas", {})
 
     has_cv = "base_url" in canvas and "course_id" in canvas
@@ -178,27 +130,8 @@ def load_config() -> Config:
     database = raw.get("database", {})
     motherduck_db = database.get("motherduck", "")
 
-    classroom_url = cc.get("url", "")
-    classroom_url_id = cc.get("url_id", 0)
-    classroom_gh_id = cc.get("gh_id", 0)
-    classroom_slug = cc.get("slug", "")
-    classroom_title = cc.get("title", "")
-    org = cc.get("org", "")
-
-    # Best-effort migration for older configs that only stored a single id.
-    legacy_id = cc.get("id", 0)
-    if not classroom_url and isinstance(legacy_id, int) and legacy_id > 0:
-        classroom_url_id = classroom_url_id or legacy_id
-        classroom_url = f"https://classroom.github.com/classrooms/{legacy_id}"
-
     return Config(
         root=root,
-        classroom_url=classroom_url,
-        classroom_url_id=classroom_url_id,
-        classroom_gh_id=classroom_gh_id,
-        classroom_slug=classroom_slug,
-        classroom_title=classroom_title,
-        org=org,
         canvas_base_url=canvas.get("base_url", ""),
         canvas_course_id=canvas.get("course_id", 0),
         canvas_modules=module_specs,
@@ -307,17 +240,16 @@ def _dump_config_data(data: dict[str, Any]) -> str:
 def update_config(
     path: Path,
     *,
-    classroom_url: str | None = None,
-    classroom_url_id: int | None = None,
-    classroom_gh_id: int | None = None,
-    classroom_slug: str | None = None,
-    classroom_title: str | None = None,
-    org: str | None = None,
     canvas_base_url: str | None = None,
     canvas_course_id: int | None = None,
 ) -> None:
-    """Update setup-related fields in ``cass.toml`` while preserving other data."""
+    """Update Canvas settings in ``cass.toml`` while preserving other data.
+
+    A leftover ``[classroom]`` table from older versions is removed on every
+    rewrite.
+    """
     raw = read_config_data(path)
+    raw.pop("classroom", None)
 
     if canvas_base_url is not None or canvas_course_id is not None:
         canvas = raw.setdefault("canvas", {})
@@ -329,75 +261,19 @@ def update_config(
         if canvas_course_id is not None:
             canvas["course_id"] = canvas_course_id
 
-    if (
-        classroom_url is not None
-        or classroom_url_id is not None
-        or classroom_gh_id is not None
-        or classroom_slug is not None
-        or classroom_title is not None
-        or org is not None
-    ):
-        next_url = classroom_url
-        next_url_id = classroom_url_id
-        if next_url is None or next_url_id is None:
-            existing = raw.get("classroom", {})
-            if isinstance(existing, dict):
-                if next_url is None:
-                    next_url = existing.get("url", "")
-                if next_url_id is None:
-                    next_url_id = existing.get("url_id", 0)
-
-        if next_url and next_url_id:
-            classroom = raw.setdefault("classroom", {})
-            if not isinstance(classroom, dict):
-                msg = "Invalid config: [classroom] must be a table."
-                raise SystemExit(msg)
-            classroom["url"] = next_url
-            classroom["url_id"] = next_url_id
-            if classroom_gh_id is not None:
-                classroom["gh_id"] = classroom_gh_id
-            elif "gh_id" not in classroom:
-                classroom["gh_id"] = 0
-            if classroom_slug is not None:
-                classroom["slug"] = classroom_slug
-            if classroom_title is not None:
-                classroom["title"] = classroom_title
-            if org is not None:
-                classroom["org"] = org
-            elif "org" not in classroom:
-                classroom["org"] = ""
-            classroom.pop("id", None)
-        else:
-            raw.pop("classroom", None)
-
     path.write_text(_dump_config_data(raw))
     reset_config()
 
 
 def write_config(
     path: Path,
-    classroom_url: str = "",
-    classroom_url_id: int = 0,
-    classroom_gh_id: int = 0,
-    classroom_slug: str = "",
-    classroom_title: str = "",
-    org: str = "",
     canvas_base_url: str = "",
     canvas_course_id: int = 0,
 ) -> None:
     """Write a cass.toml file."""
+    both = bool(canvas_base_url and canvas_course_id)
     update_config(
         path,
-        classroom_url=classroom_url or None,
-        classroom_url_id=classroom_url_id or None,
-        classroom_gh_id=classroom_gh_id if classroom_url else None,
-        classroom_slug=classroom_slug if classroom_url else None,
-        classroom_title=classroom_title if classroom_url else None,
-        org=org if classroom_url else None,
-        canvas_base_url=canvas_base_url
-        if canvas_base_url and canvas_course_id
-        else None,
-        canvas_course_id=canvas_course_id
-        if canvas_base_url and canvas_course_id
-        else None,
+        canvas_base_url=canvas_base_url if both else None,
+        canvas_course_id=canvas_course_id if both else None,
     )

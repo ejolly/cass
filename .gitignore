@@ -9,8 +9,6 @@ classroom_roster.csv
 cass.duckdb
 cass.db
 cass.db-journal
-.cass_cache.duckdb
-.cass_cache.duckdb.wal
 grade-data/
 .ruff_cache/
 .pytest_cache/

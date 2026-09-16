@@ -12,18 +12,16 @@ TESTDB_DIR = ROOT / "tests" / "testdb"
 
 
 def main() -> None:
-    import asyncio
-
     import sqlite_utils
 
     from cass.actions.config import load_config
-    from cass.actions.pull import pull_all_async
+    from cass.actions.pull import pull_all
     from cass.db.core import db_path
     from cass.db.sync import snapshot_canvas_synced
 
     # Pull into the project root (uses cass.toml)
     cfg = load_config()
-    asyncio.run(pull_all_async(cfg))
+    pull_all(cfg)
 
     # Copy to testdb/
     TESTDB_DIR.mkdir(exist_ok=True)

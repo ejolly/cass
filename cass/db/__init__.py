@@ -2,7 +2,7 @@
 
 Import everything from here::
 
-    from cass.db import get_db, Student, save_gh_students
+    from cass.db import get_db, CanvasStudent, save_canvas_students
     from cass import db  # also works
 """
 
@@ -24,7 +24,6 @@ from .core import (
     DB_FILENAME,
     EXCLUDED_TABLES,
     READ_ONLY_TABLES,
-    clear_github_data,
     connect_db,
     db_path,
     editable_canvas_tables,
@@ -32,27 +31,17 @@ from .core import (
     get_db,
     get_meta,
     init_schema,
-    load_assignment_mappings,
-    load_assignments,
+    load_canvas_assignment_ids,
     load_canvas_grades,
-    load_gh_student_handles,
-    load_gh_submissions,
-    load_students,
+    load_canvas_student_ids,
     open_db,
     reset,
     save_canvas_assignments,
     save_canvas_grades,
     save_canvas_students,
     save_canvas_submissions,
-    save_gh_assignments,
-    save_gh_students,
-    save_gh_submissions,
     save_meta,
-    students_exist,
-    update_student_github,
-    upsert_assignments,
     upsert_canvas_grade,
-    upsert_students,
 )
 from .core import _db as _db
 from .introspection import (
@@ -74,16 +63,10 @@ from .queries import (
     sql,
 )
 from .schema import (
-    Assignment,
     CanvasAssignment,
     CanvasGrade,
     CanvasStudent,
     CanvasSubmission,
-    GHAssignment,
-    GHRecentCommit,
-    GHStudent,
-    GHSubmission,
-    Student,
 )
 from .sync import (
     canvas_apply,
@@ -118,7 +101,6 @@ __all__ = [
     "READ_ONLY_TABLES",
     "TABLE_CAPABILITIES",
     "TABLE_QUERY_DATASETS",
-    "Assignment",
     "CanvasAssignment",
     "CanvasGrade",
     "CanvasGradebookAssignment",
@@ -126,18 +108,12 @@ __all__ = [
     "CanvasGradebookStudent",
     "CanvasStudent",
     "CanvasSubmission",
-    "GHAssignment",
-    "GHRecentCommit",
-    "GHStudent",
-    "GHSubmission",
     "QueryResult",
-    "Student",
     "TableCapability",
     "build_canvas_gradebook_matrix",
     "build_submissions_query",
     "canvas_apply",
     "canvas_preview",
-    "clear_github_data",
     "connect_db",
     "db_path",
     "editable_canvas_tables",
@@ -153,13 +129,10 @@ __all__ = [
     "get_tables",
     "init_schema",
     "is_editable",
-    "load_assignment_mappings",
-    "load_assignments",
+    "load_canvas_assignment_ids",
     "load_canvas_gradebook_data",
     "load_canvas_grades",
-    "load_gh_student_handles",
-    "load_gh_submissions",
-    "load_students",
+    "load_canvas_student_ids",
     "mark_synced_assignments",
     "mark_synced_grades",
     "open_db",
@@ -173,16 +146,9 @@ __all__ = [
     "save_canvas_grades",
     "save_canvas_students",
     "save_canvas_submissions",
-    "save_gh_assignments",
-    "save_gh_students",
-    "save_gh_submissions",
     "save_meta",
     "snapshot_canvas_synced",
     "sql",
-    "students_exist",
     "update_cell",
-    "update_student_github",
-    "upsert_assignments",
     "upsert_canvas_grade",
-    "upsert_students",
 ]

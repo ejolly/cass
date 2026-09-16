@@ -2,7 +2,7 @@
 
 Every DB query used by the CLI or viewer is exercised here against a
 realistic dataset to catch SQL errors, JOIN mismatches, and edge cases
-(NULL timestamps, unmatched GH users, etc.).
+(NULL timestamps, etc.).
 """
 
 from __future__ import annotations
@@ -46,16 +46,7 @@ class TestSchema:
     def test_all_tables_present(self, real_db):
         tables = {t["name"] for t in get_tables(real_db)}
         # Viewer excludes meta, canvas_students, and shadow tables
-        expected = {
-            "canvas_assignments",
-            "canvas_submissions",
-            "canvas_grades",
-            "gh_students",
-            "gh_assignments",
-            "gh_submissions",
-            "students",
-            "assignments",
-        }
+        expected = {"canvas_assignments", "canvas_submissions", "canvas_grades"}
         assert expected <= tables
 
     def test_excluded_tables_hidden(self, real_db):
@@ -64,12 +55,11 @@ class TestSchema:
         assert "_canvas_grades_synced" not in tables
         assert "meta" not in tables
         assert "canvas_students" not in tables
-        assert "gh_grades" not in tables
 
     def test_schema_version(self, real_db):
         version = db.get_meta("schema_version", real_db)
         assert version is not None
-        assert int(version) >= 15
+        assert int(version) >= 16
 
     def test_course_name(self, real_db):
         course_name = db.get_meta("course_name", real_db)
@@ -77,16 +67,7 @@ class TestSchema:
 
     def test_row_counts(self, real_db):
         # These core tables should always have data after a pull
-        for table in (
-            "canvas_students",
-            "gh_students",
-            "students",
-            "canvas_assignments",
-            "gh_assignments",
-            "assignments",
-            "canvas_submissions",
-            "gh_submissions",
-        ):
+        for table in ("canvas_students", "canvas_assignments", "canvas_submissions"):
             actual = real_db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
             assert actual > 0, f"{table}: expected rows but got 0"
 
@@ -131,58 +112,6 @@ class TestEnrichedQueries:
         assert "assignment_group" in rows[0]
         assert "canvas_id" in rows[0]
 
-    def test_gh_students_query(self, real_db):
-        rows = db.get_enriched_rows(real_db, "gh_students")
-        assert len(rows) > 0
-        expected_cols = {"excluded", "student", "github_username", "email", "github_id"}
-        assert set(rows[0].keys()) == expected_cols
-
-    def test_gh_students_name_formatting(self, real_db):
-        """Matched students use Canvas sortable_name; unmatched use 'Last, First'."""
-        rows = db.get_enriched_rows(real_db, "gh_students")
-        formatted = [str(row["student"]) for row in rows if row["student"]]
-        assert any(", " in student for student in formatted)
-
-    def test_gh_assignments_query(self, real_db):
-        rows = db.get_enriched_rows(real_db, "gh_assignments")
-        assert len(rows) > 0
-
-    def test_gh_submissions_query(self, real_db):
-        rows = db.get_enriched_rows(real_db, "gh_submissions")
-        assert len(rows) > 0
-        expected_cols = {
-            "github_username",
-            "assignment_slug",
-            "last_commit_at",
-            "student",
-            "assignment_name",
-            "commit_count",
-            "commit_url",
-            "late",
-            "repo_url",
-            "last_commit_sha",
-        }
-        assert set(rows[0].keys()) == expected_cols
-
-    def test_gh_submissions_excludes_hidden(self, real_db):
-        rows = db.get_enriched_rows(real_db, "gh_submissions")
-        usernames = {r["github_username"] for r in rows}
-        excluded_usernames = {
-            row[0]
-            for row in real_db.execute(
-                "SELECT github_username FROM gh_students WHERE excluded = 1"
-            ).fetchall()
-        }
-        assert usernames.isdisjoint(excluded_usernames)
-
-    def test_gh_submissions_has_urls(self, real_db):
-        rows = db.get_enriched_rows(real_db, "gh_submissions")
-        for row in rows:
-            if row["last_commit_sha"]:
-                assert str(row["commit_url"]).startswith("https://github.com/")
-                assert "/commit/" in str(row["commit_url"])
-            assert str(row["repo_url"]).startswith("https://github.com/")
-
     def test_fallback_select_star(self, real_db):
         """Tables without enriched queries should fall back to SELECT *."""
         rows = db.get_enriched_rows(real_db, "meta")
@@ -203,7 +132,6 @@ class TestGridIntrospection:
         tables = get_tables(real_db)
         names = {t["name"] for t in tables}
         assert "canvas_assignments" in names
-        assert "gh_assignments" in names
         # Excluded tables should not appear
         assert "_canvas_assignments_synced" not in names
         assert "canvas_students" not in names
@@ -215,10 +143,10 @@ class TestGridIntrospection:
         assert set(pk) == {"canvas_user_id", "canvas_assignment_id"}
 
     def test_column_names(self, real_db):
-        cols = get_column_names(real_db, "students")
+        cols = get_column_names(real_db, "canvas_students")
         assert "canvas_id" in cols
-        assert "github_username" in cols
         assert "name" in cols
+        assert "sortable_name" in cols
 
     def test_editable_tables(self, real_db):
         assert is_editable(real_db, "canvas_assignments")
@@ -226,7 +154,6 @@ class TestGridIntrospection:
 
     def test_readonly_tables(self, real_db):
         assert not is_editable(real_db, "canvas_submissions")
-        assert not is_editable(real_db, "gh_submissions")
 
 
 # ---------------------------------------------------------------------------
@@ -269,11 +196,6 @@ class TestColumnDefs:
             "canvas_assignments",
             "canvas_submissions",
             "canvas_grades",
-            "gh_students",
-            "gh_assignments",
-            "gh_submissions",
-            "students",
-            "assignments",
         ],
     )
     def test_build_column_defs(self, real_db, table):
@@ -302,23 +224,11 @@ class TestColumnDefs:
         editable = [d for d in defs if d.get("editable")]
         assert len(editable) == 0
 
-    def test_gh_students_excluded_checkbox(self, real_db):
-        defs = build_column_defs(real_db, "gh_students")
-        excl_col = next(d for d in defs if d["field"] == "excluded")
-        assert excl_col.get("editable") is True
-        assert excl_col.get("cellRenderer") == "agCheckboxCellRenderer"
-        assert excl_col.get("cellEditor") is None
-
     def test_assignment_group_select_editor(self, real_db):
         defs = build_column_defs(real_db, "canvas_assignments")
         ag_def = next(d for d in defs if d["field"] == "assignment_group")
         assert ag_def["cellEditor"] == "agSelectCellEditor"
         assert "values" in ag_def["cellEditorParams"]
-
-    def test_link_columns_have_renderer(self, real_db):
-        defs = build_column_defs(real_db, "gh_submissions")
-        repo_def = next(d for d in defs if d["field"] == "repo_url")
-        assert ":cellRenderer" in repo_def
 
 
 # ---------------------------------------------------------------------------
@@ -601,11 +511,6 @@ class TestAssignmentGroups:
 
 
 class TestEdgeCases:
-    def test_null_deadlines_handled(self, real_db):
-        """Assignments without deadlines should not crash queries."""
-        rows = db.get_enriched_rows(real_db, "gh_assignments")
-        assert len(rows) > 0
-
     def test_null_due_at_handled(self, real_db):
         rows = db.get_enriched_rows(real_db, "canvas_assignments")
         assert len(rows) > 0
@@ -613,28 +518,3 @@ class TestEdgeCases:
     def test_null_submitted_at_handled(self, real_db):
         rows = db.get_enriched_rows(real_db, "canvas_submissions")
         assert len(rows) > 0
-
-    def test_unmatched_gh_student(self, real_db):
-        """GH student not linked to any Canvas student."""
-        unmatched = real_db.execute(
-            "SELECT gs.github_username FROM gh_students gs "
-            "LEFT JOIN students s ON gs.github_username = s.github_username "
-            "WHERE s.github_username IS NULL"
-        ).fetchall()
-        assert len(unmatched) >= 1
-
-    def test_canvas_only_assignments(self, real_db):
-        """Assignments linked only to Canvas (no GH slug)."""
-        rows = real_db.execute(
-            "SELECT slug FROM assignments WHERE canvas_assignment_id IS NOT NULL "
-            "AND gh_assignment_slug IS NULL"
-        ).fetchall()
-        assert len(rows) >= 1
-
-    def test_gh_only_assignments(self, real_db):
-        """Assignments linked only to GH (no Canvas ID)."""
-        rows = real_db.execute(
-            "SELECT slug FROM assignments WHERE gh_assignment_slug IS NOT NULL "
-            "AND canvas_assignment_id IS NULL"
-        ).fetchall()
-        assert len(rows) >= 1
