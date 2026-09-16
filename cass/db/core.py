@@ -99,8 +99,12 @@ def open_db(root: Path | None = None) -> sqlite_utils.Database:
 def get_db(root: Path | None = None) -> sqlite_utils.Database:
     """Return the shared Database, creating it on first call."""
     global _db, _db_path
+    if _db is not None and _db_path is None:
+        if _is_connection_usable(_db):
+            return _db
+        reset()
     target_path = db_path(root)
-    if _db is not None and (_db_path is None or _db_path == target_path):
+    if _db is not None and _db_path == target_path:
         if _is_connection_usable(_db):
             return _db
         reset()

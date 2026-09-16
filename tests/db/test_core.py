@@ -331,3 +331,14 @@ class TestSyncedShadowTables:
 
         db.mark_synced_grades(db_conn, [(100, 1)])
         assert db.get_pending_changes(db_conn) == {}
+
+
+class TestGetDbInjectedConnection:
+    def test_injected_connection_wins_without_config(self, db_conn, monkeypatch):
+        """An injected connection is returned without consulting project config."""
+
+        def no_config() -> None:
+            raise SystemExit("No cass.toml found")
+
+        monkeypatch.setattr("cass.db.core.get_config", no_config)
+        assert db.get_db() is db_conn
