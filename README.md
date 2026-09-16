@@ -1,23 +1,14 @@
 # cass
 
-Grading toolkit for [Canvas LMS](https://www.instructure.com/canvas) and [GitHub Classroom](https://classroom.github.com/) — pull rosters, track submissions, edit grades, and push them back to Canvas.
+Grading toolkit for [Canvas LMS](https://www.instructure.com/canvas) — pull rosters, track submissions, edit grades, and push them back to Canvas.
 
 All data lives in a local SQLite database (`cass.db`) alongside a version-trackable `cass.toml` config.
 
 ## Prerequisites
 
 - [uv](https://docs.astral.sh/uv/) (Python package manager)
-- [GitHub CLI](https://cli.github.com/) (`gh`) — required for install and for GitHub Classroom features
 
 ## Install
-
-```bash
-# Check authentication with GitHub (one-time)
-gh auth status
-
-# Login if needed
-gh auth login
-```
 
 ### Stable release (recommended)
 
@@ -108,7 +99,7 @@ Everything you can do from the viewer you (or Claude) can do from the CLI:
 
 ```bash
 cass init         # interactive config setup
-cass pull         # fetch students, assignments, submissions
+cass pull         # fetch students, assignments, submissions from Canvas
 cass status       # overview of local state and sync status
 cass revert       # discard pending local changes
 cass push         # preview + confirm pending Canvas changes
@@ -139,17 +130,12 @@ Running `cass` with no arguments shows help.
 
 ## Configuration
 
-`cass.toml` lives in your project root. Canvas is required; GitHub Classroom is optional.
+`cass.toml` lives in your project root.
 
 ```toml
 [canvas]
 base_url = "https://canvas.ucsd.edu"
 course_id = 72335
-
-# Optional — enables submission tracking and roster matching
-[classroom]
-id = 299058
-org = "psyc-201"
 ```
 
 ## Development

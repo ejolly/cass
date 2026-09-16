@@ -41,7 +41,7 @@ def main(
         help="Show version",
     ),
 ) -> None:
-    """cass — Classroom Assignment Grading CLI."""
+    """cass — Canvas grading CLI."""
     if ctx.invoked_subcommand is None:
         console.print(ctx.get_help())
         raise typer.Exit()

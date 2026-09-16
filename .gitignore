@@ -5,7 +5,6 @@ __pycache__/
 *.py[oc]
 canvas-token.txt
 canvas_mapping.json
-classroom_roster.csv
 cass.duckdb
 cass.db
 cass.db-journal
@@ -16,7 +15,6 @@ cass.duckdb.wal
 cass.toml
 docs/api/
 backups/
-gh-classroom/
 memory/
 dev.py
 .canvastoken

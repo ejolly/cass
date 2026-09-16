@@ -1,6 +1,6 @@
 # CLAUDE.md — cass
 
-CLI grading toolkit for GitHub Classroom and Canvas LMS. SQLite storage, Typer CLI, NiceGUI browser viewer.
+CLI grading toolkit for Canvas LMS. SQLite storage, Typer CLI, NiceGUI browser viewer.
 
 ## Architecture
 
@@ -44,5 +44,4 @@ symbex '*Client*' -s -d cass/  # find classes/functions matching pattern
 
 - `CanvasFile.content_type` uses `msgspec.field(name="content-type")` (hyphenated API field)
 - Canvas assignment/tab IDs are strings, not ints
-- GitHub Classroom URL `url_id` is the org ID, NOT the classroom API `gh_id` — cannot lookup by `url_id` directly
 - The `cass.toml` points to a test Canvas course. When making canvas changes, ask the user if you should dogfood against it and clean up after yourself if granted permission.

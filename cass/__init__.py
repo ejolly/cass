@@ -1,8 +1,8 @@
-"""cass — Classroom Assignment Sync CLI.
+"""cass — Canvas grading CLI.
 
 A workflow-oriented CLI for synchronizing local grading state with
-Canvas LMS and GitHub Classroom. Local data lives in a per-project
-SQLite database (`cass.db`).
+Canvas LMS. Local data lives in a per-project SQLite database
+(`cass.db`).
 
 Install: `uv tool install cass` or `uvx cass`.
 
@@ -14,11 +14,10 @@ Install: `uv tool install cass` or `uvx cass`.
 |---------|-------------|
 | `cass status` | Show local data and Canvas sync status |
 | `cass init` | Initialize a new project or check setup |
-| `cass pull` | Fetch from APIs and update the local database |
+| `cass pull` | Fetch from Canvas and update the local database |
 | `cass push` | Preview and push pending local changes to Canvas |
 | `cass revert` | Revert local changes since the last Canvas sync |
 | `cass query` | Query curated datasets, with raw SQL as an escape hatch |
-| `cass pull-repos` | Download or update student submission repos |
 | `cass delete` | Delete the local database |
 | `cass backup` | Save a timestamped copy of the database |
 | `cass restore` | Replace the current database with a backup |
