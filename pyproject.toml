@@ -30,6 +30,7 @@ dependencies = [
     "sqlite-utils>=3.39",
     "duckdb>=1.5.0",
     "ibis-framework[duckdb,sqlite]>=12.0.0",
+    "browser-cookie3>=0.20.1",
 ]
 
 [project.urls]
@@ -62,7 +63,7 @@ build-backend = "hatchling.build"
 packages = ["cass"]
 
 [project.scripts]
-cass = "cass.cli:app"
+cass = "cass.cli:run"
 
 [tool.poe.tasks.lint]
 help = "Format, lint, and type check"

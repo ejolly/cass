@@ -238,6 +238,12 @@ def status() -> None:
             ]
         )
     )
+    if cfg.has_canvas:
+        from ..apis.canvas.auth import find_auth
+
+        auth = find_auth(cfg.root)
+        auth_label = auth.description if auth else "[red]not found[/red]"
+        console.print(f"Canvas auth: {auth_label}")
 
     db_file = Path(db.db_path())
     if not db_file.exists():
@@ -295,21 +301,28 @@ def status() -> None:
 
 
 def ensure_token_gitignored(project_root: Path) -> None:
-    """Append .canvastoken to .gitignore if not already present."""
+    """Append the Canvas credential files to .gitignore if not already present."""
+    from ..apis.canvas.auth import CREDS_FILENAME, TOKEN_FILENAME
+
     gitignore = project_root / ".gitignore"
-    entry = ".canvastoken"
-    if gitignore.exists():
-        text = gitignore.read_text()
-        if entry in text.splitlines():
-            return
-        gitignore.write_text(text.rstrip("\n") + f"\n{entry}\n")
-    else:
-        gitignore.write_text(f"{entry}\n")
+    existing = gitignore.read_text().splitlines() if gitignore.exists() else []
+    missing = [n for n in (TOKEN_FILENAME, CREDS_FILENAME) if n not in existing]
+    if not missing:
+        return
+    text = "\n".join(existing).rstrip("\n")
+    prefix = text + "\n" if text else ""
+    gitignore.write_text(prefix + "\n".join(missing) + "\n")
 
 
-def _has_saved_canvas_token(project_root: Path) -> bool:
-    token_path = project_root / ".canvastoken"
-    return token_path.exists() and token_path.read_text().strip() != ""
+def _saved_credentials_file(project_root: Path) -> str | None:
+    """Name of the Canvas credentials file already in the project, if any."""
+    from ..apis.canvas.auth import CREDS_FILENAME, TOKEN_FILENAME
+
+    for name in (CREDS_FILENAME, TOKEN_FILENAME):
+        path = project_root / name
+        if path.exists() and path.read_text().strip():
+            return name
+    return None
 
 
 def _prompt_canvas_course() -> tuple[str, int]:
@@ -450,7 +463,7 @@ def init() -> None:
             org = existing_org
 
     needs_canvas = not (canvas_base_url and canvas_course_id)
-    needs_token = not _has_saved_canvas_token(project_root)
+    saved_credentials = _saved_credentials_file(project_root)
     if cfg_path is None:
         console.print("[bold]cass setup[/bold]")
         console.print(f"[dim]Project directory: {project_root}[/dim]\n")
@@ -480,7 +493,7 @@ def init() -> None:
             )
 
     ensure_token_gitignored(project_root)
-    if needs_token:
+    if saved_credentials is None:
         token = _prompt_canvas_token()
         if cfg_path is None and not changed:
             update_config(
@@ -492,8 +505,13 @@ def init() -> None:
         canvas_save_token(token)
         reset_config()
         console.print(f"[green]Saved {token_path.name}[/green]")
-    else:
+    elif saved_credentials == token_path.name:
         console.print(f"[green]Using existing {token_path.name}[/green]")
+    else:
+        console.print(
+            f"[green]Using session cookie from {saved_credentials}[/green] "
+            "[dim](delete it to switch back to an API token)[/dim]"
+        )
 
     if classroom_gh_id:
         classroom_label = classroom_title or classroom_slug or classroom_url
@@ -1030,3 +1048,14 @@ def view(
         from ..viewer.nicegui_app import start_nicegui_server
 
         start_nicegui_server(port=port, project_root=get_config().root)
+
+
+def run() -> None:
+    """Console-script entry point: run the CLI, reporting auth failures cleanly."""
+    from ..apis.canvas.auth import CanvasAuthError
+
+    try:
+        app()
+    except CanvasAuthError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise SystemExit(1) from None

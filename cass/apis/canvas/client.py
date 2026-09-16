@@ -3,8 +3,9 @@
 Provides ``CanvasClient``, a typed httpx client with ``course_id`` baked in.
 All methods return msgspec.Struct instances, never raw dicts.
 
-Also contains the HTTP transport layer (``_RetryTransport``) and token
-management used by the rest of the Canvas integration.
+Also contains the HTTP transport layer (``RetryTransport``). Credential
+lookup lives in ``auth``; ``get_token``/``save_token`` remain here for the
+token-only callers (``cass init``, viewer setup).
 """
 
 from __future__ import annotations
@@ -12,9 +13,9 @@ from __future__ import annotations
 __docformat__ = "google"
 
 import logging
-import os
 import re
 import time
+from collections.abc import Callable
 from typing import Any
 
 import httpx
@@ -23,6 +24,16 @@ from rich.console import Console
 
 from ... import __version__
 from ...actions.config import get_config
+from .auth import (
+    TOKEN_FILENAME,
+    CanvasAuth,
+    CanvasAuthError,
+    SessionAuth,
+    TokenAuth,
+    check_request,
+    check_response,
+    find_auth,
+)
 from .schema import (
     CanvasAnnouncement,
     CanvasAssignmentGroup,
@@ -46,41 +57,51 @@ from .schema import (
 _console = Console(stderr=True)
 _log = logging.getLogger(__name__)
 
-# --- Token management ---
+# --- Credentials ---
 
 MAX_RETRIES = 3
 THROTTLE_THRESHOLD = 50.0
 THROTTLE_DELAY = 1.0
 
 
-def get_token() -> str:
-    """Read Canvas API token from file or environment.
+def get_auth() -> CanvasAuth:
+    """Locate Canvas credentials for the current project.
 
-    Looks for ``.canvastoken`` in the project root first, then
-    falls back to the ``CANVAS_TOKEN`` environment variable.
+    Prefers ``.canvascreds`` (browser session cookie), then ``.canvastoken``,
+    then ``$CANVAS_TOKEN``.
+
+    Raises:
+        SystemExit: If no credentials are found.
+    """
+    auth = find_auth(get_config().root)
+    if auth is None:
+        raise SystemExit(
+            "Canvas credentials not found. Run 'cass init' to save an API token "
+            f"to {TOKEN_FILENAME}, set the CANVAS_TOKEN environment variable, or "
+            "run 'cass canvas login --from-brave' to use your browser session."
+        )
+    return auth
+
+
+def get_token() -> str:
+    """Read the Canvas API token from ``.canvastoken`` or ``$CANVAS_TOKEN``.
 
     Raises:
         SystemExit: If no token is found.
     """
-    cfg = get_config()
-    token_path = cfg.root / ".canvastoken"
-    if token_path.exists():
-        token = token_path.read_text().strip()
-        if token:
-            return token
-    token = os.environ.get("CANVAS_TOKEN", "")
-    if not token:
+    auth = get_auth()
+    if not isinstance(auth, TokenAuth):
         raise SystemExit(
-            "Canvas token not found. Create .canvastoken in the project root "
-            "or set the CANVAS_TOKEN environment variable."
+            f"A Canvas API token is required here, but only a session cookie "
+            f"({auth.source}) is configured."
         )
-    return token
+    return auth.token
 
 
 def save_token(token: str) -> None:
     """Write a Canvas API token to ``.canvastoken``."""
     cfg = get_config()
-    token_path = cfg.root / ".canvastoken"
+    token_path = cfg.root / TOKEN_FILENAME
     token_path.write_text(token.strip() + "\n")
 
 
@@ -88,20 +109,60 @@ def save_token(token: str) -> None:
 
 
 class RetryTransport(httpx.BaseTransport):
-    """Wraps HTTPTransport with 429 retry, backoff, and proactive throttling."""
+    """Wraps a transport with 429 retry, backoff, throttling, and auth checks.
 
-    def __init__(self, *, retries: int = 0) -> None:
-        self._wrapped = httpx.HTTPTransport(retries=retries)
+    Args:
+        auth: Credentials in use; credential failures (401, CSRF rejection)
+            are raised as ``CanvasAuthError`` with instructions to fix them.
+        retries: Connection-level retries for the underlying HTTP transport.
+        wrapped: Transport to delegate to (defaults to ``httpx.HTTPTransport``;
+            tests pass an ``httpx.MockTransport``).
+        refresh: Import fresh credentials after a 401, at most once per request.
+    """
+
+    def __init__(
+        self,
+        *,
+        auth: CanvasAuth,
+        retries: int = 0,
+        wrapped: httpx.BaseTransport | None = None,
+        refresh: Callable[[], SessionAuth] | None = None,
+    ) -> None:
+        self._auth = auth
+        self._wrapped = wrapped or httpx.HTTPTransport(retries=retries)
+        self._refresh = refresh
 
     def handle_request(self, request: httpx.Request) -> httpx.Response:
+        check_request(self._auth, request)
+        refreshed = False
         for attempt in range(MAX_RETRIES + 1):
             response = self._wrapped.handle_request(request)
+            response.read()
+            if response.status_code == 401 and self._refresh and not refreshed:
+                response.close()
+                _console.print(
+                    "[yellow]Canvas session expired; refreshing from Brave…[/yellow]"
+                )
+                self._auth = self._refresh()
+                refreshed = True
+                request.headers.update(self._auth.headers())
+                request.headers.pop("Cookie", None)
+                httpx.Cookies(self._auth.cookies()).set_cookie_header(request)
+                # Replay only an explicit authentication rejection, at most once.
+                response = self._wrapped.handle_request(request)
+                response.read()
+            try:
+                check_response(self._auth, response)
+            except CanvasAuthError:
+                response.close()
+                raise
 
             if response.status_code == 429:
                 if attempt == MAX_RETRIES:
                     return response  # let raise_for_status handle it
                 retry_after = response.headers.get("Retry-After")
                 wait = float(retry_after) if retry_after else 2**attempt
+                response.close()
                 _console.print(
                     f"[yellow]Canvas rate limit hit, retrying in {wait:.0f}s…[/yellow]"
                 )
@@ -144,8 +205,10 @@ class CanvasClient:
 
     Args:
         base_url: Canvas instance URL (e.g. ``https://canvas.ucsd.edu``).
-        token: Canvas API bearer token.
+        token: Canvas API bearer token (shortcut for ``auth=TokenAuth(...)``).
         course_id: Canvas course ID for all requests.
+        auth: Credentials to use; defaults to whatever ``get_auth`` finds.
+        transport: HTTP transport override (tests inject a mock here).
     """
 
     def __init__(
@@ -153,26 +216,70 @@ class CanvasClient:
         base_url: str | None = None,
         token: str | None = None,
         course_id: int | None = None,
+        *,
+        auth: CanvasAuth | None = None,
+        transport: httpx.BaseTransport | None = None,
     ) -> None:
-        cfg = get_config()
-        self._base_url = (base_url or cfg.canvas_base_url).rstrip("/") + "/api/v1"
-        self._token = token or get_token()
-        self.course_id = course_id or cfg.canvas_course_id
+        cfg = get_config() if base_url is None or course_id is None else None
+        resolved_base = base_url or (cfg.canvas_base_url if cfg else "")
+        self._base_url = resolved_base.rstrip("/") + "/api/v1"
+        if token is not None:
+            auth = TokenAuth(token=token, source="argument")
+        self.auth: CanvasAuth = auth or get_auth()
+        if (
+            isinstance(self.auth, SessionAuth)
+            and self.auth.brave is not None
+            and self.auth.brave.origin != resolved_base.rstrip("/")
+        ):
+            raise CanvasAuthError(
+                "The saved Brave session belongs to another Canvas origin. "
+                "Run 'cass canvas login --from-brave' for this project."
+            )
+        self.course_id = course_id or (cfg.canvas_course_id if cfg else 0)
+        self._transport = transport
         self._http: httpx.Client | None = None
 
     @property
     def _client(self) -> httpx.Client:
         if self._http is None or self._http.is_closed:
+            refresh = (
+                self._refresh_brave
+                if isinstance(self.auth, SessionAuth) and self.auth.brave
+                else None
+            )
+            transport = self._transport
+            if not isinstance(transport, RetryTransport):
+                transport = RetryTransport(
+                    auth=self.auth,
+                    retries=1,
+                    wrapped=transport,
+                    refresh=refresh,
+                )
             self._http = httpx.Client(
                 base_url=self._base_url,
                 headers={
-                    "Authorization": f"Bearer {self._token}",
                     "User-Agent": f"cass-cli/{__version__}",
+                    **self.auth.headers(),
                 },
-                transport=RetryTransport(retries=1),
+                cookies=self.auth.cookies(),
+                transport=transport,
                 timeout=30.0,
             )
         return self._http
+
+    def _refresh_brave(self) -> SessionAuth:
+        from .browser import login_from_brave
+
+        if not isinstance(self.auth, SessionAuth) or self.auth.brave is None:
+            raise CanvasAuthError("This session was not imported from Brave.")
+        source = self.auth.brave
+        auth = login_from_brave(source.path.parent, source.origin, source.profile)
+        self.auth = auth
+        if self._http is not None:
+            self._http.headers.update(auth.headers())
+            self._http.cookies.clear()
+            self._http.cookies.update(auth.cookies())
+        return auth
 
     def close(self) -> None:
         """Close the underlying HTTP client."""
@@ -556,6 +663,8 @@ class CanvasClient:
             )
             resp.raise_for_status()
             return True
+        except CanvasAuthError:
+            raise
         except (httpx.HTTPStatusError, RuntimeError) as exc:
             _log.warning(
                 "Failed to push grade for student %s: %s", student_canvas_id, exc

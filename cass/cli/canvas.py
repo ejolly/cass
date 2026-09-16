@@ -60,6 +60,41 @@ def client() -> CanvasClient:
     return CanvasClient()
 
 
+@canvas_app.command(rich_help_panel="Setup")
+def login(
+    from_brave: bool = typer.Option(
+        False,
+        "--from-brave",
+        help="Import your Canvas session from Brave on macOS.",
+    ),
+    profile: str = typer.Option(
+        "Default",
+        "--profile",
+        help="Brave profile directory, such as 'Profile 1'.",
+    ),
+) -> None:
+    """Save a Brave session and refresh it automatically after a 401 rejection."""
+    from ..actions.config import get_config
+    from ..apis.canvas.auth import CanvasAuthError
+    from ..apis.canvas.browser import login_from_brave
+
+    if not from_brave:
+        raise typer.BadParameter("Use --from-brave to import a browser session.")
+    require_canvas()
+    cfg = get_config()
+    console.print("Reading Brave's Canvas session. macOS may ask for Keychain access.")
+    try:
+        login_from_brave(cfg.root, cfg.canvas_base_url, profile)
+    except (CanvasAuthError, OSError) as exc:
+        console.print(str(exc), style="red", markup=False)
+        raise typer.Exit(code=1) from None
+    console.print(
+        "Canvas session saved to .canvascreds. "
+        "If Canvas rejects authentication, cass will refresh the cookies from "
+        "Brave and retry the request once."
+    )
+
+
 # ---------------------------------------------------------------------------
 # cass canvas — course overview (default)
 # ---------------------------------------------------------------------------

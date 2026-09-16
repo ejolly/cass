@@ -583,3 +583,56 @@ class TestInit:
         assert "retrying resolution" in result.stdout
         assert "setup is incomplete" in result.stdout
         assert "gh auth login" in result.stdout
+
+
+class TestSessionCookieAuth:
+    def test_init_skips_token_prompt_when_creds_file_exists(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "cass.toml").write_text(
+            '[canvas]\nbase_url = "https://canvas.example.com"\ncourse_id = 7\n'
+        )
+        (tmp_path / ".canvascreds").write_text("canvas_session=abc\n")
+        monkeypatch.setattr("cass.actions.doctor.check_prerequisites", list)
+
+        result = runner.invoke(app, ["init"], input="\n")
+
+        assert result.exit_code == 0
+        assert "Canvas API token" not in result.stdout
+        assert ".canvascreds" in result.stdout
+        assert not (tmp_path / ".canvastoken").exists()
+
+    def test_init_gitignores_both_credential_files(self, tmp_path):
+        from cass.cli import ensure_token_gitignored
+
+        (tmp_path / ".gitignore").write_text(".canvastoken\n")
+        ensure_token_gitignored(tmp_path)
+        lines = (tmp_path / ".gitignore").read_text().splitlines()
+        assert lines.count(".canvastoken") == 1
+        assert ".canvascreds" in lines
+
+    def test_status_reports_auth_source(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("CANVAS_TOKEN", raising=False)
+        (tmp_path / "cass.toml").write_text(
+            '[canvas]\nbase_url = "https://canvas.example.com"\ncourse_id = 1\n'
+        )
+        (tmp_path / ".canvascreds").write_text("canvas_session=abc\n")
+
+        result = runner.invoke(app, ["status"])
+        assert result.exit_code == 0
+        assert "session cookie (.canvascreds" in result.stdout
+
+    def test_run_prints_auth_error_without_traceback(self, monkeypatch, capsys):
+        from cass.apis.canvas.auth import CanvasAuthError
+        from cass.cli import run
+
+        def boom() -> None:
+            raise CanvasAuthError("Canvas rejected the session cookie")
+
+        monkeypatch.setattr("cass.cli.app", boom)
+        with pytest.raises(SystemExit) as exc:
+            run()
+        assert exc.value.code == 1
+        assert "Canvas rejected the session cookie" in capsys.readouterr().out

@@ -11,6 +11,7 @@ from cass.actions.matching import (
     normalize,
     slugify,
 )
+from cass.apis.canvas.auth import TokenAuth
 from cass.apis.canvas.client import RetryTransport
 from cass.apis.canvas.schema import CanvasStudentResponse
 from cass.apis.github.schema import GHStudentInfo
@@ -124,12 +125,14 @@ def _mock_transport(responses: list[httpx.Response]) -> httpx.BaseTransport:
     return _Mock()
 
 
+_AUTH = TokenAuth(token="t", source="test")
+
+
 class TestRetryTransport:
     def test_success(self):
         """Normal 200 passes through immediately."""
         inner = _mock_transport([httpx.Response(200, json={"ok": True})])
-        transport = RetryTransport.__new__(RetryTransport)
-        transport._wrapped = inner
+        transport = RetryTransport(auth=_AUTH, wrapped=inner)
         resp = transport.handle_request(httpx.Request("GET", "https://example.com"))
         assert resp.status_code == 200
 
@@ -142,8 +145,7 @@ class TestRetryTransport:
                 httpx.Response(200, json={"ok": True}),
             ]
         )
-        transport = RetryTransport.__new__(RetryTransport)
-        transport._wrapped = inner
+        transport = RetryTransport(auth=_AUTH, wrapped=inner)
         resp = transport.handle_request(httpx.Request("GET", "https://example.com"))
         assert resp.status_code == 200
 
@@ -151,8 +153,7 @@ class TestRetryTransport:
         """After MAX_RETRIES 429s, the last 429 response is returned."""
         monkeypatch.setattr("cass.apis.canvas.client.time.sleep", lambda _: None)
         inner = _mock_transport([httpx.Response(429)] * 4)
-        transport = RetryTransport.__new__(RetryTransport)
-        transport._wrapped = inner
+        transport = RetryTransport(auth=_AUTH, wrapped=inner)
         resp = transport.handle_request(httpx.Request("GET", "https://example.com"))
         assert resp.status_code == 429
 
@@ -165,8 +166,7 @@ class TestRetryTransport:
                 httpx.Response(200, headers={"X-Rate-Limit-Remaining": "10"}),
             ]
         )
-        transport = RetryTransport.__new__(RetryTransport)
-        transport._wrapped = inner
+        transport = RetryTransport(auth=_AUTH, wrapped=inner)
         transport.handle_request(httpx.Request("GET", "https://example.com"))
         assert len(delays) == 1
         assert delays[0] == 1.0

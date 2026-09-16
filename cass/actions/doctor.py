@@ -2,10 +2,11 @@
 
 __docformat__ = "google"
 
-import os
+
 import shutil
 from dataclasses import dataclass
 
+from ..apis.canvas.auth import find_auth
 from .config import config_file_path, get_config
 
 
@@ -109,15 +110,14 @@ def check_prerequisites() -> list[Check]:
         checks.append(Check("canvas", True, "configured"))
         checks.append(Check("base_url", True, cfg.canvas_base_url, indent=1))
         checks.append(Check("course_id", True, str(cfg.canvas_course_id), indent=1))
-        token_path = cfg.root / ".canvastoken"
-        has_token = (
-            token_path.exists() and token_path.read_text().strip() != ""
-        ) or bool(os.environ.get("CANVAS_TOKEN"))
+        auth = find_auth(cfg.root)
         checks.append(
             Check(
-                "token",
-                has_token,
-                "found" if has_token else "not found (.canvastoken or $CANVAS_TOKEN)",
+                "auth",
+                auth is not None,
+                auth.description
+                if auth
+                else "not found (.canvascreds, .canvastoken or $CANVAS_TOKEN)",
                 indent=1,
             )
         )

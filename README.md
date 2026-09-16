@@ -54,6 +54,36 @@ After install, `cass` is available globally.
 cass init
 ```
 
+#### No API token? Use your browser session instead
+
+On macOS, log in to Canvas in Brave, then run:
+
+```bash
+cass canvas login --from-brave
+```
+
+Allow access to **Brave Safe Storage** if macOS asks. cass imports your Canvas
+cookies, checks the session, and saves `.canvascreds` with owner-only permissions.
+For another Brave profile, add `--profile "Profile 1"`, using the directory name
+shown in `brave://version` under **Profile Path**.
+
+If Canvas rejects authentication, cass refreshes the cookies from that profile
+and retries the request once. If the Brave session has also expired, log in to
+Canvas in Brave and rerun the login command. CSRF errors also point to this
+command, but do not trigger an automatic retry.
+
+For other browsers, copy `canvas_session` and `_csrf_token` from devtools
+(Application/Storage > Cookies) into `.canvascreds` in the project root:
+
+```
+canvas_session=<value>
+_csrf_token=<value>
+```
+
+Quotes around the values are fine. Manually copied cookies do not refresh
+automatically. `.canvascreds` takes priority over `.canvastoken`; delete it to
+return to API-token authentication.
+
 ### Pull latest data
 
 ```bash
@@ -127,4 +157,3 @@ uv run poe lint            # ruff format + check, ty
 uv run poe test            # pytest
 uv run poe install         # install as global CLI tool
 ```
-
