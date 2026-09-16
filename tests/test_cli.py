@@ -682,6 +682,23 @@ class TestReportHelpers:
         assert due("2026-10-01T23:59:00-07:00") == "2026-10-01"
         assert due(None) == ""
 
+    def test_long_ids_fold_instead_of_truncating(self, monkeypatch, capsys):
+        from rich.console import Console
+
+        from cass.cli import report
+
+        monkeypatch.setattr(report, "console", Console(width=40, force_terminal=False))
+        report.render_list(
+            ["Label", "Type", "ID"],
+            [["Media Gallery", "external", "context_external_tool_5826"]],
+        )
+        out = capsys.readouterr().out
+        assert "…" not in out
+        # ID may wrap across lines but every character must survive
+        assert "context_external_tool_5826" in "".join(
+            line.split("│")[-1].strip() for line in out.splitlines() if "│" in line
+        )
+
     def test_row_count_pluralizes(self, capsys):
         from cass.cli import report
 

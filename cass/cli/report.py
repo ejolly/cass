@@ -24,7 +24,7 @@ def render_table(
 
     table = Table(show_edge=False, pad_edge=False, title=title)
     for col in columns:
-        table.add_column(col)
+        table.add_column(col, overflow="fold")
     for row in rows:
         table.add_row(*(str(v) if v is not None else "" for v in row))
 
@@ -40,9 +40,10 @@ def render_list(
     title: str | None = None,
 ) -> None:
     """Print headers/rows as a Rich table."""
+    # Fold long space-free values (IDs, URLs) instead of truncating them
     table = Table(show_edge=False, pad_edge=False, title=title)
     for h in headers:
-        table.add_column(h)
+        table.add_column(h, overflow="fold")
     for row in rows:
         table.add_row(*row)
     console.print()
