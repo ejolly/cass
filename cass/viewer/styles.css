@@ -86,9 +86,6 @@
     .v-nav-dev-table {
         @apply text-xs font-mono opacity-60;
     }
-    .v-pull-repos-btn {
-        @apply text-[0.6rem];
-    }
 
     /* ================================================================
      * Sidebar — dev section

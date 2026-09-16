@@ -61,40 +61,6 @@ def get_table_rows(conn: sqlite_utils.Database, table: str) -> list[dict[str, An
 # JS render constants
 # ---------------------------------------------------------------------------
 
-_LINK_JS = """
-(params) => {
-    if (!params.value) return '';
-    const url = params.value;
-    const short = url.replace('https://github.com/', '');
-    const parts = short.split('/commit/');
-    const label = parts.length > 1 ? parts[1].substring(0, 7) : parts[0];
-    return '<a href="' + url + '" target="_blank" '
-        + 'style="color:#60a5fa;text-decoration:underline">'
-        + label + '</a>';
-}
-""".strip()
-
-_DATE_LINK_JS = """
-(params) => {
-    if (!params.value) return '';
-    const d = new Date(params.value);
-    const label = isNaN(d) ? params.value : d.toLocaleDateString('en-US', {
-        month: 'short', day: 'numeric', year: 'numeric',
-        hour: 'numeric', minute: '2-digit'
-    });
-    const url = params.data && params.data.commit_url;
-    if (url) {
-        return '<a href="' + url + '" target="_blank" '
-            + 'style="color:#60a5fa;text-decoration:underline">'
-            + label + '</a>';
-    }
-    return label;
-}
-""".strip()
-
-# URL columns that should render as clickable links
-_LINK_COLUMNS = {"repo_url"}
-
 _DATETIME_JS = """
 (params) => {
     if (!params.value) return '';
@@ -203,16 +169,8 @@ def build_column_defs(conn: sqlite_utils.Database, table: str) -> list[dict[str,
             "resizable": True,
         }
 
-        # Link columns
-        if name in _LINK_COLUMNS:
-            col_def[":cellRenderer"] = _LINK_JS
-
-        # Last commit date as link to commit
-        if name == "last_commit_at" and table == "gh_submissions":
-            col_def[":cellRenderer"] = _DATE_LINK_JS
-
         # Datetime formatting
-        elif _is_datetime_col(dtype, name):
+        if _is_datetime_col(dtype, name):
             if table == "canvas_submissions" and name == "submitted_at":
                 col_def[":cellRenderer"] = _LATE_HIGHLIGHT_JS
             else:
@@ -364,125 +322,6 @@ def build_gradebook_view(
                 (student.canvas_id, assignment.canvas_id),
                 "",
             )
-        row_data.append(row)
-
-    return row_data, col_defs
-
-
-# ---------------------------------------------------------------------------
-# GH Gradebook pivot view
-# ---------------------------------------------------------------------------
-
-
-def build_gh_gradebook_view(
-    conn: sqlite_utils.Database,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Build pivoted GH gradebook: students as rows, assignments as columns.
-
-    Cells show ``X/Y`` where X = commits before deadline, Y = commits after.
-    Read-only — no edit handlers.
-
-    Returns:
-        (row_data, col_defs) — ready for AG Grid.
-    """
-    # Fetch GH assignments ordered by deadline
-    assignments = conn.execute(
-        "SELECT slug, title, deadline FROM gh_assignments ORDER BY deadline, title"
-    ).fetchall()
-
-    # Fetch GH submissions, excluding hidden students via SQL
-    subs_raw = conn.execute(
-        "SELECT gs.github_username, gs.assignment_slug, gs.submitted, "
-        "gs.commit_count, gs.commits_after_deadline "
-        "FROM gh_submissions gs "
-        "LEFT JOIN gh_students gst "
-        "  ON gs.github_username = gst.github_username "
-        "WHERE COALESCE(gst.excluded, false) = false"
-    ).fetchall()
-    sub_map: dict[tuple[str, str], tuple[bool, int, int]] = {
-        (r[0], r[1]): (r[2], r[3], r[4]) for r in subs_raw
-    }
-
-    # Build student list: Canvas sortable_name when matched, else
-    # convert GH "First Last" → "Last, First" for consistent sorting.
-    # Excludes students marked as hidden in the Roster.
-    student_rows = conn.execute(
-        "SELECT gs.github_username, "
-        "COALESCE("
-        "  cs.sortable_name, "
-        "  CASE WHEN gs.name LIKE '% %' "
-        "    THEN substr(gs.name, instr(gs.name, ' ') + 1) "
-        "      || ', ' "
-        "      || substr(gs.name, 1, instr(gs.name, ' ') - 1) "
-        "    ELSE gs.name END"
-        ") AS display_name "
-        "FROM gh_students gs "
-        "LEFT JOIN students s ON gs.github_username = s.github_username "
-        "LEFT JOIN canvas_students cs ON s.canvas_id = cs.canvas_id "
-        "WHERE gs.excluded = 0 "
-        "ORDER BY display_name"
-    ).fetchall()
-
-    # Also include students who have submissions but aren't in gh_students
-    known_handles = {r[0] for r in student_rows}
-    extra_handles = {h for h, _ in sub_map if h not in known_handles}
-    for handle in sorted(extra_handles):
-        student_rows.append((handle, handle))
-
-    # Build column defs
-    col_defs: list[dict[str, Any]] = [
-        {
-            "headerName": "Student",
-            "field": "_student_name",
-            "pinned": "left",
-            "minWidth": 160,
-            "sortable": True,
-            "filter": False,
-            "resizable": True,
-            "editable": False,
-            "cellStyle": {"fontWeight": "600"},
-        },
-    ]
-
-    for slug, title, _deadline in assignments:
-        field = f"_a{slug}"
-        col_defs.append(
-            {
-                "headerName": title,
-                "field": field,
-                "minWidth": 80,
-                "sortable": True,
-                "filter": False,
-                "resizable": True,
-                "editable": False,
-                "headerTooltip": title,
-                "wrapHeaderText": True,
-                "autoHeaderHeight": True,
-            }
-        )
-
-    # Hidden username column for identification
-    col_defs.append({"field": "_github_username", "hide": True})
-
-    # Build row data
-    row_data: list[dict[str, Any]] = []
-    for handle, name in student_rows:
-        row: dict[str, Any] = {
-            "_student_name": name,
-            "_github_username": handle,
-        }
-        for slug, _title, deadline in assignments:
-            field = f"_a{slug}"
-            sub = sub_map.get((handle, slug))
-            if sub and sub[1]:  # has commits
-                commit_count, after = sub[1], sub[2]
-                if deadline:
-                    before = commit_count - after
-                    row[field] = f"{before}/{after}"
-                else:
-                    row[field] = str(commit_count)
-            else:
-                row[field] = ""
         row_data.append(row)
 
     return row_data, col_defs

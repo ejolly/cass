@@ -66,12 +66,7 @@ class ViewerPage:
         self._project_root = project_root
         live_conn = self.conn
         self.tables = get_tables(live_conn)
-        self.has_classroom = self._has_classroom_config()
-        self.has_classroom_url = self._has_classroom_url_config()
-        self.groups = group_tables(
-            self.tables,
-            has_classroom=self.has_classroom,
-        )
+        self.groups = group_tables(self.tables)
         self.pending: PendingChanges = get_pending_changes(live_conn)
         self.has_canvas_assignments = any(
             t["name"] == "canvas_assignments" for t in self.tables
@@ -130,52 +125,8 @@ class ViewerPage:
         """Return the number of rows in a visible table or view."""
         return self.conn.table(table["name"]).count
 
-    def _has_classroom_config(self) -> bool:
-        """Return whether GitHub Classroom is configured for this project."""
-        from ..db.core import _has_classroom_config
-
-        return _has_classroom_config(self._project_root)
-
-    def _has_classroom_url_config(self) -> bool:
-        """Return whether a GitHub Classroom URL has been saved."""
-        from ..db.core import _has_classroom_url_config
-
-        return _has_classroom_url_config(self._project_root)
-
     def _empty_state_message(self, table_name: str, is_gradebook: bool) -> str:
         """Explain why an empty table is currently blank."""
-        if table_name == "gh_gradebook":
-            if self.has_classroom_url and not self.has_classroom:
-                return (
-                    "GitHub Classroom URL is saved, but the gh-classroom ID is "
-                    "still unresolved. Run cass init after fixing gh auth or "
-                    "Classroom access, then run cass pull."
-                )
-            if not self.has_classroom:
-                return (
-                    "No GitHub Classroom data is available. Add a [classroom] "
-                    "section to cass.toml and run cass pull."
-                )
-            return (
-                "No GitHub Classroom gradebook rows yet. Run cass pull to load "
-                "roster, assignments, and submissions."
-            )
-        if table_name.startswith("gh_"):
-            if self.has_classroom_url and not self.has_classroom:
-                return (
-                    "GitHub Classroom URL is saved, but the gh-classroom ID is "
-                    "still unresolved. Run cass init after fixing gh auth or "
-                    "Classroom access, then run cass pull."
-                )
-            if not self.has_classroom:
-                return (
-                    "No GitHub Classroom data is available. Add a [classroom] "
-                    "section to cass.toml and run cass pull."
-                )
-            return (
-                "No GitHub Classroom rows are available yet. Run cass pull to "
-                "load the latest roster, assignments, and submissions."
-            )
         capability = get_table_capability(table_name)
         if capability.editable:
             if is_gradebook:
@@ -210,9 +161,7 @@ class ViewerPage:
             self.table_label.text = display_name(table_name)
 
         # Build grid data
-        is_canvas_gb = table_name == "canvas_grades"
-        is_gh_gb = table_name == "gh_gradebook"
-        is_gb = is_canvas_gb or is_gh_gb
+        is_gb = table_name == "canvas_grades"
 
         # Clear and rebuild grid container
         if self.grid_container is not None:
@@ -226,9 +175,9 @@ class ViewerPage:
                     self.update_pending_display,
                 )
                 if not row_data:
-                    ui.label(
-                        self._empty_state_message(table_name, is_canvas_gb)
-                    ).classes("text-sm text-grey-6 px-4 pb-3")
+                    ui.label(self._empty_state_message(table_name, is_gb)).classes(
+                        "text-sm text-grey-6 px-4 pb-3"
+                    )
 
             # Update metadata label
             if self.meta_label is not None:
@@ -264,7 +213,6 @@ class ViewerPage:
         from .modals import (
             CreateAssignmentModal,
             DeleteAssignmentModal,
-            PullGHModal,
             PushModal,
         )
 
@@ -274,7 +222,6 @@ class ViewerPage:
         self.push_modal = PushModal(self)
         self.create_modal = CreateAssignmentModal(self)
         self.delete_modal = DeleteAssignmentModal(self)
-        self.pull_gh_modal = PullGHModal(self)
 
         splitter = ui.splitter(value=_SIDEBAR_PCT, limits=(0, 50)).classes(
             "w-full h-screen"

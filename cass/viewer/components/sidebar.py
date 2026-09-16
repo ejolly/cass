@@ -92,24 +92,14 @@ class Sidebar:
                         ).props("flat dense round size=xs color=grey-6").tooltip(
                             "Delete assignment"
                         )
-                    if group["label"] == "GitHub Classroom" and p.has_classroom:
-                        ui.space()
-                        ui.button(
-                            "Pull Repos",
-                            icon="download",
-                            on_click=lambda: p.pull_gh_modal.open(),
-                        ).props("flat dense no-caps size=xs color=grey-6").classes(
-                            "v-pull-repos-btn"
-                        )
 
                 # Sidebar entries
                 sidebar_entries: list[tuple[str, str, bool]] = []
-                if group["label"] == "GitHub Classroom":
-                    sidebar_entries.append(("gh_gradebook", "Gradebook", False))
                 for t in group["items"]:
                     tn = t["name"]
-                    show_editable = is_editable(p.conn, tn) and tn != "gh_students"
-                    sidebar_entries.append((tn, display_name(tn), show_editable))
+                    sidebar_entries.append(
+                        (tn, display_name(tn), is_editable(p.conn, tn))
+                    )
 
                 for tn, dn, editable_item in sidebar_entries:
                     is_active = tn == p.current_table

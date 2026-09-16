@@ -140,72 +140,6 @@ def _make_ui_conn_without_grades() -> sqlite_utils.Database:
     return conn
 
 
-def _make_ui_conn_with_gh_data() -> sqlite_utils.Database:
-    """In-memory DB with persisted GH data but no classroom config."""
-    conn = _make_ui_conn()
-    conn.execute(
-        "CREATE TABLE gh_students ("
-        "  github_username TEXT PRIMARY KEY,"
-        "  github_id INTEGER DEFAULT 0,"
-        "  name TEXT DEFAULT '',"
-        "  email TEXT DEFAULT '',"
-        "  excluded BOOLEAN DEFAULT false"
-        ")"
-    )
-    conn.execute(
-        "CREATE TABLE gh_assignments ("
-        "  slug TEXT PRIMARY KEY,"
-        "  gh_id INTEGER DEFAULT 0,"
-        "  title TEXT DEFAULT '',"
-        "  points_possible DOUBLE DEFAULT 0,"
-        "  deadline TEXT DEFAULT '',"
-        "  starter_code_repo TEXT DEFAULT '',"
-        "  accepted INTEGER DEFAULT 0,"
-        "  submissions_count INTEGER DEFAULT 0,"
-        "  passing_count INTEGER DEFAULT 0,"
-        "  submittable_files TEXT DEFAULT ''"
-        ")"
-    )
-    conn.execute(
-        "CREATE TABLE gh_submissions ("
-        "  github_username TEXT NOT NULL,"
-        "  assignment_slug TEXT NOT NULL,"
-        "  submitted BOOLEAN DEFAULT false,"
-        "  late BOOLEAN DEFAULT false,"
-        "  lateness_seconds INTEGER DEFAULT 0,"
-        "  repo_name TEXT DEFAULT '',"
-        "  commits_after_deadline INTEGER DEFAULT 0,"
-        "  commit_count INTEGER DEFAULT 0,"
-        "  passing BOOLEAN DEFAULT false,"
-        "  gh_autograder_score TEXT DEFAULT '',"
-        "  last_commit_at TEXT DEFAULT '',"
-        "  last_commit_sha TEXT DEFAULT '',"
-        "  fetched_at TEXT DEFAULT '',"
-        "  PRIMARY KEY (github_username, assignment_slug)"
-        ")"
-    )
-    conn.execute(
-        "INSERT INTO gh_students (github_username, github_id, name, email, excluded) "
-        "VALUES ('alice-gh', 1, 'Alice Smith', 'alice@test.edu', false)"
-    )
-    conn.execute(
-        "INSERT INTO gh_assignments "
-        "(slug, gh_id, title, points_possible, deadline, accepted, "
-        "submissions_count, passing_count) "
-        "VALUES ('hw-01', 1, 'Homework 01', 10.0, '2026-02-01T23:59', 1, 1, 1)"
-    )
-    conn.execute(
-        "INSERT INTO gh_submissions "
-        "(github_username, assignment_slug, submitted, late, lateness_seconds, "
-        "repo_name, commits_after_deadline, commit_count, passing, "
-        "gh_autograder_score, last_commit_at, last_commit_sha, fetched_at) "
-        "VALUES ("
-        "'alice-gh', 'hw-01', true, false, 0, 'org/hw-01-alice-gh', 0, 3, true, "
-        "'10', '2026-02-01T12:00', 'abcdef1', '2026-02-01T12:05')"
-    )
-    return conn
-
-
 @pytest.fixture
 def ui_conn() -> sqlite_utils.Database:
     return _make_ui_conn()
@@ -219,11 +153,6 @@ def ui_conn_no_assignments() -> sqlite_utils.Database:
 @pytest.fixture
 def ui_conn_no_grades() -> sqlite_utils.Database:
     return _make_ui_conn_without_grades()
-
-
-@pytest.fixture
-def ui_conn_with_gh_data() -> sqlite_utils.Database:
-    return _make_ui_conn_with_gh_data()
 
 
 class TestViewerPageInit:
@@ -301,138 +230,14 @@ class TestViewerPageInit:
         page._init_state(ui_conn_no_grades)
         assert page.current_table == "canvas_grades"
 
-    def test_shows_github_group_without_classroom_config(
-        self, ui_conn_with_gh_data: sqlite_utils.Database, monkeypatch
-    ):
+    def test_groups_only_canvas(self, ui_conn: sqlite_utils.Database):
         from cass.viewer.page import ViewerPage
 
-        monkeypatch.setattr(
-            "cass.viewer.page.ViewerPage._has_classroom_config",
-            lambda self: False,
-        )
-        monkeypatch.setattr(
-            "cass.viewer.page.ViewerPage._has_classroom_url_config",
-            lambda self: False,
-        )
         page = ViewerPage.__new__(ViewerPage)
-        page._init_state(ui_conn_with_gh_data)
+        page._init_state(ui_conn)
 
-        assert page.has_classroom is False
-        assert any(group["label"] == "GitHub Classroom" for group in page.groups)
-
-    def test_uses_project_root_for_classroom_detection(
-        self, tmp_path, monkeypatch
-    ) -> None:
-        from cass.viewer.page import ViewerPage
-
-        (tmp_path / "cass.toml").write_text(
-            "[classroom]\n"
-            'url = "https://classroom.github.com/classrooms/42-course"\n'
-            "url_id = 42\n"
-            "gh_id = 4200\n"
-            'org = "test-org"\n\n'
-            "[canvas]\n"
-            'base_url = "https://canvas.example.com"\n'
-            "course_id = 1\n"
-        )
-        cfg = Config(
-            root=tmp_path,
-            canvas_base_url="https://other.edu",
-            canvas_course_id=2,
-        )
-        monkeypatch.setattr("cass.db.core.get_config", lambda: cfg)
-        ui_conn = _make_ui_conn_with_gh_data()
-
-        page = ViewerPage.__new__(ViewerPage)
-        page._init_state(ui_conn, project_root=tmp_path)
-
-        assert page.has_classroom is True
-        assert any(group["label"] == "GitHub Classroom" for group in page.groups)
-
-    def test_gh_empty_state_without_classroom_config(
-        self, ui_conn_with_gh_data: sqlite_utils.Database, monkeypatch
-    ) -> None:
-        from cass.viewer.page import ViewerPage
-
-        monkeypatch.setattr(
-            "cass.viewer.page.ViewerPage._has_classroom_config",
-            lambda self: False,
-        )
-        monkeypatch.setattr(
-            "cass.viewer.page.ViewerPage._has_classroom_url_config",
-            lambda self: False,
-        )
-        page = ViewerPage.__new__(ViewerPage)
-        page._init_state(ui_conn_with_gh_data)
-
-        assert (
-            page._empty_state_message("gh_gradebook", is_gradebook=False)
-            == "No GitHub Classroom data is available. Add a [classroom] "
-            "section to cass.toml and run cass pull."
-        )
-
-    def test_gh_empty_state_with_classroom_config(self, tmp_path, monkeypatch) -> None:
-        from cass.viewer.page import ViewerPage
-
-        (tmp_path / "cass.toml").write_text(
-            "[classroom]\n"
-            'url = "https://classroom.github.com/classrooms/42-course"\n'
-            "url_id = 42\n"
-            "gh_id = 4200\n"
-            'org = "test-org"\n\n'
-            "[canvas]\n"
-            'base_url = "https://canvas.example.com"\n'
-            "course_id = 1\n"
-        )
-        cfg = Config(
-            root=tmp_path,
-            canvas_base_url="https://other.edu",
-            canvas_course_id=2,
-        )
-        monkeypatch.setattr("cass.db.core.get_config", lambda: cfg)
-
-        page = ViewerPage.__new__(ViewerPage)
-        page._init_state(_make_ui_conn_with_gh_data(), project_root=tmp_path)
-
-        assert (
-            page._empty_state_message("gh_submissions", is_gradebook=False)
-            == "No GitHub Classroom rows are available yet. Run cass pull to "
-            "load the latest roster, assignments, and submissions."
-        )
-
-    def test_gh_empty_state_with_partial_classroom_config(
-        self, tmp_path, monkeypatch
-    ) -> None:
-        from cass.viewer.page import ViewerPage
-
-        (tmp_path / "cass.toml").write_text(
-            "[classroom]\n"
-            'url = "https://classroom.github.com/classrooms/42-course"\n'
-            "url_id = 42\n"
-            "gh_id = 0\n"
-            'org = ""\n\n'
-            '[canvas]\nbase_url = "https://canvas.example.com"\n'
-            "course_id = 1\n"
-        )
-        cfg = Config(
-            root=tmp_path,
-            classroom_url="https://classroom.github.com/classrooms/42-course",
-            classroom_url_id=42,
-            org="",
-            canvas_base_url="https://other.edu",
-            canvas_course_id=2,
-        )
-        monkeypatch.setattr("cass.db.core.get_config", lambda: cfg)
-
-        page = ViewerPage.__new__(ViewerPage)
-        page._init_state(_make_ui_conn_with_gh_data(), project_root=tmp_path)
-
-        assert (
-            page._empty_state_message("gh_gradebook", is_gradebook=False)
-            == "GitHub Classroom URL is saved, but the gh-classroom ID is "
-            "still unresolved. Run cass init after fixing gh auth or "
-            "Classroom access, then run cass pull."
-        )
+        assert [g["label"] for g in page.groups] == ["Canvas LMS"]
+        assert not hasattr(page, "has_classroom")
 
 
 class TestViewerPageMethods:

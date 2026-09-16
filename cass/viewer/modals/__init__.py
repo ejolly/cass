@@ -6,12 +6,10 @@ __docformat__ = "google"
 
 from .create_assignment import CreateAssignmentModal
 from .delete_assignment import DeleteAssignmentModal
-from .pull_gh import PullGHModal
 from .push import PushModal
 
 __all__ = [
     "CreateAssignmentModal",
     "DeleteAssignmentModal",
-    "PullGHModal",
     "PushModal",
 ]

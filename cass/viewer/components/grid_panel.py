@@ -15,7 +15,6 @@ from ..grid import (
     attach_edit_handler,
     attach_gradebook_edit_handler,
     build_column_defs,
-    build_gh_gradebook_view,
     build_gradebook_view,
     get_table_rows,
     restore_pending_cells,
@@ -50,14 +49,10 @@ class GridPanel:
         """Build an AG Grid inside *container* for the given table."""
         editable_flag = is_editable(conn, table_name)
         is_canvas_gb = table_name == "canvas_grades"
-        is_gh_gb = table_name == "gh_gradebook"
 
         if is_canvas_gb:
             row_data, col_defs = build_gradebook_view(conn)
             pk_cols: list[str] = []
-        elif is_gh_gb:
-            row_data, col_defs = build_gh_gradebook_view(conn)
-            pk_cols = []
         else:
             row_data = get_table_rows(conn, table_name)
             col_defs = build_column_defs(conn, table_name)
@@ -79,10 +74,6 @@ class GridPanel:
         if is_canvas_gb:
             grid_options[":getRowId"] = (
                 "(params) => String(params.data._canvas_user_id)"
-            )
-        elif is_gh_gb:
-            grid_options[":getRowId"] = (
-                "(params) => String(params.data._github_username)"
             )
         else:
             grid_options[":getRowId"] = f"(params) => {row_id_js(pk_cols)}"

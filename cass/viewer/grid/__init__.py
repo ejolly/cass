@@ -6,7 +6,6 @@ __docformat__ = "google"
 
 from .columns import (
     build_column_defs,
-    build_gh_gradebook_view,
     build_gradebook_view,
     get_display_columns,
     get_table_rows,
@@ -44,7 +43,6 @@ __all__ = [
     "attach_edit_handler",
     "attach_gradebook_edit_handler",
     "build_column_defs",
-    "build_gh_gradebook_view",
     "build_gradebook_view",
     "clear_pending_cells",
     "export_csv",

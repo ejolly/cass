@@ -24,7 +24,6 @@ from cass.db import (
 from cass.viewer.actions import pending_count, track_change
 from cass.viewer.grid import (
     build_column_defs,
-    build_gh_gradebook_view,
     build_gradebook_view,
     get_table_rows,
 )
@@ -399,55 +398,6 @@ class TestGradebookView:
         # Should have grouped columns (assignment_group headers)
         group_headers = [d for d in col_defs if "children" in d]
         assert len(group_headers) >= 1
-
-    def test_gh_gradebook_builds(self, real_db):
-        row_data, col_defs = build_gh_gradebook_view(real_db)
-        assert len(row_data) > 0
-        assert len(col_defs) > 1
-
-    def test_gh_gradebook_excludes_hidden(self, real_db):
-        row_data, _ = build_gh_gradebook_view(real_db)
-        usernames = {r["_github_username"] for r in row_data}
-        excluded_usernames = {
-            row[0]
-            for row in real_db.execute(
-                "SELECT github_username FROM gh_students WHERE excluded = 1"
-            ).fetchall()
-        }
-        assert usernames.isdisjoint(excluded_usernames)
-
-    def test_gh_gradebook_cells_format(self, real_db):
-        row_data, _ = build_gh_gradebook_view(real_db)
-        # Cells should be "X/Y" (with deadline), plain number (no deadline), or empty
-        for row in row_data:
-            for key, val in row.items():
-                is_grade_cell = (
-                    key.startswith("_a")
-                    and key != "_github_username"
-                    and key != "_student_name"
-                )
-                if is_grade_cell and val:
-                    if "/" in val:
-                        parts = val.split("/")
-                        assert len(parts) == 2, f"Bad cell format: {val}"
-                        assert parts[0].lstrip("-").isdigit()
-                        assert parts[1].lstrip("-").isdigit()
-                    else:
-                        assert val.isdigit(), f"Bad cell format: {val}"
-
-    def test_gh_gradebook_includes_unmatched(self, real_db):
-        """Students in submissions but not in gh_students should appear."""
-        row_data, _ = build_gh_gradebook_view(real_db)
-        usernames = {r["_github_username"] for r in row_data}
-        gh_only = {
-            row[0]
-            for row in real_db.execute(
-                "SELECT gs.github_username FROM gh_students gs "
-                "LEFT JOIN students s ON gs.github_username = s.github_username "
-                "WHERE gs.excluded = 0 AND s.github_username IS NULL"
-            ).fetchall()
-        }
-        assert usernames & gh_only
 
 
 # ---------------------------------------------------------------------------

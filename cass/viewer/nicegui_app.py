@@ -36,13 +36,9 @@ def _detect_state() -> str:
     if cfg_path is None:
         return "setup"
 
-    # Config exists — check database
     from ..actions.config import get_config
 
-    cfg = get_config()
-    if getattr(cfg, "classroom_needs_resolution", False):
-        return "setup"
-    db_file = cfg.root / DB_FILENAME
+    db_file = get_config().root / DB_FILENAME
     if not db_file.exists():
         return "pull"
 

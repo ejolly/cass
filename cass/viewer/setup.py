@@ -8,64 +8,14 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
-from msgspec import Struct
 from nicegui import ui
 
-from ..actions.config import parse_canvas_course_url, parse_classroom_url
+from ..actions.config import parse_canvas_course_url
 from .styles import load_styles
 
 
-class ViewerClassroomSetupResult(Struct):
-    classroom_url: str = ""
-    classroom_url_id: int = 0
-    classroom_gh_id: int = 0
-    classroom_slug: str = ""
-    classroom_title: str = ""
-    org: str = ""
-    warning: str = ""
-
-
-async def resolve_viewer_classroom_setup(
-    classroom_url: str,
-) -> ViewerClassroomSetupResult:
-    """Resolve GitHub Classroom setup fields for the viewer wizard."""
-    gh_url = classroom_url.strip()
-    if not gh_url:
-        return ViewerClassroomSetupResult()
-
-    gh_url_id = parse_classroom_url(gh_url) or 0
-    if not gh_url_id:
-        raise ValueError(
-            "Invalid GitHub Classroom URL. Expected format: "
-            "https://classroom.github.com/classrooms/123456-course-name"
-        )
-
-    from ..apis.github.service import resolve_classroom_direct_async
-
-    result = await resolve_classroom_direct_async(gh_url)
-
-    if result.resolved is not None:
-        return ViewerClassroomSetupResult(
-            classroom_url=result.resolved.url,
-            classroom_url_id=result.resolved.url_id,
-            classroom_gh_id=result.resolved.gh_id,
-            classroom_slug=result.resolved.slug,
-            classroom_title=result.resolved.title,
-            org=result.resolved.org,
-        )
-
-    warning = result.error_detail
-    if result.recovery_hint:
-        warning = f"{warning} {result.recovery_hint}"
-    return ViewerClassroomSetupResult(
-        classroom_url=gh_url,
-        classroom_url_id=gh_url_id,
-        warning=warning,
-    )
-
-
 def setup_wizard_page(on_complete: Any) -> None:
-    """Render the first-time setup form. Canvas is required, GitHub optional.
+    """Render the first-time setup form for Canvas.
 
     Args:
         on_complete: Callback invoked (no args) after config is written and
@@ -75,10 +25,9 @@ def setup_wizard_page(on_complete: Any) -> None:
     load_styles()
     with ui.column().classes("v-setup-container"):
         ui.label("Welcome to cass").classes("v-setup-title")
-        ui.label(
-            "Connect Canvas, optionally add GitHub Classroom, "
-            "then pull your course data."
-        ).classes("v-setup-subtitle")
+        ui.label("Connect Canvas, then pull your course data.").classes(
+            "v-setup-subtitle"
+        )
 
         # --- Canvas (required) ---
         with ui.card().classes("w-full v-setup-card"):
@@ -94,20 +43,6 @@ def setup_wizard_page(on_complete: Any) -> None:
                 label="API Token",
                 password=True,
                 password_toggle_button=True,
-            ).classes("w-full")
-
-        # --- GitHub Classroom (optional) ---
-        with ui.expansion(
-            "GitHub Classroom",
-            caption="Optional",
-            icon="school",
-        ).classes("w-full v-setup-expansion"):
-            ui.label(
-                "Paste the classroom URL to enable GitHub pulls, or leave it blank."
-            ).classes("v-setup-card-subtitle")
-            gh_classroom_url = ui.input(
-                label="Classroom URL",
-                placeholder="https://classroom.github.com/classrooms/123456-course-name",
             ).classes("w-full")
 
         # --- Project directory ---
@@ -145,45 +80,12 @@ def setup_wizard_page(on_complete: Any) -> None:
                 status_label.classes(replace="text-sm v-text-error")
                 return
 
-            # Optional GitHub fields
-            gh_url_raw = gh_classroom_url.value or ""
-            gh_classroom_result = ViewerClassroomSetupResult()
-            if gh_url_raw.strip():
-                try:
-                    gh_classroom_result = await resolve_viewer_classroom_setup(
-                        gh_url_raw,
-                    )
-                except ValueError as exc:
-                    status_label.text = str(exc)
-                    status_label.classes(replace="text-sm v-text-error")
-                    return
-
             # Write config
             from ..actions.config import reset_config, update_config
 
             toml_path = cwd / "cass.toml"
             update_config(
                 toml_path,
-                classroom_url=gh_classroom_result.classroom_url or None,
-                classroom_url_id=gh_classroom_result.classroom_url_id or None,
-                classroom_gh_id=(
-                    gh_classroom_result.classroom_gh_id
-                    if gh_classroom_result.classroom_url
-                    else None
-                ),
-                classroom_slug=(
-                    gh_classroom_result.classroom_slug
-                    if gh_classroom_result.classroom_url
-                    else None
-                ),
-                classroom_title=(
-                    gh_classroom_result.classroom_title
-                    if gh_classroom_result.classroom_url
-                    else None
-                ),
-                org=gh_classroom_result.org
-                if gh_classroom_result.classroom_url
-                else None,
                 canvas_base_url=url,
                 canvas_course_id=cid,
             )
@@ -193,15 +95,6 @@ def setup_wizard_page(on_complete: Any) -> None:
             from ..apis.canvas.client import save_token
 
             save_token(token)
-
-            if gh_classroom_result.warning:
-                status_label.text = (
-                    "Configuration saved. GitHub Classroom URL was saved, but the "
-                    "gh-classroom ID is still unresolved. "
-                    f"{gh_classroom_result.warning}"
-                )
-                status_label.classes(replace="text-sm v-text-warning")
-                return
 
             status_label.text = "Configuration saved. Starting data pull..."
             status_label.classes(replace="text-sm v-text-success")

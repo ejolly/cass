@@ -14,8 +14,6 @@ from typing import Any
 DEV_TABLES = {
     "_canvas_assignments_synced",
     "_canvas_grades_synced",
-    "students",
-    "assignments",
 }
 
 # Column display config: hide internal IDs, reorder for readability
@@ -24,14 +22,6 @@ HIDDEN_COLUMNS: dict[str, list[str]] = {
     "canvas_students": ["canvas_id"],
     "canvas_submissions": ["canvas_user_id", "canvas_assignment_id", "due_at", "late"],
     "canvas_grades": ["canvas_user_id", "canvas_assignment_id"],
-    "gh_assignments": ["gh_id", "slug", "starter_code_repo", "submittable_files"],
-    "gh_students": ["github_id"],
-    "gh_submissions": [
-        "github_username",
-        "assignment_slug",
-        "last_commit_sha",
-        "commit_url",
-    ],
 }
 
 COLUMN_ORDERING: dict[str, list[str]] = {
@@ -62,28 +52,6 @@ COLUMN_ORDERING: dict[str, list[str]] = {
         "posted_grade",
         "updated_at",
     ],
-    "gh_students": [
-        "excluded",
-        "student",
-        "github_username",
-        "email",
-    ],
-    "gh_assignments": [
-        "title",
-        "points_possible",
-        "deadline",
-        "accepted",
-        "submissions_count",
-        "passing_count",
-    ],
-    "gh_submissions": [
-        "last_commit_at",
-        "student",
-        "assignment_name",
-        "commit_count",
-        "repo_url",
-        "late",
-    ],
 }
 
 # Human-friendly column header names
@@ -108,28 +76,6 @@ COLUMN_DISPLAY_NAMES: dict[str, dict[str, str]] = {
         "score": "Score",
         "workflow_state": "State",
     },
-    "gh_students": {
-        "excluded": "Hide",
-        "student": "Student",
-        "github_username": "GitHub Username",
-        "email": "Email",
-    },
-    "gh_assignments": {
-        "title": "Name",
-        "points_possible": "Points",
-        "deadline": "Deadline",
-        "accepted": "Accepted",
-        "submissions_count": "Submissions",
-        "passing_count": "Passing",
-    },
-    "gh_submissions": {
-        "last_commit_at": "Last Commit",
-        "student": "Student",
-        "assignment_name": "Assignment",
-        "commit_count": "Commits",
-        "repo_url": "Repo",
-        "late": "Late",
-    },
 }
 
 # Type aliases for pending changes
@@ -148,11 +94,6 @@ _DISPLAY_NAMES: dict[str, str] = {
     "canvas_assignments": "Assignments",
     "canvas_submissions": "Submissions",
     "canvas_grades": "Gradebook",
-    "gh_students": "Roster",
-    "gh_assignments": "Assignments",
-    "gh_submissions": "Recent Commits",
-    "students": "Students",
-    "assignments": "Assignments",
 }
 
 # Desired display order within each group
@@ -162,7 +103,6 @@ _GROUP_ORDER: dict[str, list[str]] = {
         "canvas_assignments",
         "canvas_submissions",
     ],
-    "github": ["gh_submissions", "gh_students", "gh_assignments"],
 }
 
 
@@ -173,11 +113,7 @@ def display_name(table: str) -> str:
 
 def classify_table(name: str) -> str:
     """Classify a table into a sidebar group."""
-    if name.startswith("canvas_"):
-        return "canvas"
-    if name.startswith("gh_"):
-        return "github"
-    return "other"
+    return "canvas" if name.startswith("canvas_") else "other"
 
 
 def _sort_group(items: list[dict[str, str]], order: list[str]) -> list[dict[str, str]]:
@@ -186,39 +122,14 @@ def _sort_group(items: list[dict[str, str]], order: list[str]) -> list[dict[str,
     return sorted(items, key=lambda t: rank.get(t["name"], 999))
 
 
-def group_tables(
-    tables: list[dict[str, str]],
-    *,
-    has_classroom: bool | None = None,
-) -> list[dict[str, Any]]:
-    """Group tables into sidebar sections.
-
-    GitHub tables are shown whenever they exist in the schema. Classroom
-    configuration only controls GitHub-specific actions such as pulling repos.
-    """
-    if has_classroom is None:
-        from ..actions.config import get_config
-
-        try:
-            has_classroom = get_config().has_classroom
-        except SystemExit:
-            has_classroom = False
-
+def group_tables(tables: list[dict[str, str]]) -> list[dict[str, Any]]:
+    """Group tables into sidebar sections."""
     canvas = [t for t in tables if classify_table(t["name"]) == "canvas"]
-    groups: list[dict[str, Any]] = []
-    if canvas:
-        groups.append(
-            {
-                "label": "Canvas LMS",
-                "items": _sort_group(canvas, _GROUP_ORDER["canvas"]),
-            }
-        )
-    github = [t for t in tables if classify_table(t["name"]) == "github"]
-    if github:
-        groups.append(
-            {
-                "label": "GitHub Classroom",
-                "items": _sort_group(github, _GROUP_ORDER["github"]),
-            }
-        )
-    return groups
+    if not canvas:
+        return []
+    return [
+        {
+            "label": "Canvas LMS",
+            "items": _sort_group(canvas, _GROUP_ORDER["canvas"]),
+        }
+    ]

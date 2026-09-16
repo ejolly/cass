@@ -193,7 +193,7 @@ class TestSidebarNavigation:
     async def test_grouped(self, user: User, ui_conn: sqlite_utils.Database) -> None:
         """Tables are grouped by prefix in the sidebar."""
         tables = get_tables(ui_conn)
-        groups = group_tables(tables, has_classroom=True)
+        groups = group_tables(tables)
 
         @ui.page("/test-groups")
         def page() -> None:
@@ -790,8 +790,6 @@ class TestGridUtils:
         """DEV_TABLES config correctly identifies internal tables."""
         assert "_canvas_assignments_synced" in DEV_TABLES
         assert "_canvas_grades_synced" in DEV_TABLES
-        assert "students" in DEV_TABLES
-        assert "assignments" in DEV_TABLES
         # Regular tables should NOT be dev tables
         assert "canvas_assignments" not in DEV_TABLES
         assert "canvas_grades" not in DEV_TABLES

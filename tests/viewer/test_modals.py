@@ -142,16 +142,10 @@ class TestModalImports:
 
         assert DeleteAssignmentModal is not None
 
-    def test_pull_gh_modal_importable(self):
-        from cass.viewer.modals.pull_gh import PullGHModal
-
-        assert PullGHModal is not None
-
     def test_package_reexports(self):
         from cass.viewer.modals import (
             CreateAssignmentModal,
             DeleteAssignmentModal,
-            PullGHModal,
             PushModal,
         )
 
@@ -161,7 +155,6 @@ class TestModalImports:
                 PushModal,
                 CreateAssignmentModal,
                 DeleteAssignmentModal,
-                PullGHModal,
             ]
         )
 
@@ -181,11 +174,6 @@ class TestModalInterface:
         from cass.viewer.modals.delete_assignment import DeleteAssignmentModal
 
         assert callable(getattr(DeleteAssignmentModal, "open", None))
-
-    def test_pull_gh_modal_has_open(self):
-        from cass.viewer.modals.pull_gh import PullGHModal
-
-        assert callable(getattr(PullGHModal, "open", None))
 
 
 class TestModalRendering:
@@ -261,83 +249,3 @@ class TestModalRendering:
         await user.should_see("Assignment")
         await user.should_see("Cancel")
         await user.should_see("Delete")
-
-    async def test_pull_gh_title(
-        self,
-        user: User,
-        ui_conn: sqlite_utils.Database,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        from cass import db
-        from cass.apis.github import fetch as fetch_mod
-        from cass.viewer.modals.pull_gh import PullGHModal
-
-        monkeypatch.setattr(db, "load_assignments", lambda *_a, **_kw: [])
-        monkeypatch.setattr(db, "load_students", lambda *_a, **_kw: [])
-        monkeypatch.setattr(fetch_mod, "get_sortable_names", dict)
-
-        @ui.page("/test-pull-modal")
-        def page() -> None:
-            vp = _make_page(ui_conn)
-            modal = PullGHModal(vp)
-            modal.open()
-
-        await user.open("/test-pull-modal")
-        await user.should_see("Pull GH Repos")
-
-
-class TestPullGHModalBehavior:
-    def test_remove_uses_configured_project_root(self, tmp_path, monkeypatch) -> None:
-        from cass.viewer.modals.pull_gh import PullGHModal
-
-        logs: list[str] = []
-
-        class DummyContainer:
-            def clear(self) -> None:
-                return None
-
-            def set_visibility(self, _visible: bool) -> None:
-                return None
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *_args) -> None:
-                return None
-
-        modal = PullGHModal.__new__(PullGHModal)
-        modal._state = {"running": False}
-        modal._action_row = DummyContainer()
-        modal._log_area = DummyContainer()
-
-        def fake_append_log(msg: str) -> None:
-            logs.append(msg)
-
-        def fake_show_close_button() -> None:
-            return None
-
-        monkeypatch.setattr(modal, "_append_log", fake_append_log)
-        monkeypatch.setattr(modal, "_show_close_button", fake_show_close_button)
-        monkeypatch.setattr(
-            "cass.viewer.modals.pull_gh.ui.button",
-            lambda *_args, **_kwargs: type(
-                "DummyButton",
-                (),
-                {"props": lambda self, _value: self},
-            )(),
-        )
-
-        monkeypatch.setattr(
-            "cass.actions.config.get_config",
-            lambda: type("Cfg", (), {"root": tmp_path, "has_classroom": True})(),
-        )
-
-        gh_dir = tmp_path / "gh-classroom"
-        (gh_dir / "alice" / "hw-01").mkdir(parents=True)
-
-        import asyncio
-
-        asyncio.run(modal._run_remove())
-
-        assert logs[-1] == "Removed 1 folder(s) from gh-classroom/."
-        assert list(gh_dir.iterdir()) == []

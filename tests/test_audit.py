@@ -502,7 +502,9 @@ class TestBuildColumnDefs:
         assert "Homework" in params.get("values", [])
 
     def test_readonly_table_no_editors(self, col_db):
-        defs = build_column_defs(col_db, "gh_assignments")
+        # canvas_submissions is created empty by init_schema (via the db_conn
+        # fixture) and is read-only per TABLE_CAPABILITIES.
+        defs = build_column_defs(col_db, "canvas_submissions")
         for col_def in defs:
             assert col_def.get("editable") is not True
 

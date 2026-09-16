@@ -11,7 +11,6 @@ from nicegui import ui
 from ...db import revert_changes
 from ..config import PendingChanges, display_name
 from .columns import (
-    build_gh_gradebook_view,
     build_gradebook_view,
     get_table_rows,
 )
@@ -154,8 +153,6 @@ def reload_current_grid(
     if grid is not None:
         if table_name == "canvas_grades":
             new_rows, _col_defs = build_gradebook_view(conn)
-        elif table_name == "gh_gradebook":
-            new_rows, _col_defs = build_gh_gradebook_view(conn)
         else:
             new_rows = get_table_rows(conn, table_name)
         grid.options["rowData"] = new_rows  # pyright: ignore[reportUnknownMemberType]
