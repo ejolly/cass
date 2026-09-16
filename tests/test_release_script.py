@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -39,3 +40,33 @@ def test_parse_args_rejects_unknown_argument():
     release = _load()
     with pytest.raises(SystemExit):
         release.parse_args(["--yolo"])
+
+
+def test_restore_release_files_resets_index_and_worktree(tmp_path):
+    release = _load()
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "t@example.com"], cwd=tmp_path, check=True
+    )
+    subprocess.run(["git", "config", "user.name", "t"], cwd=tmp_path, check=True)
+    for name in release.RELEASE_FILES:
+        (tmp_path / name).write_text("original\n")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=tmp_path, check=True)
+    for name in release.RELEASE_FILES:
+        (tmp_path / name).write_text("bumped\n")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+
+    release.restore_release_files(tmp_path)
+
+    status = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert status == ""
+    assert all(
+        (tmp_path / name).read_text() == "original\n" for name in release.RELEASE_FILES
+    )

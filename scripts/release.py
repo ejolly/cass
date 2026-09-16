@@ -54,6 +54,11 @@ def run(cmd: list[str]) -> str:
     return result.stdout.strip()
 
 
+def restore_release_files(root: Path) -> None:
+    """Reset the release files in both index and worktree to HEAD after a failed release commit."""
+    subprocess.run(["git", "checkout", "HEAD", "--", *RELEASE_FILES], cwd=root, check=False)
+
+
 def parse_args(argv: list[str]) -> tuple[str | None, bool]:
     """Return (target, dry_run). target is None, a bump level, or an X.Y.Z version."""
     target: str | None = None
@@ -137,11 +142,11 @@ def main() -> None:
         run(["git", "cliff", "--tag", tag, "-o", "CHANGELOG.md"])
         run(["git", "add", *RELEASE_FILES])
         run(["git", "commit", "-m", f"chore(release): {tag}"])
+        run(["git", "tag", "-a", tag, "-m", f"cassroom {version}"])
     except SystemExit:
-        subprocess.run(["git", "checkout", "--", *RELEASE_FILES], cwd=PROJECT_ROOT)
+        restore_release_files(PROJECT_ROOT)
         console.print(f"  Restored {', '.join(RELEASE_FILES)} to HEAD.")
         raise
-    run(["git", "tag", "-a", tag, "-m", f"cassroom {version}"])
     console.print(f"  Committed and tagged [bold]{tag}[/]")
 
     if confirm("Push main and the tag to origin? This publishes to PyPI."):
