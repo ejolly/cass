@@ -34,7 +34,7 @@ symbex '*Client*' -s -d cass/  # find classes/functions matching pattern
 
 - File header: `from __future__ import annotations` → `__docformat__ = "google"` → imports
 - `msgspec.Struct` for API response types; `dataclass` for internal service types
-- API types: `GH`/`Canvas`-prefixed. Domain types: unprefixed
+- API types: `Canvas`-prefixed. Domain types: unprefixed
 - Error handling: `SystemExit` (config), `RuntimeError` (API/logic), `typer.Exit(code=1)` (CLI), `typer.Abort()` (user cancel)
 - basedpyright strict — suppress with `# pyright: ignore[ruleCode]` (NOT `# type: ignore`)
 - Lazy imports inside CLI command functions (keeps `cass --help` fast)
