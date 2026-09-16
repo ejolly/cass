@@ -45,8 +45,13 @@ def _sample_canvas_assignment_id(real_db) -> int:
 class TestSchema:
     def test_all_tables_present(self, real_db):
         tables = {t["name"] for t in get_tables(real_db)}
-        # Viewer excludes meta, canvas_students, and shadow tables
-        expected = {"canvas_assignments", "canvas_submissions", "canvas_grades"}
+        # Viewer excludes meta and shadow tables
+        expected = {
+            "canvas_students",
+            "canvas_assignments",
+            "canvas_submissions",
+            "canvas_grades",
+        }
         assert expected <= tables
 
     def test_excluded_tables_hidden(self, real_db):
@@ -54,7 +59,6 @@ class TestSchema:
         assert "_canvas_assignments_synced" not in tables
         assert "_canvas_grades_synced" not in tables
         assert "meta" not in tables
-        assert "canvas_students" not in tables
 
     def test_schema_version(self, real_db):
         version = db.get_meta("schema_version", real_db)
@@ -132,9 +136,9 @@ class TestGridIntrospection:
         tables = get_tables(real_db)
         names = {t["name"] for t in tables}
         assert "canvas_assignments" in names
+        assert "canvas_students" in names
         # Excluded tables should not appear
         assert "_canvas_assignments_synced" not in names
-        assert "canvas_students" not in names
         assert "meta" not in names
 
     def test_primary_keys(self, real_db):

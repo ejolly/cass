@@ -120,7 +120,7 @@ cass query students        # roster
 cass query assignments     # assignment metadata
 cass query submissions     # submissions dataset
 cass query gradebook       # student x assignment matrix
-cass query --sql "select count(*) from students"
+cass query --sql "select count(*) from canvas_students"
 cass backup                # timestamped snapshot → backups/
 cass backup --tag "pre-regrade"
 cass restore backups/cass_2026-03-05.db

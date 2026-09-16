@@ -100,6 +100,7 @@ _DISPLAY_NAMES: dict[str, str] = {
 _GROUP_ORDER: dict[str, list[str]] = {
     "canvas": [
         "canvas_grades",
+        "canvas_students",
         "canvas_assignments",
         "canvas_submissions",
     ],

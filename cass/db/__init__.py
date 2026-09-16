@@ -23,7 +23,6 @@ from .catalog import (
 from .core import (
     DB_FILENAME,
     EXCLUDED_TABLES,
-    READ_ONLY_TABLES,
     connect_db,
     db_path,
     editable_canvas_tables,
@@ -98,7 +97,6 @@ __all__ = [
     "IMPORT_SIGNATURES",
     "PULL_GUARDED_TABLES",
     "QUERY_DATASETS",
-    "READ_ONLY_TABLES",
     "TABLE_CAPABILITIES",
     "TABLE_QUERY_DATASETS",
     "CanvasAssignment",

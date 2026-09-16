@@ -36,7 +36,7 @@ symbex '*Client*' -s -d cass/  # find classes/functions matching pattern
 - `msgspec.Struct` for API response types; `dataclass` for internal service types
 - API types: `Canvas`-prefixed. Domain types: unprefixed
 - Error handling: `SystemExit` (config), `RuntimeError` (API/logic), `typer.Exit(code=1)` (CLI), `typer.Abort()` (user cancel)
-- basedpyright strict — suppress with `# pyright: ignore[ruleCode]` (NOT `# type: ignore`)
+- Type checking gate is `ty check` (via `poe lint`) — suppress with `# ty: ignore[rule]`. Existing `# pyright: ignore[ruleCode]` comments serve basedpyright in the editor; keep them, never use `# type: ignore`
 - Lazy imports inside CLI command functions (keeps `cass --help` fast)
 - `TYPE_CHECKING` guard for type-only imports in CLI modules
 

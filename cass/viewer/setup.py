@@ -126,7 +126,7 @@ def pull_progress_page(on_complete: Any) -> None:
         step_labels: dict[str, ui.label] = {}
         error_label = ui.label("").classes("text-sm v-text-error")
 
-        STEP_ORDER = ["students", "assignments", "submissions", "grades"]
+        STEP_ORDER = ["students", "assignments", "submissions"]
 
         with steps_container:
             for step in STEP_ORDER:
@@ -136,11 +136,11 @@ def pull_progress_page(on_complete: Any) -> None:
         progress = ui.linear_progress(value=0, show_value=False).classes("w-full mt-4")
 
         def on_progress(step: str, detail: str) -> None:
-            if step in step_labels:
-                step_labels[step].text = f"  {step}: {detail}"
-                step_labels[step].classes(replace="text-sm font-mono opacity-90")
-            idx = STEP_ORDER.index(step) if step in STEP_ORDER else 0
-            progress.value = (idx + 0.5) / len(STEP_ORDER)
+            if step not in step_labels:
+                return
+            step_labels[step].text = f"  {step}: {detail}"
+            step_labels[step].classes(replace="text-sm font-mono opacity-90")
+            progress.value = (STEP_ORDER.index(step) + 0.5) / len(STEP_ORDER)
 
         async def run_pull() -> None:
             try:

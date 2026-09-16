@@ -87,6 +87,15 @@ Install: `uv tool install cass` or `uvx cass`.
 | `cass canvas tabs` | List course navigation tabs |
 | `cass canvas show-tab` | Make a navigation tab visible |
 | `cass canvas hide-tab` | Hide a navigation tab |
+
+### Calendar (`cass canvas calendar`)
+
+| Command | Description |
+|---------|-------------|
+| `cass canvas calendar` | List course calendar events |
+| `cass canvas calendar create` | Create a calendar event |
+| `cass canvas calendar update` | Update a calendar event |
+| `cass canvas calendar delete` | Delete a calendar event |
 """
 
 __version__ = "0.2.0"

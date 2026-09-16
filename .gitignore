@@ -25,3 +25,6 @@ tests/testdb/
 dist/
 .env.*
 !.env.example
+*wal
+*shm
+.superpowers/

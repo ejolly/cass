@@ -4,6 +4,8 @@ Searches for ``cass.toml`` starting from the current directory and walking
 upward.  Config is loaded lazily on first access via ``get_config()``.
 """
 
+from __future__ import annotations
+
 __docformat__ = "google"
 
 import re

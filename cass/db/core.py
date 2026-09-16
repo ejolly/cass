@@ -33,13 +33,9 @@ _SAFE_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 # Tables excluded from the viewer entirely
 EXCLUDED_TABLES = {
     "meta",
-    "canvas_students",
     "_canvas_assignments_synced",
     "_canvas_grades_synced",
 }
-
-# Tables shown in the viewer but not editable
-READ_ONLY_TABLES = {"canvas_submissions"}
 
 _db: sqlite_utils.Database | None = None
 _db_path: str | None = None

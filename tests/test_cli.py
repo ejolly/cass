@@ -239,6 +239,26 @@ class TestRevert:
         assert row[0] == old_name
 
 
+class TestRestore:
+    def test_restore_summary_counts_canvas_tables(self, project_dir, monkeypatch):
+        monkeypatch.chdir(project_dir)
+        backup = project_dir / "backup.db"
+        bdb = sqlite_utils.Database(str(backup))
+        db.init_schema(bdb)
+        bdb["canvas_students"].insert_all(
+            [
+                {"canvas_id": 1, "name": "Alice"},
+                {"canvas_id": 2, "name": "Bob"},
+            ]
+        )
+        bdb["canvas_assignments"].insert({"canvas_id": 10, "name": "HW 01"})
+        bdb.conn.close()
+
+        result = runner.invoke(app, ["restore", str(backup)], input="n\n")
+
+        assert "Students: 2, Assignments: 1" in result.stdout
+
+
 class TestQuery:
     def test_query_known_dataset_delegates_rows(self, project_db, monkeypatch):
         mock = MagicMock(return_value="students table\n")
@@ -264,7 +284,9 @@ class TestQuery:
         mock = MagicMock(return_value="count\n")
         monkeypatch.setattr("cass.cli.render_query", mock)
 
-        result = runner.invoke(app, ["query", "--sql", "select count(*) from students"])
+        result = runner.invoke(
+            app, ["query", "--sql", "select count(*) from canvas_students"]
+        )
         assert result.exit_code == 0
         assert "count" in result.stdout
         mock.assert_called_once()

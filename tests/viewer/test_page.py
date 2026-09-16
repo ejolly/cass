@@ -239,6 +239,20 @@ class TestViewerPageInit:
         assert [g["label"] for g in page.groups] == ["Canvas LMS"]
         assert not hasattr(page, "has_classroom")
 
+    def test_roster_listed_in_canvas_group(self, ui_conn: sqlite_utils.Database):
+        from cass.viewer.page import ViewerPage
+
+        page = ViewerPage.__new__(ViewerPage)
+        page._init_state(ui_conn)
+
+        names = [t["name"] for t in page.groups[0]["items"]]
+        assert names == [
+            "canvas_grades",
+            "canvas_students",
+            "canvas_assignments",
+            "canvas_submissions",
+        ]
+
 
 class TestViewerPageMethods:
     """ViewerPage has update_pending_display and load_table as methods."""

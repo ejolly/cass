@@ -707,7 +707,7 @@ def restore(
         ).fetchone()
         version = int(row[0]) if row else 0
         counts: dict[str, int] = {}
-        for table in ("students", "assignments"):
+        for table in ("canvas_students", "canvas_assignments"):
             try:
                 counts[table] = backup_db[table].count
             except Exception:
@@ -720,7 +720,8 @@ def restore(
     console.print(f"  Backup: [bold]{src.name}[/bold] ({src_kb:.0f} KB)")
     console.print(f"  Schema version: {version}")
     console.print(
-        f"  Students: {counts['students']}, Assignments: {counts['assignments']}"
+        f"  Students: {counts['canvas_students']}, "
+        f"Assignments: {counts['canvas_assignments']}"
     )
 
     target = db.db_path()

@@ -1,5 +1,7 @@
 """Prerequisite checks for cass setup (``cass init`` doctor)."""
 
+from __future__ import annotations
+
 __docformat__ = "google"
 
 

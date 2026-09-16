@@ -18,7 +18,7 @@ def viewer_conn():
     """In-memory SQLite with test tables (including one without a PK)."""
     conn = sqlite_utils.Database(memory=True)
     conn.execute(
-        "CREATE TABLE students ("
+        "CREATE TABLE widgets ("
         "  canvas_id INTEGER PRIMARY KEY,"
         "  name TEXT NOT NULL,"
         "  email TEXT,"
@@ -26,7 +26,7 @@ def viewer_conn():
         ")"
     )
     conn.execute(
-        "CREATE TABLE assignments ("
+        "CREATE TABLE gadgets ("
         "  slug TEXT PRIMARY KEY,"
         "  title TEXT,"
         "  points_possible DOUBLE"
@@ -35,10 +35,10 @@ def viewer_conn():
     conn.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)")
     conn.execute("CREATE TABLE logs (message TEXT, ts DOUBLE)")
     conn.execute(
-        "INSERT INTO students VALUES (100, 'Alice Smith', 'alice@test.edu', false)"
+        "INSERT INTO widgets VALUES (100, 'Alice Smith', 'alice@test.edu', false)"
     )
-    conn.execute("INSERT INTO students VALUES (200, 'Bob Jones', 'bob@test.edu', true)")
-    conn.execute("INSERT INTO assignments VALUES ('hw-01', 'Homework 1', 10.0)")
+    conn.execute("INSERT INTO widgets VALUES (200, 'Bob Jones', 'bob@test.edu', true)")
+    conn.execute("INSERT INTO gadgets VALUES ('hw-01', 'Homework 1', 10.0)")
     conn.execute(
         "CREATE TABLE canvas_assignments ("
         "  canvas_id INTEGER PRIMARY KEY,"
@@ -63,8 +63,8 @@ class TestGetTables:
         tables = get_tables(viewer_conn)
         names = [t["name"] for t in tables]
         assert "meta" not in names
-        assert "students" in names
-        assert "assignments" in names
+        assert "widgets" in names
+        assert "gadgets" in names
         assert "logs" in names
 
     def test_excludes_synced(self, viewer_conn):
@@ -86,7 +86,7 @@ class TestGetTables:
     def test_types(self, viewer_conn):
         tables = get_tables(viewer_conn)
         by_name = {t["name"]: t["type"] for t in tables}
-        assert by_name["students"] == "table"
+        assert by_name["widgets"] == "table"
         assert by_name["logs"] == "table"
 
 
@@ -94,15 +94,15 @@ class TestEditTracking:
     def test_editable_table(self, viewer_conn):
         """Only canvas tables (not submissions) are editable."""
         assert is_editable(viewer_conn, "canvas_assignments") is True
-        assert is_editable(viewer_conn, "students") is False
-        assert is_editable(viewer_conn, "assignments") is False
+        assert is_editable(viewer_conn, "widgets") is False
+        assert is_editable(viewer_conn, "gadgets") is False
 
     def test_no_pk_not_editable(self, viewer_conn):
         """Tables without a primary key are not editable."""
         assert is_editable(viewer_conn, "logs") is False
 
     def test_canvas_grades_editable(self, viewer_conn):
-        """canvas_grades table should be editable (not in _READ_ONLY_TABLES)."""
+        """canvas_grades table should be editable (per TABLE_CAPABILITIES)."""
         viewer_conn.execute(
             "CREATE TABLE IF NOT EXISTS canvas_grades ("
             "  canvas_user_id INTEGER NOT NULL,"
