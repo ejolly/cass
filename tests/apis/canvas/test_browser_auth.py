@@ -1,4 +1,4 @@
-"""Brave import and bounded automatic renewal, without real browser access."""
+"""Browser import and bounded automatic renewal, without real browser access."""
 
 from pathlib import Path
 
@@ -9,6 +9,116 @@ from cass.apis.canvas.auth import CanvasAuthError, SessionAuth, find_auth
 from cass.apis.canvas.client import CanvasClient
 
 ORIGIN = "https://canvas.example.com"
+
+
+def test_chrome_cli_import_and_automatic_refresh(tmp_path, monkeypatch):
+    import browser_cookie3
+    from typer.testing import CliRunner
+
+    from cass.actions.config import reset_config
+    from cass.apis.canvas import browser
+    from cass.cli import app
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    profile = tmp_path / "Library/Application Support/Google/Chrome/Profile 1"
+    profile.mkdir(parents=True)
+    (profile / "Cookies").touch()
+    (tmp_path / "cass.toml").write_text(
+        f'[canvas]\nbase_url = "{ORIGIN}"\ncourse_id = 1\n'
+    )
+    jar = httpx.Cookies()
+    jar.set("canvas_session", "chrome-session", domain="canvas.example.com")
+    jar.set("_csrf_token", "chrome-csrf", domain="canvas.example.com")
+
+    def read(*, cookie_file, domain_name):
+        assert cookie_file == str(profile / "Cookies")
+        assert domain_name == "canvas.example.com"
+        return jar.jar
+
+    monkeypatch.setattr(browser_cookie3, "chrome", read)
+    monkeypatch.setattr(browser, "validate_session", lambda auth, origin, **kw: None)
+    reset_config()
+    try:
+        result = CliRunner().invoke(
+            app, ["canvas", "login", "--from-chrome", "--profile", "Profile 1"]
+        )
+        assert result.exit_code == 0, result.output
+        assert "Chrome" in result.output
+        assert "chrome-session" not in result.output
+        auth = find_auth(tmp_path)
+        assert isinstance(auth, SessionAuth)
+        assert auth.session == "chrome-session"
+        assert "Chrome" in auth.description
+        assert "--from-chrome --profile 'Profile 1'" in auth.refresh_message()
+        assert "Brave" not in auth.refresh_message()
+        assert "browser=chrome\n" in (tmp_path / ".canvascreds").read_text()
+
+        jar.set("canvas_session", "renewed-chrome", domain="canvas.example.com")
+        seen = []
+
+        def handler(request):
+            seen.append(request.headers["cookie"])
+            if len(seen) == 1:
+                return httpx.Response(401, json={})
+            return httpx.Response(200, json={"id": 1, "name": "Course"})
+
+        with CanvasClient(
+            ORIGIN, course_id=1, auth=auth, transport=httpx.MockTransport(handler)
+        ) as client:
+            client.get_course()
+            client.get_course()
+        assert len(seen) == 3
+        assert "canvas_session=chrome-session" in seen[0]
+        assert all("canvas_session=renewed-chrome" in value for value in seen[1:])
+        assert find_auth(tmp_path).session == "renewed-chrome"
+        assert "browser=chrome\n" in (tmp_path / ".canvascreds").read_text()
+    finally:
+        reset_config()
+
+
+def test_login_requires_exactly_one_browser():
+    from typer.testing import CliRunner
+
+    from cass.cli import app
+
+    for flags in ([], ["--from-brave", "--from-chrome"]):
+        result = CliRunner().invoke(app, ["canvas", "login", *flags])
+        assert result.exit_code == 2
+        assert "Choose exactly one" in result.output
+
+
+@pytest.mark.parametrize("browser_name", ["brave", "chrome"])
+def test_incomplete_browser_metadata_suggests_matching_command(browser_name):
+    from cass.apis.canvas.auth import parse_creds
+
+    with pytest.raises(CanvasAuthError, match=f"--from-{browser_name}"):
+        parse_creds(f"canvas_session=s\nbrowser={browser_name}\n")
+
+
+def test_chrome_import_error_names_chrome_without_exposing_secrets(
+    tmp_path, monkeypatch
+):
+    import browser_cookie3
+
+    from cass.apis.canvas.auth import Browser
+    from cass.apis.canvas.browser import login_from_browser
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    profile = tmp_path / "Library/Application Support/Google/Chrome/Default"
+    profile.mkdir(parents=True)
+    (profile / "Cookies").touch()
+
+    def read(**kwargs):
+        raise RuntimeError("sensitive-library-error")
+
+    monkeypatch.setattr(browser_cookie3, "chrome", read)
+    with pytest.raises(CanvasAuthError) as exc:
+        login_from_browser(tmp_path, ORIGIN, browser=Browser.CHROME)
+    assert "Chrome Safe Storage" in str(exc.value)
+    assert "--from-chrome" in str(exc.value)
+    assert "Brave" not in str(exc.value)
+    assert "sensitive-library-error" not in str(exc.value)
 
 
 @pytest.fixture
@@ -37,34 +147,34 @@ def brave(monkeypatch, tmp_path):
 
 
 def test_login_validates_then_saves_private_credentials(brave, tmp_path):
-    from cass.apis.canvas.browser import login_from_brave
+    from cass.apis.canvas.browser import login_from_browser
 
     def handler(request):
         assert str(request.url) == ORIGIN + "/api/v1/users/self"
         assert "canvas_session=fresh-session" in request.headers["cookie"]
         return httpx.Response(200, json={"id": 42})
 
-    login_from_brave(tmp_path, ORIGIN, transport=httpx.MockTransport(handler))
+    login_from_browser(tmp_path, ORIGIN, transport=httpx.MockTransport(handler))
     path = tmp_path / ".canvascreds"
     assert path.stat().st_mode & 0o777 == 0o600
     auth = find_auth(tmp_path)
     assert isinstance(auth, SessionAuth)
     assert auth.session == "fresh-session"
     assert auth.csrf_token == "fresh+csrf"
-    assert auth.brave.profile == "Default"
-    assert auth.brave.origin == ORIGIN
-    assert auth.brave.path == path
+    assert auth.browser_source.profile == "Default"
+    assert auth.browser_source.origin == ORIGIN
+    assert auth.browser_source.path == path
     assert ".canvascreds" in (tmp_path / ".gitignore").read_text().splitlines()
 
 
 @pytest.mark.parametrize("status", [401, 302, 500])
 def test_failed_validation_preserves_existing_credentials(brave, tmp_path, status):
-    from cass.apis.canvas.browser import login_from_brave
+    from cass.apis.canvas.browser import login_from_browser
 
     path = tmp_path / ".canvascreds"
     path.write_text("canvas_session=old\n")
     with pytest.raises(CanvasAuthError):
-        login_from_brave(
+        login_from_browser(
             tmp_path,
             ORIGIN,
             transport=httpx.MockTransport(lambda r: httpx.Response(status)),
@@ -73,11 +183,11 @@ def test_failed_validation_preserves_existing_credentials(brave, tmp_path, statu
 
 
 def test_import_ignores_other_domains_and_cookie_names(brave, tmp_path):
-    from cass.apis.canvas.browser import login_from_brave
+    from cass.apis.canvas.browser import login_from_browser
 
     brave.set("canvas_session", "wrong", domain="canvas.example.com.attacker.com")
     brave.set("unrelated", "secret", domain="canvas.example.com")
-    login_from_brave(
+    login_from_browser(
         tmp_path,
         ORIGIN,
         transport=httpx.MockTransport(lambda r: httpx.Response(200, json={"id": 1})),
@@ -89,20 +199,20 @@ def test_import_ignores_other_domains_and_cookie_names(brave, tmp_path):
 
 
 def test_missing_cookie_gives_login_command(brave, tmp_path):
-    from cass.apis.canvas.browser import login_from_brave
+    from cass.apis.canvas.browser import login_from_browser
 
     brave.delete("_csrf_token", domain="canvas.example.com")
     with pytest.raises(CanvasAuthError, match="cass canvas login --from-brave"):
-        login_from_brave(tmp_path, ORIGIN)
+        login_from_browser(tmp_path, ORIGIN)
     assert not (tmp_path / ".canvascreds").exists()
 
 
 @pytest.mark.parametrize("profile", ["../Default", "/tmp/profile", "bad\nprofile"])
 def test_profile_must_be_a_directory_name(tmp_path, profile):
-    from cass.apis.canvas.browser import login_from_brave
+    from cass.apis.canvas.browser import login_from_browser
 
     with pytest.raises(CanvasAuthError, match="profile"):
-        login_from_brave(tmp_path, ORIGIN, profile)
+        login_from_browser(tmp_path, ORIGIN, profile)
 
 
 def _imported_auth(tmp_path):

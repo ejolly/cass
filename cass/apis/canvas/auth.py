@@ -18,6 +18,7 @@ __docformat__ = "google"
 
 import os
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 from urllib.parse import quote, unquote
 
@@ -38,13 +39,31 @@ class CanvasAuthError(RuntimeError):
     """Canvas rejected our credentials, with instructions on how to fix them."""
 
 
+class Browser(StrEnum):
+    """Supported browser imports on macOS."""
+
+    BRAVE = "brave"
+    CHROME = "chrome"
+
+    @property
+    def label(self) -> str:
+        return "Brave" if self is Browser.BRAVE else "Google Chrome"
+
+    @property
+    def profile_directory(self) -> str:
+        return (
+            "BraveSoftware/Brave-Browser" if self is Browser.BRAVE else "Google/Chrome"
+        )
+
+
 @dataclass(frozen=True)
-class BraveSource:
+class BrowserSource:
     """Browser profile and Canvas origin authorized to refresh a credential file."""
 
     profile: str
     origin: str
     path: Path
+    browser: Browser = Browser.BRAVE
 
 
 @dataclass(frozen=True)
@@ -88,18 +107,22 @@ class SessionAuth:
             for writes (Canvas checks it against the ``X-CSRF-Token`` header);
             may be empty for read-only use.
         source: File the cookies were read from.
-        brave: Profile to refresh from, present only for imported Brave sessions.
+        browser_source: Browser and profile to refresh an imported session from.
     """
 
     session: str
     csrf_token: str
     source: str
-    brave: BraveSource | None = None
+    browser_source: BrowserSource | None = None
 
     @property
     def description(self) -> str:
         """Short human label for status output."""
-        suffix = ", auto-refresh from Brave" if self.brave else ""
+        suffix = (
+            f", auto-refresh from {self.browser_source.browser.label}"
+            if self.browser_source
+            else ""
+        )
         if not self.csrf_token:
             suffix += ", read-only: no _csrf_token"
         return f"session cookie ({self.source}{suffix})"
@@ -122,19 +145,21 @@ class SessionAuth:
         )
 
     def refresh_message(self) -> str:
-        if self.brave:
+        if self.browser_source:
             import shlex
 
-            profile = self.brave.profile
+            profile = self.browser_source.profile
             option = (
                 f" --profile {shlex.quote(profile)}" if profile != "Default" else ""
             )
             return (
-                "Log in to Canvas in Brave, then run "
-                f"'cass canvas login --from-brave{option}' and retry."
+                f"Log in to Canvas in {self.browser_source.browser.label}, then run "
+                f"cass canvas login --from-{self.browser_source.browser.value}{option} "
+                "and retry."
             )
         return (
-            "Log in to Canvas in Brave and run 'cass canvas login --from-brave', "
+            "Log in to Canvas and run 'cass canvas login --from-brave' or "
+            "'cass canvas login --from-chrome' for your browser, "
             f"or copy fresh {SESSION_COOKIE} and {CSRF_COOKIE} cookies into "
             f"{self.source}, then retry."
         )
@@ -191,17 +216,30 @@ def parse_creds(
             f"your browser's cookies for Canvas."
         )
     csrf_token = unquote(values.get(CSRF_COOKIE, ""))
-    brave = None
-    if values.get("browser") == "brave":
+    browser_source = None
+    if values.get("browser"):
+        try:
+            browser = Browser(values["browser"])
+        except ValueError:
+            raise CanvasAuthError(
+                "Unsupported saved browser. Run 'cass canvas login' with "
+                "--from-brave or --from-chrome."
+            ) from None
         origin = values.get("canvas_origin", "")
         profile = values.get("browser_profile", "")
         if not origin or not profile:
             raise CanvasAuthError(
-                "Incomplete Brave credentials. Run 'cass canvas login --from-brave'."
+                f"Incomplete {browser.label} credentials. "
+                f"Run 'cass canvas login --from-{browser.value}'."
             )
-        brave = BraveSource(profile, origin, path or Path(source).resolve())
+        browser_source = BrowserSource(
+            profile, origin, path or Path(source).resolve(), browser
+        )
     return SessionAuth(
-        session=session, csrf_token=csrf_token, source=source, brave=brave
+        session=session,
+        csrf_token=csrf_token,
+        source=source,
+        browser_source=browser_source,
     )
 
 

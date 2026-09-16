@@ -67,31 +67,39 @@ def login(
         "--from-brave",
         help="Import your Canvas session from Brave on macOS.",
     ),
+    from_chrome: bool = typer.Option(
+        False,
+        "--from-chrome",
+        help="Import your Canvas session from Google Chrome on macOS.",
+    ),
     profile: str = typer.Option(
         "Default",
         "--profile",
-        help="Brave profile directory, such as 'Profile 1'.",
+        help="Browser profile directory, such as 'Profile 1'.",
     ),
 ) -> None:
-    """Save a Brave session and refresh it automatically after a 401 rejection."""
+    """Save a browser session and refresh it automatically after a 401 rejection."""
     from ..actions.config import get_config
-    from ..apis.canvas.auth import CanvasAuthError
-    from ..apis.canvas.browser import login_from_brave
+    from ..apis.canvas.auth import Browser, CanvasAuthError
+    from ..apis.canvas.browser import login_from_browser
 
-    if not from_brave:
-        raise typer.BadParameter("Use --from-brave to import a browser session.")
+    if from_brave == from_chrome:
+        raise typer.BadParameter("Choose exactly one: --from-brave or --from-chrome.")
+    browser = Browser.BRAVE if from_brave else Browser.CHROME
     require_canvas()
     cfg = get_config()
-    console.print("Reading Brave's Canvas session. macOS may ask for Keychain access.")
+    console.print(
+        f"Reading {browser.label}'s Canvas session. macOS may ask for Keychain access."
+    )
     try:
-        login_from_brave(cfg.root, cfg.canvas_base_url, profile)
+        login_from_browser(cfg.root, cfg.canvas_base_url, profile, browser=browser)
     except (CanvasAuthError, OSError) as exc:
         console.print(str(exc), style="red", markup=False)
         raise typer.Exit(code=1) from None
     console.print(
         "Canvas session saved to .canvascreds. "
         "If Canvas rejects authentication, cass will refresh the cookies from "
-        "Brave and retry the request once."
+        f"{browser.label} and retry the request once."
     )
 
 

@@ -1,4 +1,4 @@
-"""Import a Canvas session from Brave on macOS."""
+"""Import a Canvas session from Brave or Google Chrome on macOS."""
 
 from __future__ import annotations
 
@@ -16,25 +16,29 @@ from .auth import (
     CREDS_FILENAME,
     CSRF_COOKIE,
     SESSION_COOKIE,
-    BraveSource,
+    Browser,
+    BrowserSource,
     CanvasAuthError,
     SessionAuth,
 )
 
 
-def read_brave_session(source: BraveSource) -> SessionAuth:
+def read_browser_session(source: BrowserSource) -> SessionAuth:
     """Read Canvas cookies from one profile, using macOS Keychain access."""
     import browser_cookie3
 
-    auth = SessionAuth("", "", CREDS_FILENAME, brave=source)
+    auth = SessionAuth("", "", CREDS_FILENAME, browser_source=source)
+    browser = source.browser
     if sys.platform != "darwin":
-        raise CanvasAuthError("Importing from Brave currently requires macOS.")
+        raise CanvasAuthError("Importing browser sessions currently requires macOS.")
     if (
         not source.profile
         or source.profile in {".", ".."}
         or any(c in source.profile for c in "/\\\r\n\0")
     ):
-        raise CanvasAuthError("Use a Brave profile directory name, such as 'Default'.")
+        raise CanvasAuthError(
+            "Use a browser profile directory name, such as 'Default'."
+        )
     url = urlsplit(source.origin)
     if (
         url.scheme != "https"
@@ -48,7 +52,8 @@ def read_brave_session(source: BraveSource) -> SessionAuth:
         raise CanvasAuthError("Canvas base_url must be an HTTPS origin.")
     profile = (
         Path.home()
-        / "Library/Application Support/BraveSoftware/Brave-Browser"
+        / "Library/Application Support"
+        / browser.profile_directory
         / source.profile
     )
     cookie_file = next(
@@ -57,17 +62,21 @@ def read_brave_session(source: BraveSource) -> SessionAuth:
     )
     if cookie_file is None:
         raise CanvasAuthError(
-            f"No Brave cookies found for profile {source.profile!r}. "
+            f"No {browser.label} cookies found for profile {source.profile!r}. "
             "Choose a profile directory with --profile. " + auth.refresh_message()
         )
     try:
-        jar = browser_cookie3.brave(
-            cookie_file=str(cookie_file), domain_name=url.hostname
+        reader = (
+            browser_cookie3.brave
+            if browser is Browser.BRAVE
+            else browser_cookie3.chrome
         )
+        jar = reader(cookie_file=str(cookie_file), domain_name=url.hostname)
     except Exception:
         # Browser/Keychain exceptions must not expose cookie or key material.
         raise CanvasAuthError(
-            "Could not read Brave cookies. Allow access to Brave Safe Storage "
+            f"Could not read {browser.label} cookies. Allow access to "
+            f"{browser.value.title()} Safe Storage "
             "if macOS asks. " + auth.refresh_message()
         ) from None
     values: dict[str, str] = {}
@@ -87,14 +96,14 @@ def read_brave_session(source: BraveSource) -> SessionAuth:
         values[cookie.name] = cookie.value
     if any(not values.get(name) for name in (SESSION_COOKIE, CSRF_COOKIE)):
         raise CanvasAuthError(
-            "Brave has no complete Canvas session for this site. "
+            f"{browser.label} has no complete Canvas session for this site. "
             + auth.refresh_message()
         )
     return SessionAuth(
         values[SESSION_COOKIE],
         unquote(values[CSRF_COOKIE]),
         CREDS_FILENAME,
-        brave=source,
+        browser_source=source,
     )
 
 
@@ -116,12 +125,12 @@ def validate_session(
             response = client.get(origin + "/api/v1/users/self")
     except httpx.RequestError:
         raise CanvasAuthError(
-            "Could not reach Canvas to validate the Brave session. "
+            "Could not reach Canvas to validate the browser session. "
             "Existing credentials were kept; check your connection and retry."
         ) from None
     if response.status_code in {401, 403} or response.is_redirect:
         raise CanvasAuthError(
-            "Canvas rejected Brave's session. " + auth.refresh_message()
+            "Canvas rejected the browser session. " + auth.refresh_message()
         )
     if not response.is_success:
         raise CanvasAuthError(
@@ -138,15 +147,15 @@ def validate_session(
         )
 
 
-def save_brave_session(auth: SessionAuth) -> None:
+def save_browser_session(auth: SessionAuth) -> None:
     """Atomically replace the credential file with owner-only permissions."""
-    source = auth.brave
+    source = auth.browser_source
     if source is None:
-        raise ValueError("A Brave source is required to save imported credentials.")
+        raise ValueError("A browser source is required to save imported credentials.")
     values = {
         SESSION_COOKIE: auth.session,
         CSRF_COOKIE: auth.cookies()[CSRF_COOKIE],
-        "browser": "brave",
+        "browser": source.browser.value,
         "browser_profile": source.profile,
         "canvas_origin": source.origin,
     }
@@ -176,16 +185,19 @@ def save_brave_session(auth: SessionAuth) -> None:
             temporary.unlink(missing_ok=True)
 
 
-def login_from_brave(
+def login_from_browser(
     root: Path,
     base_url: str,
     profile: str = "Default",
     *,
+    browser: Browser = Browser.BRAVE,
     transport: httpx.BaseTransport | None = None,
 ) -> SessionAuth:
-    """Import, validate, and save a refreshable Brave session for this project."""
-    source = BraveSource(profile, base_url.rstrip("/"), root.resolve() / CREDS_FILENAME)
-    auth = read_brave_session(source)
+    """Import, validate, and save a refreshable browser session for this project."""
+    source = BrowserSource(
+        profile, base_url.rstrip("/"), root.resolve() / CREDS_FILENAME, browser
+    )
+    auth = read_browser_session(source)
     validate_session(auth, source.origin, transport=transport)
-    save_brave_session(auth)
+    save_browser_session(auth)
     return auth

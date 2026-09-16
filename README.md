@@ -56,20 +56,22 @@ cass init
 
 #### No API token? Use your browser session instead
 
-On macOS, log in to Canvas in Brave, then run:
+On macOS, log in to Canvas in Brave or Google Chrome, then run the matching command:
 
 ```bash
 cass canvas login --from-brave
+cass canvas login --from-chrome
 ```
 
-Allow access to **Brave Safe Storage** if macOS asks. cass imports your Canvas
-cookies, checks the session, and saves `.canvascreds` with owner-only permissions.
-For another Brave profile, add `--profile "Profile 1"`, using the directory name
-shown in `brave://version` under **Profile Path**.
+Allow access to **Brave Safe Storage** or **Chrome Safe Storage** if macOS asks.
+cass imports your Canvas cookies, checks the session, and saves `.canvascreds`
+with owner-only permissions.
+For another browser profile, add `--profile "Profile 1"`, using the directory name
+shown in `brave://version` or `chrome://version` under **Profile Path**.
 
 If Canvas rejects authentication, cass refreshes the cookies from that profile
-and retries the request once. If the Brave session has also expired, log in to
-Canvas in Brave and rerun the login command. CSRF errors also point to this
+and retries the request once. If the browser session has also expired, log in to
+Canvas in that browser and rerun the login command. CSRF errors also point to this
 command, but do not trigger an automatic retry.
 
 For other browsers, copy `canvas_session` and `_csrf_token` from devtools

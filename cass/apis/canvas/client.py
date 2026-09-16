@@ -78,7 +78,8 @@ def get_auth() -> CanvasAuth:
         raise SystemExit(
             "Canvas credentials not found. Run 'cass init' to save an API token "
             f"to {TOKEN_FILENAME}, set the CANVAS_TOKEN environment variable, or "
-            "run 'cass canvas login --from-brave' to use your browser session."
+            "run 'cass canvas login' with --from-brave or --from-chrome "
+            "to use your browser session."
         )
     return auth
 
@@ -141,7 +142,8 @@ class RetryTransport(httpx.BaseTransport):
             if response.status_code == 401 and self._refresh and not refreshed:
                 response.close()
                 _console.print(
-                    "[yellow]Canvas session expired; refreshing from Brave…[/yellow]"
+                    "[yellow]Canvas rejected the session; "
+                    "refreshing from your browser…[/yellow]"
                 )
                 self._auth = self._refresh()
                 refreshed = True
@@ -228,12 +230,12 @@ class CanvasClient:
         self.auth: CanvasAuth = auth or get_auth()
         if (
             isinstance(self.auth, SessionAuth)
-            and self.auth.brave is not None
-            and self.auth.brave.origin != resolved_base.rstrip("/")
+            and self.auth.browser_source is not None
+            and self.auth.browser_source.origin != resolved_base.rstrip("/")
         ):
             raise CanvasAuthError(
-                "The saved Brave session belongs to another Canvas origin. "
-                "Run 'cass canvas login --from-brave' for this project."
+                "The saved browser session belongs to another Canvas origin. "
+                + self.auth.refresh_message()
             )
         self.course_id = course_id or (cfg.canvas_course_id if cfg else 0)
         self._transport = transport
@@ -243,8 +245,8 @@ class CanvasClient:
     def _client(self) -> httpx.Client:
         if self._http is None or self._http.is_closed:
             refresh = (
-                self._refresh_brave
-                if isinstance(self.auth, SessionAuth) and self.auth.brave
+                self._refresh_browser
+                if isinstance(self.auth, SessionAuth) and self.auth.browser_source
                 else None
             )
             transport = self._transport
@@ -267,13 +269,15 @@ class CanvasClient:
             )
         return self._http
 
-    def _refresh_brave(self) -> SessionAuth:
-        from .browser import login_from_brave
+    def _refresh_browser(self) -> SessionAuth:
+        from .browser import login_from_browser
 
-        if not isinstance(self.auth, SessionAuth) or self.auth.brave is None:
-            raise CanvasAuthError("This session was not imported from Brave.")
-        source = self.auth.brave
-        auth = login_from_brave(source.path.parent, source.origin, source.profile)
+        if not isinstance(self.auth, SessionAuth) or self.auth.browser_source is None:
+            raise CanvasAuthError("This session was not imported from a browser.")
+        source = self.auth.browser_source
+        auth = login_from_browser(
+            source.path.parent, source.origin, source.profile, browser=source.browser
+        )
         self.auth = auth
         if self._http is not None:
             self._http.headers.update(auth.headers())
