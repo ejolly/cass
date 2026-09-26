@@ -419,11 +419,16 @@ class _MockTransport(httpx.BaseTransport):
         self._idx = 0
 
     def add(
-        self, status: int = 200, json_data: object = None, headers: dict | None = None
+        self,
+        status: int = 200,
+        json_data: object = None,
+        headers: dict | None = None,
+        content: bytes | None = None,
     ):
         resp = httpx.Response(
             status,
-            json=json_data,
+            json=json_data if content is None else None,
+            content=content,
             headers=headers or {},
         )
         self.responses.append(resp)
@@ -830,6 +835,94 @@ class TestCanvasClient:
         transport.add(404, json_data={})
         with pytest.raises(httpx.HTTPStatusError):
             client.list_quiz_questions(20)
+
+    def test_create_quiz_report_requests_student_analysis(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data={"id": 5, "report_type": "student_analysis"})
+        report = client.create_quiz_report(20, all_versions=True)
+        assert report.id == 5
+        assert report.file is None
+        req = transport.requests[0]
+        assert req.method == "POST"
+        assert req.url.path.endswith("/quizzes/20/reports")
+        body = req.content.decode()
+        assert "quiz_report%5Breport_type%5D=student_analysis" in body
+        assert "quiz_report%5Bincludes_all_versions%5D=true" in body
+        assert "include%5B%5D=file&include%5B%5D=progress" in body
+
+    def test_create_quiz_report_unwraps_jsonapi_envelope(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data={"quiz_reports": [{"id": 5}]})
+        assert client.create_quiz_report(20).id == 5
+
+    def test_download_quiz_report_polls_until_file(self, mock_client, monkeypatch):
+        client, transport = mock_client
+        sleeps: list[float] = []
+        monkeypatch.setattr("cass.apis.canvas.client.quizzes.time.sleep", sleeps.append)
+        transport.add(
+            json_data={"id": 5, "progress": {"id": 1, "workflow_state": "running"}}
+        )
+        transport.add(json_data={"id": 5, "file": None})
+        transport.add(
+            json_data={
+                "id": 5,
+                "file": {
+                    "id": 9,
+                    "url": "https://canvas.example.com/files/9/download?verifier=x",
+                },
+            }
+        )
+        transport.add(content="\ufeffname,id\nA,1\n".encode())
+        text = client.download_quiz_report(20, interval=0.5)
+        assert text == "name,id\nA,1\n"
+        assert sleeps == [0.5, 0.5]
+        poll = transport.requests[1]
+        assert poll.url.path.endswith("/quizzes/20/reports/5")
+        assert poll.url.params.get_list("include[]") == ["file", "progress"]
+        assert str(transport.requests[3].url).endswith("/files/9/download?verifier=x")
+
+    def test_download_quiz_report_raises_on_failed_progress(self, mock_client):
+        client, transport = mock_client
+        transport.add(
+            json_data={
+                "id": 5,
+                "progress": {"id": 1, "workflow_state": "failed", "message": "boom"},
+            }
+        )
+        with pytest.raises(RuntimeError, match="boom"):
+            client.download_quiz_report(20)
+
+    def test_download_quiz_report_times_out(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data={"id": 5})
+        with pytest.raises(RuntimeError, match="not ready"):
+            client.download_quiz_report(20, timeout=0)
+
+    def test_list_quiz_submissions_unwraps_pages(self, mock_client):
+        client, transport = mock_client
+        transport.add(
+            json_data={
+                "quiz_submissions": [
+                    {
+                        "id": 1,
+                        "user_id": 11,
+                        "attempt": 2,
+                        "started_at": "2026-09-25T23:00:00Z",
+                        "finished_at": "2026-09-25T23:30:00Z",
+                        "end_at": "2026-09-26T00:00:00Z",
+                        "workflow_state": "complete",
+                    }
+                ]
+            },
+            headers={
+                "link": "<https://canvas.example.com/api/v1/courses/1/quizzes/20"
+                '/submissions?page=2&per_page=100>; rel="next"'
+            },
+        )
+        transport.add(json_data={"quiz_submissions": [{"id": 2, "user_id": 12}]})
+        subs = client.list_quiz_submissions(20)
+        assert [s.user_id for s in subs] == [11, 12]
+        assert subs[0].end_at == "2026-09-26T00:00:00Z"
 
     def test_create_assignment_group_sends_top_level_params(self, mock_client):
         """The Assignment Groups API takes name/position/group_weight unnested."""

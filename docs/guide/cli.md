@@ -25,6 +25,7 @@ cass canvas tabs                 # navigation tabs; show-tab / hide-tab change v
 cass canvas modules              # list / create / publish / delete modules
 cass canvas assignments          # list / create / publish / delete assignments and groups
 cass canvas quizzes              # list quizzes; see the Quizzes guide for authoring
+cass canvas quizzes responses "Survey 1" --csv out.csv   # every student's answers
 cass canvas calendar             # list / create / update / delete events
 cass canvas upload file.pdf      # upload a file (delete-file removes one)
 cass canvas announce "Title" "Body"   # update-announcement / delete-announcement

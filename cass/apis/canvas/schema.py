@@ -220,6 +220,39 @@ class CanvasQuizQuestion(msgspec.Struct):
     answers: list[CanvasQuizAnswer] = []
 
 
+class CanvasQuizReportFile(msgspec.Struct):
+    """File attached to a generated quiz report."""
+
+    id: int = 0
+    url: str = ""
+    filename: str = ""
+
+
+class CanvasQuizReport(msgspec.Struct):
+    """Canvas quiz report (``include[]=file,progress``).
+
+    ``file`` is ``None`` until Canvas finishes generating the CSV.
+    """
+
+    id: int
+    report_type: str = ""
+    includes_all_versions: bool = False
+    file: CanvasQuizReportFile | None = None
+    progress: CanvasProgress | None = None
+
+
+class CanvasQuizSubmission(msgspec.Struct):
+    """A student's latest classic quiz attempt (``/quizzes/:id/submissions``)."""
+
+    id: int
+    user_id: int
+    attempt: int | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
+    end_at: str | None = None  # time-limit or lock cutoff for this attempt
+    workflow_state: str = ""  # untaken, pending_review, complete, ...
+
+
 # --- Files & Folders ---
 
 
@@ -309,6 +342,7 @@ class CanvasSubmissionResponse(msgspec.Struct):
     grade: str | None = None
     score: float | None = None
     workflow_state: str = ""
+    cached_due_date: str | None = None  # per-student due, after overrides
 
 
 class CanvasProgress(msgspec.Struct):

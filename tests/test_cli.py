@@ -823,6 +823,59 @@ class TestCanvasQuizzes:
         quiz_client.update_quiz.assert_not_called()
         assert "no changes" in result.stdout.lower()
 
+    _REPORT = (
+        "name,id,sis_id,section,submitted,101: Hoping for?,0.0,score\n"
+        "Alice Smith,11,A1,Sec A,2026-09-26 01:00:00 UTC,To learn,0.0,0.0\n"
+    )
+
+    def test_responses_to_csv(self, quiz_client, tmp_path):
+        quiz_client.download_quiz_report.return_value = self._REPORT
+        quiz_client.list_quiz_submissions.return_value = []
+        out = tmp_path / "responses.csv"
+        result = runner.invoke(
+            app,
+            [
+                "canvas",
+                "quizzes",
+                "responses",
+                "20",
+                "--all-attempts",
+                "--csv",
+                str(out),
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        quiz_client.download_quiz_report.assert_called_once_with(20, all_versions=True)
+        header, row = out.read_text().splitlines()
+        assert header.startswith("student,user_id,sis_id,section,attempt")
+        assert "To learn" in row
+        # Submitted after the quiz's 2026-09-26T00:00Z due date.
+        assert ",2026-09-26T00:00:00Z,true," in row
+
+    def test_responses_table(self, quiz_client):
+        quiz_client.download_quiz_report.return_value = self._REPORT
+        quiz_client.list_quiz_submissions.return_value = []
+        result = runner.invoke(app, ["canvas", "quizzes", "responses", "20"])
+        assert result.exit_code == 0, result.output
+        assert "Alice Smith" in result.stdout
+        assert "To learn" in result.stdout
+
+    def test_responses_wide_prints_report(self, quiz_client):
+        quiz_client.download_quiz_report.return_value = self._REPORT
+        result = runner.invoke(app, ["canvas", "quizzes", "responses", "20", "--wide"])
+        assert result.exit_code == 0, result.output
+        assert result.stdout.endswith(self._REPORT)
+        quiz_client.list_quiz_submissions.assert_not_called()
+
+    def test_responses_wide_to_csv(self, quiz_client, tmp_path):
+        quiz_client.download_quiz_report.return_value = self._REPORT
+        out = tmp_path / "wide.csv"
+        result = runner.invoke(
+            app, ["canvas", "quizzes", "responses", "20", "--wide", "--csv", str(out)]
+        )
+        assert result.exit_code == 0, result.output
+        assert out.read_text() == self._REPORT
+
 
 class TestCanvasSync:
     def test_due_at_with_offset_is_idempotent(self, monkeypatch, tmp_path):
