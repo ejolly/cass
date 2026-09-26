@@ -1,8 +1,11 @@
-"""Classic quizzes and quiz questions."""
+"""Classic quizzes, quiz questions, reports, and quiz submissions."""
 
 from __future__ import annotations
 
 __docformat__ = "google"
+
+import time
+from typing import Any
 
 import httpx
 import msgspec
@@ -13,7 +16,13 @@ from ....actions.quizzes import (
     default_question_points,
     quiz_form_fields,
 )
-from ..schema import CanvasQuiz, CanvasQuizAnswer, CanvasQuizQuestion
+from ..schema import (
+    CanvasQuiz,
+    CanvasQuizAnswer,
+    CanvasQuizQuestion,
+    CanvasQuizReport,
+    CanvasQuizSubmission,
+)
 from .base import BaseClient
 
 
@@ -186,6 +195,89 @@ class QuizzesMixin(BaseClient):
         resp = self._client.delete(self._course(f"/quizzes/{quiz_id}"))
         resp.raise_for_status()
 
+    def create_quiz_report(
+        self, quiz_id: int, *, all_versions: bool = False
+    ) -> CanvasQuizReport:
+        """Ask Canvas to generate a student analysis report.
+
+        Canvas returns the existing report when one is already current, so
+        repeating the call is cheap. Works on concluded courses.
+
+        Args:
+            quiz_id: Canvas quiz ID.
+            all_versions: Report every attempt instead of only the latest.
+
+        Returns:
+            The report; ``file`` is ``None`` until generation finishes.
+        """
+        resp = self._client.post(
+            self._course(f"/quizzes/{quiz_id}/reports"),
+            data={
+                "quiz_report[report_type]": "student_analysis",
+                "quiz_report[includes_all_versions]": str(all_versions).lower(),
+                "include[]": ["file", "progress"],
+            },
+        )
+        resp.raise_for_status()
+        return _quiz_report(resp.json())
+
+    def get_quiz_report(self, quiz_id: int, report_id: int) -> CanvasQuizReport:
+        """Get a quiz report with its file and progress."""
+        resp = self._client.get(
+            self._course(f"/quizzes/{quiz_id}/reports/{report_id}"),
+            params={"include[]": ["file", "progress"]},
+        )
+        resp.raise_for_status()
+        return _quiz_report(resp.json())
+
+    def download_quiz_report(
+        self,
+        quiz_id: int,
+        *,
+        all_versions: bool = False,
+        timeout: float = 300.0,
+        interval: float = 2.0,
+    ) -> str:
+        """Generate a student analysis report, wait for it, and download it.
+
+        Generation typically takes about 30 seconds.
+
+        Args:
+            quiz_id: Canvas quiz ID.
+            all_versions: Report every attempt instead of only the latest.
+            timeout: Maximum seconds to wait for Canvas to build the file.
+            interval: Seconds between polls.
+
+        Returns:
+            The report CSV text.
+
+        Raises:
+            RuntimeError: If generation fails or times out.
+        """
+        report = self.create_quiz_report(quiz_id, all_versions=all_versions)
+        deadline = time.monotonic() + timeout
+        while report.file is None or not report.file.url:
+            if report.progress and report.progress.workflow_state == "failed":
+                detail = report.progress.message or "unknown error"
+                raise RuntimeError(f"Canvas quiz report failed: {detail}")
+            if time.monotonic() >= deadline:
+                raise RuntimeError(f"Canvas quiz report not ready after {timeout:.0f}s")
+            time.sleep(interval)
+            report = self.get_quiz_report(quiz_id, report.id)
+        resp = self._client.get(report.file.url, follow_redirects=True)
+        resp.raise_for_status()
+        return resp.content.decode("utf-8-sig")
+
+    def list_quiz_submissions(self, quiz_id: int) -> list[CanvasQuizSubmission]:
+        """List each student's latest attempt on a quiz.
+
+        Returns:
+            One quiz submission per student who opened the quiz.
+        """
+        data = self._get_paginated(self._course(f"/quizzes/{quiz_id}/submissions"))
+        pages = msgspec.convert(data, list[_QuizSubmissionsPage], strict=False)
+        return [sub for page in pages for sub in page.quiz_submissions]
+
     def resolve_quiz(self, id_or_name: str) -> CanvasQuiz:
         """Resolve a quiz by numeric ID or title (case-insensitive).
 
@@ -200,6 +292,19 @@ class QuizzesMixin(BaseClient):
 def _quiz_form(fields: dict[str, object]) -> dict[str, object]:
     """Wrap fields as ``quiz[<key>]`` form params."""
     return {f"quiz[{k}]": v for k, v in fields.items()}
+
+
+class _QuizSubmissionsPage(msgspec.Struct):
+    """``/quizzes/:id/submissions`` wraps each page in an envelope."""
+
+    quiz_submissions: list[CanvasQuizSubmission] = []
+
+
+def _quiz_report(data: Any) -> CanvasQuizReport:
+    """Unwrap a report from either the plain or the JSON-API envelope."""
+    if isinstance(data, dict) and data.get("quiz_reports"):
+        data = data["quiz_reports"][0]
+    return msgspec.convert(data, CanvasQuizReport, strict=False)
 
 
 def _number(value: float) -> int | float:

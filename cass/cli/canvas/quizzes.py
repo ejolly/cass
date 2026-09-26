@@ -1,4 +1,4 @@
-"""``cass canvas quizzes`` — list, show, export, create, update, publish, delete."""
+"""``cass canvas quizzes`` — list, show, export, responses, and authoring."""
 
 from __future__ import annotations
 
@@ -136,6 +136,56 @@ def quizzes_export(
         console.print(f"[green]Wrote[/green] {output}")
     else:
         print(text, end="")
+
+
+@quizzes_app.command(name="responses")
+def quizzes_responses(
+    id_or_name: str = typer.Argument(..., help="Quiz ID or title"),
+    all_attempts: bool = typer.Option(
+        False, "--all-attempts", help="Every attempt, not only each student's latest"
+    ),
+    csv_out: str = typer.Option("", "--csv", help="Write responses to a CSV file"),
+    wide: bool = typer.Option(
+        False,
+        "--wide",
+        help="Canvas's report as is: one row per student, a column per question",
+    ),
+) -> None:
+    """Download every student's answers to a classic quiz or survey."""
+    from pathlib import Path
+
+    from ...actions.quiz_responses import RESPONSE_COLUMNS, fetch_quiz_responses
+    from .. import report
+
+    _common.require_canvas()
+    with _common.client() as c:
+        q = c.resolve_quiz(id_or_name)
+        with console.status(f"Generating the Canvas report for {q.title}…"):
+            if wide:
+                text = c.download_quiz_report(q.id, all_versions=all_attempts)
+            else:
+                responses = fetch_quiz_responses(c, q, all_attempts=all_attempts)
+
+    if wide:
+        if csv_out:
+            Path(csv_out).write_text(text)
+            console.print(f"Wrote {csv_out}")
+        else:
+            print(text, end="")
+        return
+    if csv_out:
+        report.write_csv_file(
+            csv_out,
+            headers=list(RESPONSE_COLUMNS),
+            rows=[r.row() for r in responses],
+        )
+        return
+    shown = ("student", "attempt", "position", "answer", "late", "auto_submitted")
+    report.render_list(
+        ["Student", "Attempt", "#", "Answer", "Late", "Auto-submitted"],
+        [r.row(shown) for r in responses],
+        title=f"Responses: {q.title}",
+    )
 
 
 @quizzes_app.command(name="create")
