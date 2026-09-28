@@ -8,8 +8,8 @@ Two ways to authenticate against the Canvas API:
   from a logged-in browser. Read from ``.canvascreds``. Useful when no API
   token is available; cookies expire after roughly a day.
 
-``find_auth`` picks whichever is configured, preferring ``.canvascreds`` so a
-deliberately created cookie file overrides a stale token.
+``find_auth`` picks whichever is configured, preferring ``.canvastoken``
+because a token lasts months while browser cookies last about a day.
 """
 
 from __future__ import annotations
@@ -246,22 +246,22 @@ def parse_creds(
 def find_auth(root: Path) -> CanvasAuth | None:
     """Locate Canvas credentials for the project at *root*.
 
-    Order: ``.canvascreds`` (session cookie), ``.canvastoken``, ``$CANVAS_TOKEN``.
+    Order: ``.canvastoken``, ``.canvascreds`` (session cookie), ``$CANVAS_TOKEN``.
 
     Returns:
         The configured auth, or ``None`` if nothing usable was found.
     """
-    creds_path = root / CREDS_FILENAME
-    if creds_path.exists():
-        text = creds_path.read_text()
-        if text.strip():
-            return parse_creds(text, path=creds_path.resolve())
-
     token_path = root / TOKEN_FILENAME
     if token_path.exists():
         token = token_path.read_text().strip()
         if token:
             return TokenAuth(token=token, source=TOKEN_FILENAME)
+
+    creds_path = root / CREDS_FILENAME
+    if creds_path.exists():
+        text = creds_path.read_text()
+        if text.strip():
+            return parse_creds(text, path=creds_path.resolve())
 
     token = os.environ.get(ENV_TOKEN, "")
     if token:

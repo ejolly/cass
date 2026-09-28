@@ -44,7 +44,7 @@ THROTTLE_DELAY = 1.0
 def get_auth() -> CanvasAuth:
     """Locate Canvas credentials for the current project.
 
-    Prefers ``.canvascreds`` (browser session cookie), then ``.canvastoken``,
+    Prefers ``.canvastoken``, then ``.canvascreds`` (browser session cookie),
     then ``$CANVAS_TOKEN``.
 
     Raises:

@@ -61,7 +61,13 @@ def login(
 ) -> None:
     """Save a browser session and refresh it automatically after a 401 rejection."""
     from ...actions.config import get_config
-    from ...apis.canvas.auth import Browser, CanvasAuthError
+    from ...apis.canvas.auth import (
+        TOKEN_FILENAME,
+        Browser,
+        CanvasAuthError,
+        TokenAuth,
+        find_auth,
+    )
     from ...apis.canvas.browser import login_from_browser
 
     if from_brave == from_chrome:
@@ -82,6 +88,12 @@ def login(
         "If Canvas rejects authentication, cass will refresh the cookies from "
         f"{browser.label} and retry the request once."
     )
+    if isinstance(find_auth(cfg.root), TokenAuth):
+        console.print(
+            f"{TOKEN_FILENAME} takes priority over this session; "
+            "delete it to use the browser session.",
+            style="yellow",
+        )
 
 
 @canvas_app.callback()

@@ -47,7 +47,7 @@ def check_prerequisites() -> list[Check]:
                 auth is not None,
                 auth.description
                 if auth
-                else "not found (.canvascreds, .canvastoken or $CANVAS_TOKEN)",
+                else "not found (.canvastoken, .canvascreds or $CANVAS_TOKEN)",
                 indent=1,
             )
         )

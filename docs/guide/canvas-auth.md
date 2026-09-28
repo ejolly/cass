@@ -38,6 +38,6 @@ _csrf_token=<value>
 
 Quotes around values are fine. Manually copied cookies do not refresh automatically.
 
-## Switching back
+## Which credentials win
 
-`.canvascreds` takes priority over `.canvastoken`. Delete `.canvascreds` to return to token authentication.
+`.canvastoken` takes priority over `.canvascreds`, and both over `$CANVAS_TOKEN`. To use a browser session while a token file exists, delete `.canvastoken`.

@@ -43,9 +43,15 @@ class TestParseCreds:
 
 
 class TestFindAuth:
-    def test_creds_file_wins_over_token_file(self, tmp_path, monkeypatch):
+    def test_token_file_wins_over_creds_file(self, tmp_path, monkeypatch):
         monkeypatch.setenv("CANVAS_TOKEN", "env-token")
         (tmp_path / TOKEN_FILENAME).write_text("file-token\n")
+        (tmp_path / CREDS_FILENAME).write_text("canvas_session=s\n")
+        auth = find_auth(tmp_path)
+        assert auth == TokenAuth(token="file-token", source=TOKEN_FILENAME)
+
+    def test_creds_file_wins_over_env(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CANVAS_TOKEN", "env-token")
         (tmp_path / CREDS_FILENAME).write_text("canvas_session=s\n")
         auth = find_auth(tmp_path)
         assert isinstance(auth, SessionAuth)
