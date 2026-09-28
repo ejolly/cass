@@ -1,0 +1,20 @@
+# Graded quiz with an assignment and a past due date: every attempt is late.
+title = "cass-live: quiz"
+type = "assignment"
+due_at = "2026-01-05 17:00"
+attempts = 2
+published = true
+
+[[questions]]
+type = "multiple_choice"
+text = "<p>Which answer is correct?</p>"
+answers = [{ text = "Right", correct = true }, { text = "Wrong" }]
+
+[[questions]]
+type = "essay"
+text = "<p>Explain your reasoning, with a comma, in \"quotes\".</p>"
+
+[[questions]]
+type = "short_answer"
+text = "<p>Name one social bias.</p>"
+answers = [{ text = "confirmation bias", correct = true }]

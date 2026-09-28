@@ -42,3 +42,27 @@ The script runs the gate, bumps `pyproject.toml`, regenerates `CHANGELOG.md`, co
 ## Test data
 
 Tests that need real course data use the `real_db` fixture, which reads `tests/testdb/cass.db`. That snapshot is gitignored; regenerate it with `uv run poe seed-testdb` against the practice course. Without it those tests skip, which is what happens in CI.
+
+## Live Canvas tests
+
+Unit tests mock Canvas. Live tests in `tests/live/` call the real API to catch what mocks cannot: undocumented response shapes, report formats, redirects, and permissions. They run locally only, because CI has no Canvas credentials.
+
+```bash
+uv run poe live                              # seed the practice course, run live tests
+CASS_LIVE_REAL_COURSE=<id> uv run poe live   # also run read-only real-course tests
+uv run poe seed-live                         # seed only
+```
+
+- Credentials come from `.canvastoken` or `.canvascreds` in the repository root. Without them, live tests skip.
+- `uv run poe test`, `ok`, and `ci` deselect the `live` marker.
+- The `practice` fixture targets the course in `tests/live/cass.toml`, and tests may change its content. `seed-live` idempotently creates the quizzes declared there and submits them as the course's Test Student.
+- The `real_course` fixture is read-only. It must not change content or grades, though generating quiz reports is fine. Its assertions check structure, never student data.
+- Canvas leaves the Test Student out of quiz reports and statistics, so anything that reads student responses needs `real_course`.
+
+### Pull requests written without Canvas access
+
+When a change touches the Canvas API and was written somewhere without credentials, such as a cloud agent session:
+
+1. Add live tests under `tests/live/` next to the mocked ones, even though you cannot run them.
+2. Apply the `needs-live-check` label. In the pull request's "Live verification" section, list what the mocks assume.
+3. Before merging, check out the branch locally, run `uv run poe live`, fix what it finds, and remove the label.

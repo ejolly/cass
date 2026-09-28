@@ -1,0 +1,14 @@
+# Ungraded survey with no assignment and a future due date: nothing is late.
+title = "cass-live: survey"
+type = "survey"
+due_at = "2030-01-05 17:00"
+published = true
+
+[[questions]]
+type = "essay"
+text = "<p>What are you hoping to learn?</p>"
+
+[[questions]]
+type = "multiple_choice"
+text = "<p>How confident are you?</p>"
+answers = [{ text = "Very" }, { text = "Somewhat" }, { text = "Not at all" }]

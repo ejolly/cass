@@ -1,0 +1,15 @@
+# Canvas practice course that live tests run against (`uv run poe live`).
+# Credentials come from the repository root (.canvastoken or .canvascreds).
+# `uv run poe seed-live` creates the quizzes below and submits them as the
+# course's Test Student.
+
+[canvas]
+base_url = "https://canvas.ucsd.edu"
+course_id = 63653
+time_zone = "America/Los_Angeles"
+
+[[canvas.quizzes]]
+file = "quizzes/live-quiz.toml"
+
+[[canvas.quizzes]]
+file = "quizzes/live-survey.toml"

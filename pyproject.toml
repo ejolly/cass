@@ -78,8 +78,19 @@ sequence = [
 ]
 
 [tool.poe.tasks.test]
-help = "Run test suite"
-cmd = "pytest tests/ -v"
+help = "Run test suite (live Canvas tests excluded)"
+cmd = "pytest tests/ -v -m 'not live'"
+
+[tool.poe.tasks.seed-live]
+help = "Create the live-test quizzes in the Canvas practice course"
+cmd = "python tests/live/seed_practice_course.py"
+
+[tool.poe.tasks.live]
+help = "Seed the practice course, then run live Canvas tests (local only)"
+sequence = [
+    "seed-live",
+    { cmd = "pytest tests/live -v -m live -n 0" },
+]
 
 [tool.poe.tasks.cli-docs]
 help = "Generate docs/reference/cli.md from the Typer app"
@@ -136,6 +147,7 @@ known-first-party = ["cass"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 addopts = "-p nicegui.testing.user_plugin -n auto --dist worksteal"
+markers = ["live: hits real Canvas; run with `uv run poe live`"]
 main_file = ""
 
 [tool.poe.tasks.seed-testdb]

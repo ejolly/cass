@@ -34,6 +34,10 @@ symbex -s -d cass/             # all signatures
 symbex '*Client*' -s -d cass/  # find classes/functions matching pattern
 ```
 
+## Live Canvas tests
+
+`uv run poe live` seeds the practice course (`tests/live/cass.toml`) and runs `tests/live/` against real Canvas; `poe ok`/CI deselect them. Any Canvas API change gets a live test there. Without credentials (cloud sessions), write the live test anyway, label the PR `needs-live-check`, and list what the mocks assume. Details: `docs/development.md`.
+
 ## Commits and releases
 
 - Commit subjects follow Conventional Commits: `type(scope): description`, type in `feat fix docs refactor perf test build ci chore style`. CI runs `cz check` on pull requests; git-cliff derives `CHANGELOG.md` and the next version from these subjects.
@@ -55,3 +59,4 @@ symbex '*Client*' -s -d cass/  # find classes/functions matching pattern
 - `CanvasFile.content_type` uses `msgspec.field(name="content-type")` (hyphenated API field)
 - Canvas assignment/tab IDs are strings, not ints
 - The `cass.toml` points to a test Canvas course. When making canvas changes, ask the user if you should dogfood against it and clean up after yourself if granted permission.
+- Canvas leaves the Test Student out of quiz reports and statistics; quiz attempts with essay questions end in `pending_review`, not `complete`

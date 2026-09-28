@@ -13,6 +13,7 @@ grade-data/
 .pytest_cache/
 cass.duckdb.wal
 cass.toml
+!tests/live/cass.toml
 site/
 docs/reference/cli.md
 backups/
