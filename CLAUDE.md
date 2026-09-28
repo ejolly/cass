@@ -36,7 +36,15 @@ symbex '*Client*' -s -d cass/  # find classes/functions matching pattern
 
 ## Live Canvas tests
 
-`uv run poe live` seeds the practice course (`tests/live/cass.toml`) and runs `tests/live/` against real Canvas; `poe ok`/CI deselect them. Any Canvas API change gets a live test there. Without credentials (cloud sessions), write the live test anyway, label the PR `needs-live-check`, and list what the mocks assume. Details: `docs/development.md`.
+`tests/live/` runs against real Canvas; `poe ok`/CI deselect it. Every Canvas API change gets a live test there. Details: `docs/development.md`.
+
+- Without credentials (cloud sessions): write the live test anyway, label the PR `needs-live-check`, and list what the mocks assume.
+- Verify locally before merging, then remove the label:
+
+  ```bash
+  gh pr checkout N
+  CASS_LIVE_REAL_COURSE=<course id> uv run poe live   # seeds the practice course; real course is read-only
+  ```
 
 ## Commits and releases
 
