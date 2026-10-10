@@ -60,13 +60,13 @@ Folder paths are relative to the course files root (no `course files/` prefix). 
 
 ### Late enrollments
 
-`people list` shows each person's enrolled-at date: the earliest `created_at` among their enrollments, deleted ones included. `--enrolled-after DATE` keeps people first enrolled after DATE; a bare date means midnight in the course time zone. `--state` picks enrollment states (default: active and invited).
+`people list` shows each person's enrolled-at date. That is the earliest `created_at` among their enrollments, deleted ones included. `--enrolled-after DATE` keeps people first enrolled after DATE; a bare date means midnight in the course time zone. `--state` selects enrollment states (default: active and invited).
 
 `submissions excuse` and `submissions clear-late` take exactly one of `--student ID` (repeatable, needs an ASSIGNMENT) or `--enrolled-after DATE`. Both are dry runs unless you pass `--apply`.
 
-- With `--enrolled-after`, only `StudentEnrollment` students in `active` or `invited` state count (never the Test Student), and a submission is picked when its assignment was due before that student enrolled, using the student's own due date. Assignments without a due date and unpublished assignments are never touched; an unpublished ASSIGNMENT exits 1.
-- With `--student` and an explicit ASSIGNMENT, the change is made even when the assignment is unpublished or has no due date, with a warning.
-- `excuse` skips graded submissions unless you pass `--include-graded`, because excusing clears the grade. A score is protected unless it is Canvas's missing-submission policy score (marked missing, with no grader), so a teacher's partial credit on a missing submission is kept. Submitted but ungraded work is excused, since it has no score to protect.
+- With `--enrolled-after`, only `StudentEnrollment` students in `active` or `invited` state count, never the Test Student. A submission is picked when its assignment was due before that student enrolled, judged by the student's own due date. Assignments without a due date and unpublished assignments are never touched. An unpublished ASSIGNMENT exits 1.
+- With `--student` and an explicit ASSIGNMENT, cass makes the change even when the assignment is unpublished or has no due date, and warns.
+- `excuse` skips graded submissions unless you pass `--include-graded`, because excusing clears the grade. Any score is protected except Canvas's missing-submission policy score (marked missing, no grader), so a teacher's partial credit on a missing submission is kept. Submitted but ungraded work is excused because it has no score to protect.
 - `clear-late` skips excused submissions and sets Canvas's late status to `none`, so later late resubmissions are not marked late. On a group assignment it applies to the whole group.
 
 ## Output and errors
