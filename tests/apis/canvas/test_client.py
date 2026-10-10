@@ -1955,11 +1955,16 @@ class TestEnrollmentsAndSubmissions:
         result = client.list_student_submissions(range(1, 151), assignment_ids=[7])
         assert [s.user_id for s in result] == [1, 2]
         assert len(transport.requests) == 2
-        for request, expected in zip(transport.requests, (100, 50), strict=True):
+        chunks = []
+        for request in transport.requests:
             assert request.url.path == "/api/v1/courses/1/students/submissions"
             params = self._params(request)
-            assert len([p for p in params if p[0] == "student_ids[]"]) == expected
+            chunks.append([int(v) for k, v in params if k == "student_ids[]"])
             assert ("assignment_ids[]", "7") in params
+        assert [sorted(chunk) for chunk in chunks] == [
+            list(range(1, 101)),
+            list(range(101, 151)),
+        ]
 
     def test_list_student_submissions_empty_sends_nothing(self, mock_client):
         client, transport = mock_client
@@ -1977,6 +1982,13 @@ class TestEnrollmentsAndSubmissions:
         )
         assert request.content.decode() == "submission%5Bexcuse%5D=true"
         assert result.excused is True
+
+    def test_update_submission_unexcuse(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data={"user_id": 5, "excused": False})
+        client.update_submission(7, 5, excuse=False)
+        body = transport.requests[0].content.decode()
+        assert body == "submission%5Bexcuse%5D=false"
 
     def test_update_submission_late_policy_status(self, mock_client):
         client, transport = mock_client

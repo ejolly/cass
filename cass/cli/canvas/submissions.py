@@ -13,6 +13,7 @@ from . import _common
 
 if TYPE_CHECKING:
     from ...actions.submissions import SubmissionCommand
+    from ...apis.canvas.schema import CanvasSubmissionResponse
 
 submissions_app = typer.Typer(
     invoke_without_command=True,
@@ -28,18 +29,22 @@ def submissions_callback(ctx: typer.Context) -> None:
         typer.echo(ctx.get_help())
 
 
+_LIST_STUDENT_OPTION = typer.Option(
+    None, "--student", help="Canvas user ID; repeatable"
+)
+
+
 @submissions_app.command(name="list")
 def submissions_list(
     assignment: str = typer.Argument(..., help="Assignment ID or name"),
-    student_ids: Annotated[
-        list[int],
-        typer.Option("--student", help="Canvas user ID; repeatable"),
-    ] = [],  # noqa: B006
+    student_ids: list[int] | None = _LIST_STUDENT_OPTION,
     csv_out: str = typer.Option("", "--csv", help="Export as CSV file"),
     save: str = typer.Option("", "--save", help="Save output as markdown file"),
     as_json: bool = _common.json_option(),
 ) -> None:
-    """Show each student's submission state, lateness and score."""
+    """Show each student's submission status and score."""
+    from rich.markup import escape
+
     from ...actions.submissions import submission_rows
     from .. import report
 
@@ -47,7 +52,7 @@ def submissions_list(
     _common.require_canvas()
     with _common.client() as c:
         target = c.resolve_assignment(assignment)
-        subs = submission_rows(c, target, student_ids=student_ids)
+        subs = submission_rows(c, target, student_ids=student_ids or [])
         tz = c.time_zone
 
     if as_json:
@@ -66,28 +71,45 @@ def submissions_list(
         "Late policy",
         "Score",
     ]
-    rows = [
-        [
-            sub.user.name if sub.user else str(sub.user_id),
-            str(sub.user_id),
-            sub.workflow_state,
-            _common.when(sub.submitted_at, tz),
-            _common.when(sub.cached_due_date, tz),
-            _common.pub(sub.late),
-            _common.pub(sub.missing),
-            _common.pub(sub.excused),
-            sub.late_policy_status or "",
-            "" if sub.score is None else f"{sub.score:g}",
-        ]
-        for sub in subs
-    ]
     title = f"Submissions: {target.name}"
     if csv_out:
+        rows = [_list_row(sub, tz, styled=False) for sub in subs]
         report.write_csv_file(csv_out, headers=headers, rows=rows)
     elif save:
+        rows = [_list_row(sub, tz, styled=False) for sub in subs]
         report.save_markdown(save, title, headers, rows)
     else:
-        report.render_list(headers, rows, title=title)
+        rows = [_list_row(sub, tz, styled=True) for sub in subs]
+        report.render_list(headers, rows, title=escape(title))
+
+
+def _list_row(sub: CanvasSubmissionResponse, tz: str, *, styled: bool) -> list[str]:
+    """One ``submissions list`` row; *styled* rows are Rich markup for the table.
+
+    Styled rows escape Canvas text, so a name like ``[/x]`` prints as typed.
+    """
+    from rich.markup import escape
+
+    def text(value: str) -> str:
+        return escape(value) if styled else value
+
+    def flag(value: bool | None) -> str:
+        if styled:
+            return _common.pub(value)
+        return "" if value is None else ("yes" if value else "no")
+
+    return [
+        text(sub.user.name if sub.user else str(sub.user_id)),
+        str(sub.user_id),
+        text(sub.workflow_state),
+        _common.when(sub.submitted_at, tz),
+        _common.when(sub.cached_due_date, tz),
+        flag(sub.late),
+        flag(sub.missing),
+        flag(sub.excused),
+        text(sub.late_policy_status or ""),
+        "" if sub.score is None else f"{sub.score:g}",
+    ]
 
 
 _TITLES = {"excuse": "Excuse", "clear-late": "Clear late"}
@@ -158,15 +180,18 @@ def _run(
         if c.planned_requests:
             _common.err_console.print("Dry run — use --apply to send these changes.")
         return
+    if not applied:
+        _common.err_console.print("Nothing to send.")
+        return
     _common.console.print(
         f"{_DONE[kind]} {len(applied)} submission(s).", markup=False, highlight=False
     )
 
 
-STUDENT_OPTION = typer.Option(
-    "--student", help="Canvas user ID; repeatable (needs an ASSIGNMENT)"
+_STUDENT_OPTION = typer.Option(
+    None, "--student", help="Canvas user ID; repeatable (needs an ASSIGNMENT)"
 )
-ENROLLED_AFTER_HELP = (
+_ENROLLED_AFTER_HELP = (
     "Students first enrolled after DATE (course time zone), "
     "on assignments due before they enrolled"
 )
@@ -177,9 +202,9 @@ def submissions_excuse(
     assignment: Annotated[
         str, typer.Argument(help="Assignment ID or name (limits --enrolled-after)")
     ] = "",
-    student_ids: Annotated[list[int], STUDENT_OPTION] = [],  # noqa: B006
+    student_ids: list[int] | None = _STUDENT_OPTION,
     enrolled_after: str = typer.Option(
-        "", "--enrolled-after", help=ENROLLED_AFTER_HELP
+        "", "--enrolled-after", help=_ENROLLED_AFTER_HELP
     ),
     include_graded: bool = typer.Option(
         False, "--include-graded", help="Also excuse submissions that have a grade"
@@ -193,7 +218,7 @@ def submissions_excuse(
     _run(
         "excuse",
         assignment,
-        student_ids,
+        student_ids or [],
         enrolled_after,
         apply=apply,
         dry_run=dry_run,
@@ -206,9 +231,9 @@ def submissions_clear_late(
     assignment: Annotated[
         str, typer.Argument(help="Assignment ID or name (limits --enrolled-after)")
     ] = "",
-    student_ids: Annotated[list[int], STUDENT_OPTION] = [],  # noqa: B006
+    student_ids: list[int] | None = _STUDENT_OPTION,
     enrolled_after: str = typer.Option(
-        "", "--enrolled-after", help=ENROLLED_AFTER_HELP
+        "", "--enrolled-after", help=_ENROLLED_AFTER_HELP
     ),
     apply: bool = typer.Option(False, "--apply", help="Send the changes"),
     dry_run: bool = typer.Option(
@@ -219,7 +244,7 @@ def submissions_clear_late(
     _run(
         "clear-late",
         assignment,
-        student_ids,
+        student_ids or [],
         enrolled_after,
         apply=apply,
         dry_run=dry_run,

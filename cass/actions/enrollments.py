@@ -9,13 +9,15 @@ from __future__ import annotations
 
 __docformat__ = "google"
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
 import msgspec
+
+from ..apis.canvas.times import check_when, parse_when
 
 if TYPE_CHECKING:
     from ..apis.canvas.client import CanvasClient
@@ -95,6 +97,32 @@ def select_people(
     return [user for user in users if is_after(dates.get(user.id), cutoff)]
 
 
+def roster(
+    client: CanvasClient, *, states: Sequence[str] = (), enrolled_after: str = ""
+) -> tuple[list[CanvasUser], dict[int, str]]:
+    """The people to list and every user's enrolled-at date.
+
+    Args:
+        client: Canvas client.
+        states: Enrollment states to list; empty means Canvas's default.
+        enrolled_after: A user-entered date or time, read in the course time
+            zone; keeps people of any role first enrolled after it.
+
+    Returns:
+        The selected users, sorted by sortable name, and the enrolled-at map.
+
+    Raises:
+        RuntimeError: If *enrolled_after* is not a recognized time (before any
+            request).
+    """
+    check_when(enrolled_after)
+    users = client.list_users(states=list(states))
+    dates = enrollment_dates(fetch_all_enrollments(client))
+    cutoff = parse_when(enrolled_after, client.time_zone) if enrolled_after else ""
+    selected = select_people(users, dates, cutoff)
+    return sorted(selected, key=lambda u: (u.sortable_name or u.name, u.id)), dates
+
+
 def person_record(user: CanvasUser, enrolled_at: str | None) -> dict[str, object]:
     """A user as a plain dict plus the cass ``enrolled_at`` key."""
     return msgspec.to_builtins(user) | {"enrolled_at": enrolled_at}
@@ -114,6 +142,8 @@ def late_enrollees(
         enrolled_at = dates.get(enrollment.user_id)
         if enrolled_at is None or not is_after(enrolled_at, cutoff):
             continue
+        if enrollment.user_id in late and enrollment.user is None:
+            continue  # keep the name from an earlier section's enrollment
         name = enrollment.user.name if enrollment.user else str(enrollment.user_id)
         late[enrollment.user_id] = LateEnrollee(enrollment.user_id, name, enrolled_at)
     return late

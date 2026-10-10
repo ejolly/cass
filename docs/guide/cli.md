@@ -60,14 +60,15 @@ Folder paths are relative to the course files root (no `course files/` prefix). 
 
 ### Late enrollments
 
-`people list` shows each person's enrolled-at date. That is the earliest `created_at` among their enrollments, deleted ones included. `--enrolled-after DATE` keeps people first enrolled after DATE; a bare date means midnight in the course time zone. `--state` selects enrollment states (default: active and invited).
+`people list` shows each person's enrolled-at date. That is the earliest `created_at` among their enrollments, deleted ones included. `--enrolled-after DATE` keeps people of any role first enrolled after DATE; a bare date means midnight in the course time zone. `--state` selects enrollment states (default: active and invited).
 
 `submissions excuse` and `submissions clear-late` take exactly one of `--student ID` (repeatable, needs an ASSIGNMENT) or `--enrolled-after DATE`. Both are dry runs unless you pass `--apply`.
 
-- With `--enrolled-after`, only `StudentEnrollment` students in `active` or `invited` state count, never the Test Student. A submission is picked when its assignment was due before that student enrolled, judged by the student's own due date. Assignments without a due date and unpublished assignments are never touched. An unpublished ASSIGNMENT exits 1.
+- With `--enrolled-after`, only `StudentEnrollment` students in `active` or `invited` state count, never the Test Student. A submission is picked when its assignment was due before that student enrolled, judged by the student's own due date. Assignments without a due date and unpublished assignments are never touched. An unpublished ASSIGNMENT exits 1. Canvas fills in a new student's due dates a few moments after they enroll, so a student added minutes ago may not be picked yet.
 - With `--student` and an explicit ASSIGNMENT, cass makes the change even when the assignment is unpublished or has no due date, and warns.
-- `excuse` skips graded submissions unless you pass `--include-graded`, because excusing clears the grade. Any score is protected except Canvas's missing-submission policy score (marked missing, no grader), so a teacher's partial credit on a missing submission is kept. Submitted but ungraded work is excused because it has no score to protect.
-- `clear-late` skips excused submissions and sets Canvas's late status to `none`, so later late resubmissions are not marked late. On a group assignment it applies to the whole group.
+- `excuse` skips graded submissions unless you pass `--include-graded`, because excusing clears the grade. Any score is protected except Canvas's missing-submission policy score (marked missing, no grader), so a teacher's partial credit on a missing submission is kept. Marking a submission Missing by hand in the Canvas gradebook records you as its grader, so the policy score that follows is protected too; excusing it needs `--include-graded`. Submitted but ungraded work is excused because it has no score to protect; the dry run shows its submitted date.
+- `clear-late` sets Canvas's late status to `none`. That clears `late` and `missing` and restores any deducted points on the current submission; the dry run shows the points restored. Canvas resets the status when the student submits again, so a later late resubmission is marked late again: run `clear-late` again after it. If the student resubmitted after being graded, Canvas keeps the deduction until the submission is graded again.
+- `clear-late` skips submissions that are not late, excused submissions (setting a late status would un-excuse them), and assignments graded as a group, where Canvas would change every group member's status. Clear those in Canvas. `excuse` is per student, even on group assignments.
 
 ## Output and errors
 

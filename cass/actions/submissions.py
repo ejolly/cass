@@ -12,7 +12,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
-from ..apis.canvas.times import format_when, parse_when
+import httpx
+
+from ..apis.canvas.times import check_when, format_when, parse_when
 from .enrollments import fetch_all_enrollments, is_after, late_enrollees
 
 if TYPE_CHECKING:
@@ -47,7 +49,9 @@ def is_protected_grade(sub: CanvasSubmissionResponse) -> bool:
     Canvas's missing-submission policy writes its score with ``missing`` set
     and no ``grader_id``; those are what late enrollees need excused. A
     teacher's grade, including partial credit on a missing submission, has a
-    grader and stays protected.
+    grader and stays protected. So does a policy score on a submission a
+    teacher marked Missing by hand in the gradebook: Canvas records that
+    teacher as the grader.
     """
     is_policy_score = sub.missing and sub.grader_id is None
     return sub.score is not None and not is_policy_score
@@ -65,11 +69,12 @@ def pick_students(
     student_ids: Sequence[int],
     assignment_name: str,
 ) -> list[CanvasSubmissionResponse]:
-    """Select submissions for *student_ids*, in that order.
+    """Select submissions for *student_ids*, in that order, once each.
 
     Raises:
         RuntimeError: If any ID has no submission on the assignment.
     """
+    student_ids = list(dict.fromkeys(student_ids))  # drop repeats, keep order
     by_user = {sub.user_id: sub for sub in submissions}
     unknown = [student_id for student_id in student_ids if student_id not in by_user]
     if unknown:
@@ -100,14 +105,27 @@ def plan_excuse(
     return changes
 
 
+def is_graded_as_group(assignment: CanvasAssignmentResponse) -> bool:
+    """Whether Canvas grades *assignment* once for each whole group."""
+    return (
+        assignment.group_category_id is not None
+        and not assignment.grade_group_students_individually
+    )
+
+
 def plan_clear_late(targets: list[SubmissionTarget]) -> list[SubmissionChange]:
     """Plan clearing the late status of late targets.
 
-    Excused submissions are skipped: setting a late status would un-excuse them.
+    Skipped: assignments graded as a group, where Canvas would write the
+    status to every group member, and excused submissions, which setting a
+    late status would un-excuse.
     """
     changes = []
     for item in targets:
-        if item.submission.excused is True:
+        if is_graded_as_group(item.assignment):
+            reason = "graded as a group: Canvas would change every group member"
+            changes.append(SubmissionChange("skip", item, reason))
+        elif item.submission.excused is True:
             reason = "excused; clearing late would un-excuse it"
             changes.append(SubmissionChange("skip", item, reason))
         elif not item.submission.late:
@@ -117,6 +135,21 @@ def plan_clear_late(targets: list[SubmissionTarget]) -> list[SubmissionChange]:
     return changes
 
 
+def _detail(change: SubmissionChange, tz: str) -> str:
+    """Due and enrolled dates, plus what the change affects."""
+    sub = change.target.submission
+    parts = []
+    if sub.cached_due_date:
+        parts.append(f"due {format_when(sub.cached_due_date, tz)}")
+    if change.target.enrolled_at:
+        parts.append(f"enrolled {format_when(change.target.enrolled_at, tz)}")
+    if change.action == "excuse" and sub.submitted_at:
+        parts.append(f"submitted {format_when(sub.submitted_at, tz)}")
+    if change.action == "clear-late" and sub.points_deducted:
+        parts.append(f"{sub.points_deducted:g} pts restored")
+    return ", ".join(parts)
+
+
 def change_rows(
     changes: list[SubmissionChange], tz: str
 ) -> list[tuple[str, str, str, str]]:
@@ -124,13 +157,7 @@ def change_rows(
     rows = []
     for change in changes:
         item = change.target
-        if change.action == "skip":
-            detail = change.reason
-        else:
-            due = item.submission.cached_due_date
-            detail = f"due {format_when(due, tz)}" if due else ""
-            if due and item.enrolled_at:
-                detail += f", enrolled {format_when(item.enrolled_at, tz)}"
+        detail = change.reason if change.action == "skip" else _detail(change, tz)
         student = f"{item.student_name} ({item.submission.user_id})"
         rows.append((change.action, item.assignment.name, student, detail))
     return rows
@@ -144,29 +171,10 @@ def change_counts(changes: list[SubmissionChange]) -> dict[str, int]:
     return counts
 
 
-def group_late_warning(changes: list[SubmissionChange]) -> str | None:
-    """Warn when clear-late hits group assignments graded as a whole group."""
-    names = []
-    for change in changes:
-        assignment = change.target.assignment
-        is_group = (
-            assignment.group_category_id is not None
-            and not assignment.grade_group_students_individually
-        )
-        if change.action == "clear-late" and is_group and assignment.name not in names:
-            names.append(assignment.name)
-    if not names:
-        return None
-    return (
-        "Canvas applies clear-late to the whole group on group assignments: "
-        + ", ".join(names)
-    )
-
-
 # --- fetching targets ---------------------------------------------------------
 
 
-def _fetch_students(
+def _fetch_submissions(
     client: CanvasClient,
     assignment: CanvasAssignmentResponse,
     student_ids: Sequence[int],
@@ -182,7 +190,7 @@ def _fetch_students(
 
 
 def _student_name(sub: CanvasSubmissionResponse) -> str:
-    return sub.user.name if sub.user else str(sub.user_id)
+    return (sub.user.name if sub.user else "") or str(sub.user_id)
 
 
 def submission_rows(
@@ -199,11 +207,12 @@ def submission_rows(
     Raises:
         RuntimeError: If any ID has no submission on the assignment.
     """
-    submissions = _fetch_students(client, assignment, student_ids)
+    submissions = _fetch_submissions(client, assignment, student_ids)
     if student_ids:
         return submissions
     return sorted(
-        submissions, key=lambda sub: sub.user.sortable_name if sub.user else ""
+        submissions,
+        key=lambda sub: (sub.user.sortable_name if sub.user else "", sub.user_id),
     )
 
 
@@ -219,7 +228,7 @@ def targets_for_students(
     """
     return [
         SubmissionTarget(assignment, sub, _student_name(sub))
-        for sub in _fetch_students(client, assignment, student_ids)
+        for sub in _fetch_submissions(client, assignment, student_ids)
     ]
 
 
@@ -233,7 +242,7 @@ def targets_enrolled_after(
 
     Keeps each late enrollee's submissions on published assignments whose
     due date (the student's own) fell before they enrolled. Ordered by
-    student name, due date, then assignment name.
+    student name, user ID, due date, then assignment name.
 
     Raises:
         RuntimeError: If *assignment* is given and unpublished.
@@ -267,6 +276,7 @@ def targets_enrolled_after(
     targets.sort(
         key=lambda item: (
             item.student_name,
+            item.submission.user_id,
             item.submission.cached_due_date or "",
             item.assignment.name,
         )
@@ -295,6 +305,7 @@ def check_target_options(
     Raises:
         ValueError: On a missing or conflicting choice, or students without
             an assignment.
+        RuntimeError: If *enrolled_after* is not a recognized time.
     """
     if not student_ids and not enrolled_after:
         raise ValueError("Give --student or --enrolled-after.")
@@ -302,15 +313,29 @@ def check_target_options(
         raise ValueError("--student and --enrolled-after cannot be combined.")
     if student_ids and not has_assignment:
         raise ValueError("--student needs an ASSIGNMENT.")
+    check_when(enrolled_after)
 
 
-def _explicit_target_warnings(assignment: CanvasAssignmentResponse) -> list[str]:
-    """Warnings for an explicitly targeted assignment outside the usual scope."""
+def _explicit_target_warnings(
+    assignment: CanvasAssignmentResponse, targets: list[SubmissionTarget]
+) -> list[str]:
+    """Warnings for an explicitly targeted assignment outside the usual scope.
+
+    The due date is each student's own (``cached_due_date``), so an
+    assignment dated only through overrides does not warn.
+    """
     warnings = []
     if not assignment.published:
         warnings.append(f"Assignment {assignment.name!r} is unpublished.")
-    if assignment.due_at is None:
-        warnings.append(f"Assignment {assignment.name!r} has no due date.")
+    undated = [
+        f"{item.student_name} ({item.submission.user_id})"
+        for item in targets
+        if item.submission.cached_due_date is None
+    ]
+    if undated:
+        warnings.append(
+            f"Assignment {assignment.name!r} has no due date for: " + ", ".join(undated)
+        )
     return warnings
 
 
@@ -336,8 +361,8 @@ def plan_submission_command(
 
     Raises:
         ValueError: On a bad combination of target options (before any request).
-        RuntimeError: On an unknown student, an unparseable date, or an
-            unpublished assignment with ``--enrolled-after``.
+        RuntimeError: On an unknown student, an unparseable date (before any
+            request), or an unpublished assignment with ``--enrolled-after``.
     """
     check_target_options(
         has_assignment=assignment is not None,
@@ -347,7 +372,7 @@ def plan_submission_command(
     warnings: list[str] = []
     if student_ids and assignment is not None:
         targets = targets_for_students(client, assignment, student_ids)
-        warnings.extend(_explicit_target_warnings(assignment))
+        warnings.extend(_explicit_target_warnings(assignment, targets))
     else:
         cutoff = parse_when(enrolled_after, client.time_zone)
         targets = targets_enrolled_after(client, cutoff, assignment=assignment)
@@ -355,9 +380,6 @@ def plan_submission_command(
         changes = plan_excuse(targets, include_graded=include_graded)
     else:
         changes = plan_clear_late(targets)
-        group_warning = group_late_warning(changes)
-        if group_warning:
-            warnings.append(group_warning)
     return SubmissionPlan(
         changes=changes,
         rows=change_rows(changes, client.time_zone),
@@ -394,27 +416,33 @@ def apply_submission_changes(
     Returns:
         A description per change sent, such as ``"excuse HW1: Ann"``.
 
+    Clear-late sends ``late_policy_status=none``, which clears ``late`` and
+    ``missing`` and restores deducted points on the current submission.
+    Canvas resets the status when the student submits again, so a later late
+    resubmission is marked late again.
+
     Raises:
         SubmissionApplyError: When a request fails; it lists the changes sent
-            before the failure. Nothing is rolled back.
+            before the failure. Nothing is rolled back. Other errors, such as
+            an unreadable response to a request that was sent, propagate as is.
     """
     applied: list[str] = []
-    try:
-        for change in changes:
-            if change.action == "skip":
-                continue
-            assignment_id = change.target.assignment.id
-            user_id = change.target.submission.user_id
+    for change in changes:
+        if change.action == "skip":
+            continue
+        assignment_id = change.target.assignment.id
+        user_id = change.target.submission.user_id
+        try:
             if change.action == "excuse":
                 client.update_submission(assignment_id, user_id, excuse=True)
             else:
                 client.update_submission(
                     assignment_id, user_id, late_policy_status="none"
                 )
-            applied.append(
-                f"{change.action} {change.target.assignment.name}: "
-                f"{change.target.student_name}"
-            )
-    except Exception as exc:
-        raise SubmissionApplyError(exc, applied) from exc
+        except httpx.HTTPError as exc:
+            raise SubmissionApplyError(exc, applied) from exc
+        applied.append(
+            f"{change.action} {change.target.assignment.name}: "
+            f"{change.target.student_name}"
+        )
     return applied

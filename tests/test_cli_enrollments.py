@@ -86,6 +86,23 @@ def test_people_state_passes_enrollment_states(people_client: MagicMock) -> None
     assert bad.exit_code == 2
 
 
+def test_people_bad_date_fails_before_requests(people_client: MagicMock) -> None:
+    result = runner.invoke(
+        app, ["canvas", "people", "list", "--enrolled-after", "soon"]
+    )
+    assert result.exit_code == 1
+    assert "Unrecognized time" in str(result.exception)
+    people_client.list_users.assert_not_called()
+    people_client.list_enrollments.assert_not_called()
+
+
+def test_people_prints_markup_like_names_literally(people_client: MagicMock) -> None:
+    people_client.list_users.return_value = [CanvasUser(id=5, name="Ann [/x] Lee")]
+    result = runner.invoke(app, ["canvas", "people", "list"])
+    assert result.exit_code == 0, result.output
+    assert "Ann [/x] Lee" in result.stdout
+
+
 def test_people_json_has_enrolled_at(people_client: MagicMock) -> None:
     result = runner.invoke(app, ["canvas", "people", "list", "--json"])
     assert result.exit_code == 0, result.output
@@ -147,6 +164,46 @@ def test_submissions_list_student_filter(submissions_client: MagicMock) -> None:
     )
     assert bad.exit_code == 1
     assert "42" in str(bad.exception)
+
+
+def test_submissions_list_prints_markup_like_names_literally(
+    submissions_client: MagicMock,
+) -> None:
+    submissions_client.resolve_assignment.return_value = CanvasAssignmentResponse(
+        id=7, name="HW [b]1"
+    )
+    submissions_client.list_submissions.return_value = [
+        CanvasSubmissionResponse(
+            user_id=5, user=CanvasStudentResponse(id=5, name="Ann [/x]")
+        )
+    ]
+    result = runner.invoke(app, ["canvas", "submissions", "list", "HW1"])
+    assert result.exit_code == 0, result.output
+    assert "Ann [/x]" in result.stdout
+    assert "Submissions: HW [b]1" in result.stdout
+
+
+def test_submissions_list_csv_and_save(
+    submissions_client: MagicMock, tmp_path: Path
+) -> None:
+    csv_path = tmp_path / "subs.csv"
+    result = runner.invoke(
+        app, ["canvas", "submissions", "list", "HW1", "--csv", str(csv_path)]
+    )
+    assert result.exit_code == 0, result.output
+    lines = csv_path.read_text().splitlines()
+    assert lines[0].startswith("Student,Canvas ID,State")
+    assert lines[1] == "Ann Lee,5,submitted,2026-10-02 10:00,,yes,no,,late,"
+
+    md_path = tmp_path / "subs.md"
+    result = runner.invoke(
+        app, ["canvas", "submissions", "list", "HW1", "--save", str(md_path)]
+    )
+    assert result.exit_code == 0, result.output
+    markdown = md_path.read_text()
+    assert "Submissions: HW1" in markdown
+    assert re.search(r"\| Ann Lee +\| 5 +\| submitted +\|", markdown)
+    assert "[dim]" not in markdown
 
 
 def test_submissions_list_json(submissions_client: MagicMock) -> None:
@@ -338,6 +395,27 @@ def test_excuse_apply_sends_put(submissions_course: list[httpx.Request]) -> None
     assert "Excused 1 submission(s)." in result.stdout
 
 
+def test_excuse_repeated_student_sends_one_put(
+    submissions_course: list[httpx.Request],
+) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "canvas",
+            "submissions",
+            "excuse",
+            "HW1",
+            "--student",
+            "5",
+            "--student",
+            "5",
+            "--apply",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert len(_writes(submissions_course)) == 1
+
+
 def test_excuse_graded_needs_include_graded(
     submissions_course: list[httpx.Request],
 ) -> None:
@@ -347,6 +425,8 @@ def test_excuse_graded_needs_include_graded(
     assert _writes(submissions_course) == []
     assert "skip" in result.stdout
     assert "graded (8)" in result.stdout
+    assert "Nothing to send." in result.stderr
+    assert "Excused" not in result.stdout
 
     result = runner.invoke(app, [*base, "--include-graded"])
     assert result.exit_code == 0, result.output
@@ -381,16 +461,28 @@ def test_clear_late_apply_sends_none(submissions_course: list[httpx.Request]) ->
     assert "Cleared late on 1 submission(s)." in result.stdout
 
 
-def test_clear_late_group_assignment_warns(
+def test_clear_late_group_assignment_skips(
     submissions_course: list[httpx.Request],
 ) -> None:
     result = runner.invoke(
-        app, ["canvas", "submissions", "clear-late", "HW2", "--student", "7"]
+        app, ["canvas", "submissions", "clear-late", "HW2", "--student", "7", "--apply"]
     )
     assert result.exit_code == 0, result.output
-    assert "whole group" in result.stderr
-    assert "HW2" in result.stderr
-    assert "whole group" not in result.stdout
+    assert _writes(submissions_course) == []
+    assert re.search(r"skip .*HW2 .*graded as a group", result.stdout)
+    assert "whole group" not in result.output
+    assert "Nothing to send." in result.stderr
+
+
+def test_enrolled_after_bad_date_fails_before_requests(
+    submissions_course: list[httpx.Request],
+) -> None:
+    result = runner.invoke(
+        app, ["canvas", "submissions", "excuse", "--enrolled-after", "soon"]
+    )
+    assert result.exit_code == 1
+    assert "Unrecognized time" in str(result.exception)
+    assert submissions_course == []
 
 
 @pytest.mark.parametrize("command", ["excuse", "clear-late"])

@@ -26,13 +26,7 @@ def parse_when(value: str, tz: str) -> str:
     text = value.strip()
     if not text:
         return ""
-    try:
-        parsed = datetime.fromisoformat(text.replace(" ", "T", 1))
-    except ValueError:
-        raise RuntimeError(
-            f"Unrecognized time {value!r}; use YYYY-MM-DD, YYYY-MM-DD HH:MM, "
-            "or ISO 8601 with an offset"
-        ) from None
+    parsed = _parse(value)
     if parsed.tzinfo is not None:
         return text
     if not tz:
@@ -41,6 +35,27 @@ def parse_when(value: str, tz: str) -> str:
             "or run 'cass init'."
         )
     return parsed.replace(tzinfo=ZoneInfo(tz)).isoformat()
+
+
+def check_when(value: str) -> None:
+    """Fail early on a time ``parse_when`` would reject, without a time zone.
+
+    Raises:
+        RuntimeError: If the value cannot be parsed.
+    """
+    if value.strip():
+        _parse(value)
+
+
+def _parse(value: str) -> datetime:
+    text = value.strip()
+    try:
+        return datetime.fromisoformat(text.replace(" ", "T", 1))
+    except ValueError:
+        raise RuntimeError(
+            f"Unrecognized time {value!r}; use YYYY-MM-DD, YYYY-MM-DD HH:MM, "
+            "or ISO 8601 with an offset"
+        ) from None
 
 
 def format_when(iso: str | None, tz: str, *, date_only: bool = False) -> str:

@@ -83,7 +83,11 @@ class GradesMixin(BaseClient):
             assignment_id: Canvas assignment ID.
             user_id: Student's Canvas user ID.
             excuse: Excuse (True) or un-excuse (False) the submission.
+                Either way Canvas clears the grade and score.
             late_policy_status: Late policy status (e.g. ``none``, ``late``).
+                ``none`` clears ``late`` and ``missing`` and restores
+                deducted points; any status un-excuses the submission.
+                Canvas resets the status when the student submits again.
 
         Returns:
             The updated submission.
