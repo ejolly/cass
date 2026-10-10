@@ -48,6 +48,7 @@ title = "Reading response 1"
 type = "ExternalUrl"
 title = "Course site"
 url = "https://example.com/course"
+published = true                       # new links and SubHeaders start unpublished
 ```
 
 `type` is one of `Assignment`, `Quiz`, `Page`, `File`, `ExternalUrl`, `SubHeader` (case-insensitive). `indent` (default 0) and `published` are allowed on every type. Unknown keys are errors.
@@ -59,11 +60,11 @@ url = "https://example.com/course"
 | `ExternalUrl` | `url`, `title` | |
 | `SubHeader` | `title` | |
 
-Titles match case-insensitively. Assignment, Quiz and Page items show the content's own title. You can reference assignments and quizzes declared in the same file or created by the same `sync`. Only plain assignments match, not quiz or discussion assignments. `file` paths start below the root: `readings/w1.pdf`, not `course files/readings/w1.pdf`.
+Titles match case-insensitively. Assignment, Quiz and Page items show the content's own title. An `ExternalUrl` `url` must start with `http://` or `https://`. You can reference assignments and quizzes declared in the same file or created by the same `sync`. Only plain assignments match, not quiz or discussion assignments. `file` paths start below the root: `readings/w1.pdf`, not `course files/readings/w1.pdf`.
 
 ### Matching and outcomes
 
-A declared item matches a live item by what it points at: the content ID, the page, the URL, or the file. SubHeaders have no content, so they pair by order. Duplicates pair in order too.
+A declared item matches a live item by what it points at: the content ID, the page, the URL, or the file. Canvas percent-encodes non-ASCII characters in a URL, so `https://example.com/café` matches the stored `https://example.com/caf%C3%A9`. SubHeaders have no content, so they pair by order. Duplicates pair in order too.
 
 Each item gets one outcome in the `sync` table:
 
@@ -83,14 +84,16 @@ If an item cannot be found or is ambiguous, `sync` lists every such item across 
 
 ### Files
 
-A `File` item with a `source` uploads the local file when the path does not exist on Canvas or the size differs. `sync` does not detect a same-size edit. Replace the file with `cass canvas files upload --on-duplicate overwrite`. An upload over an existing file replaces it in place, so the file ID and the item's link stay the same. Without `source`, the file must already exist.
+A `File` item with a `source` uploads the local file when the path does not exist on Canvas or the size differs. `sync` does not detect a same-size edit. Replace the file with `cass canvas files upload --on-duplicate overwrite`. Canvas stores an upload over an existing file as a new file with a new ID and re-points module items to it, so items stay linked. Paths match case-insensitively; the upload keeps the existing file's exact name so Canvas replaces it rather than adding a second file. Without `source`, the file must already exist.
 
 For a `File`, `published` sets the file's lock, not the item's. `true` unlocks the file, `false` locks it. A new upload is locked unless `published = true`. An overwrite with `published` omitted keeps the file's current lock.
 
 ### Canvas quirks
 
-- Canvas answers any `published` value with `403 item can't be unpublished`, even an unchanged one. cass sends `published` only when it changes.
-- Items are read per module. `include[]=items` on the module list truncates long modules.
+- New `ExternalUrl` and `SubHeader` items are created unpublished. Set `published = true` for students to see them. Other new items take their content's published state.
+- An Assignment, Quiz or Page item's `published` also publishes or unpublishes the content itself. If it disagrees with that assignment's `[[canvas.assignments]] published`, each `sync` flips it back and forth, so declare one value in both places.
+- Canvas answers `published = false` with `403 item can't be unpublished` when the content can't be unpublished, such as an assignment with submissions or the front page. It checks even when the item is already unpublished, so cass sends `published` only when it differs from the live item. The item stays published, so a declared `false` on it fails every `--apply`; leave `published` out instead.
+- Items are read per module. The module list's `include[]=items` leaves `items` out entirely for modules with many items.
 - `--prune` and `extra` only apply to modules that declare `items`. `items = []` declares an empty module.
 
 ## Times
