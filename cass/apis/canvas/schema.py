@@ -58,6 +58,10 @@ class CanvasEnrollment(msgspec.Struct):
     grades: CanvasEnrollmentGrades = msgspec.field(
         default_factory=CanvasEnrollmentGrades
     )
+    created_at: str | None = None
+    start_at: str | None = None
+    end_at: str | None = None
+    user: CanvasStudentResponse | None = None
 
     @property
     def computed_final_score(self) -> float | None:
@@ -173,6 +177,8 @@ class CanvasAssignmentResponse(msgspec.Struct):
     has_submitted_submissions: bool = False
     workflow_state: str = ""
     post_manually: bool = False
+    group_category_id: int | None = None
+    grade_group_students_individually: bool = False
 
 
 class CanvasAssignmentGroup(msgspec.Struct):
@@ -378,6 +384,11 @@ class CanvasSubmissionResponse(msgspec.Struct):
     score: float | None = None
     workflow_state: str = ""
     cached_due_date: str | None = None  # per-student due, after overrides
+    assignment_id: int = 0
+    excused: bool | None = None
+    late_policy_status: str | None = None
+    points_deducted: float | None = None
+    user: CanvasStudentResponse | None = None
 
 
 class CanvasProgress(msgspec.Struct):

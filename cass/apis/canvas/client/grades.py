@@ -6,6 +6,7 @@ __docformat__ = "google"
 
 import logging
 import time
+from collections.abc import Sequence
 from typing import Any
 
 import httpx
@@ -17,23 +18,91 @@ from .base import BaseClient
 
 _log = logging.getLogger(__name__)
 
+_STUDENT_CHUNK_SIZE = 100  # Canvas caps student_ids[] per request
+
 
 class GradesMixin(BaseClient):
     """Submissions, grade pushes, progress polling, and grade posting."""
 
-    def list_submissions(self, assignment_id: int) -> list[CanvasSubmissionResponse]:
+    def list_submissions(
+        self, assignment_id: int, *, include_user: bool = False
+    ) -> list[CanvasSubmissionResponse]:
         """List submissions for an assignment.
 
         Args:
             assignment_id: Canvas assignment ID.
+            include_user: Embed the submitting user in each submission.
 
         Returns:
             All submissions for the assignment.
         """
-        data = self._get_paginated(
-            self._course(f"/assignments/{assignment_id}/submissions")
+        params: list[tuple[str, object]] = []
+        if include_user:
+            params.append(("include[]", "user"))
+        data = self.get_all(
+            self._course(f"/assignments/{assignment_id}/submissions"), params
         )
         return msgspec.convert(data, list[CanvasSubmissionResponse], strict=False)
+
+    def list_student_submissions(
+        self, student_ids: Sequence[int], *, assignment_ids: Sequence[int] = ()
+    ) -> list[CanvasSubmissionResponse]:
+        """List submissions for students across assignments.
+
+        Student IDs are sent in chunks of 100 (one request per chunk).
+
+        Args:
+            student_ids: Canvas user IDs.
+            assignment_ids: Restrict to these assignments; empty means all.
+
+        Returns:
+            Submissions for all chunks, concatenated. Empty when no students.
+        """
+        ids = list(student_ids)
+        data: list[dict[str, Any]] = []
+        for start in range(0, len(ids), _STUDENT_CHUNK_SIZE):
+            params: list[tuple[str, object]] = [
+                ("student_ids[]", sid)
+                for sid in ids[start : start + _STUDENT_CHUNK_SIZE]
+            ]
+            params.extend(("assignment_ids[]", aid) for aid in assignment_ids)
+            data.extend(self.get_all(self._course("/students/submissions"), params))
+        return msgspec.convert(data, list[CanvasSubmissionResponse], strict=False)
+
+    def update_submission(
+        self,
+        assignment_id: int,
+        user_id: int,
+        *,
+        excuse: bool | None = None,
+        late_policy_status: str | None = None,
+    ) -> CanvasSubmissionResponse:
+        """Update excused or late-policy status on one submission.
+
+        Args:
+            assignment_id: Canvas assignment ID.
+            user_id: Student's Canvas user ID.
+            excuse: Excuse (True) or un-excuse (False) the submission.
+            late_policy_status: Late policy status (e.g. ``none``, ``late``).
+
+        Returns:
+            The updated submission.
+
+        Raises:
+            ValueError: If neither field is given.
+        """
+        form: dict[str, str] = {}
+        if excuse is not None:
+            form["submission[excuse]"] = "true" if excuse else "false"
+        if late_policy_status is not None:
+            form["submission[late_policy_status]"] = late_policy_status
+        if not form:
+            raise ValueError("update_submission needs excuse or late_policy_status")
+        resp = self._client.put(
+            self._course(f"/assignments/{assignment_id}/submissions/{user_id}"),
+            data=form,
+        )
+        return msgspec.convert(resp.json(), CanvasSubmissionResponse, strict=False)
 
     def push_grade(
         self, assignment_id: int, student_canvas_id: int, grade: str

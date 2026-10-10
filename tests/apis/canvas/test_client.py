@@ -1861,3 +1861,133 @@ class TestModuleItems:
         with pytest.raises(RuntimeError, match="ambiguous") as excinfo:
             client.resolve_module_item(5, "Reading")
         assert "1, 2" in str(excinfo.value)
+
+
+class TestEnrollmentsAndSubmissions:
+    @staticmethod
+    def _params(request):
+        return sorted(request.url.params.multi_items())
+
+    def test_enrollment_converts_dates_and_user(self):
+        enrollment = msgspec.convert(
+            {
+                "id": 1,
+                "user_id": 5,
+                "created_at": "2026-10-02T17:00:00Z",
+                "start_at": None,
+                "user": {"id": 5, "name": "Ann Lee"},
+            },
+            CanvasEnrollment,
+            strict=False,
+        )
+        assert enrollment.created_at == "2026-10-02T17:00:00Z"
+        assert enrollment.start_at is None
+        assert enrollment.user is not None
+        assert enrollment.user.name == "Ann Lee"
+
+    def test_submission_converts_status_fields(self):
+        submission = msgspec.convert(
+            {
+                "user_id": 5,
+                "assignment_id": 7,
+                "excused": None,
+                "late_policy_status": "none",
+                "points_deducted": 1.5,
+                "user": {"id": 5, "name": "Ann"},
+            },
+            CanvasSubmissionResponse,
+            strict=False,
+        )
+        assert submission.excused is None
+        assert submission.late_policy_status == "none"
+        assert submission.points_deducted == 1.5
+        assert submission.user is not None
+        assert submission.user.id == 5
+
+    def test_list_enrollments_default_query_unchanged(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data=[])
+        client.list_enrollments()
+        request = transport.requests[0]
+        assert request.url.path == "/api/v1/courses/1/enrollments"
+        assert self._params(request) == [
+            ("include[]", "total_scores"),
+            ("per_page", "100"),
+            ("state[]", "active"),
+            ("type[]", "StudentEnrollment"),
+        ]
+
+    def test_list_enrollments_all_types_and_states(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data=[])
+        client.list_enrollments(
+            enrollment_type=None, states=("active", "deleted"), include_scores=False
+        )
+        assert self._params(transport.requests[0]) == [
+            ("per_page", "100"),
+            ("state[]", "active"),
+            ("state[]", "deleted"),
+        ]
+
+    def test_list_users_enrollment_states(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data=[])
+        client.list_users(states=["active", "completed"])
+        params = self._params(transport.requests[0])
+        assert ("enrollment_state[]", "active") in params
+        assert ("enrollment_state[]", "completed") in params
+        assert ("include[]", "enrollments") in params
+        assert ("include[]", "email") in params
+
+    def test_list_submissions_include_user(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data=[])
+        transport.add(json_data=[])
+        client.list_submissions(7, include_user=True)
+        client.list_submissions(7)
+        assert ("include[]", "user") in self._params(transport.requests[0])
+        assert ("include[]", "user") not in self._params(transport.requests[1])
+
+    def test_list_student_submissions_chunks_ids(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data=[{"user_id": 1}])
+        transport.add(json_data=[{"user_id": 2}])
+        result = client.list_student_submissions(range(1, 151), assignment_ids=[7])
+        assert [s.user_id for s in result] == [1, 2]
+        assert len(transport.requests) == 2
+        for request, expected in zip(transport.requests, (100, 50), strict=True):
+            assert request.url.path == "/api/v1/courses/1/students/submissions"
+            params = self._params(request)
+            assert len([p for p in params if p[0] == "student_ids[]"]) == expected
+            assert ("assignment_ids[]", "7") in params
+
+    def test_list_student_submissions_empty_sends_nothing(self, mock_client):
+        client, transport = mock_client
+        assert client.list_student_submissions([], assignment_ids=[7]) == []
+        assert transport.requests == []
+
+    def test_update_submission_excuse(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data={"user_id": 5, "excused": True})
+        result = client.update_submission(7, 5, excuse=True)
+        request = transport.requests[0]
+        assert (request.method, request.url.path) == (
+            "PUT",
+            "/api/v1/courses/1/assignments/7/submissions/5",
+        )
+        assert request.content.decode() == "submission%5Bexcuse%5D=true"
+        assert result.excused is True
+
+    def test_update_submission_late_policy_status(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data={"user_id": 5})
+        client.update_submission(7, 5, late_policy_status="none")
+        body = transport.requests[0].content.decode()
+        assert body == "submission%5Blate_policy_status%5D=none"
+        assert "excuse" not in body
+
+    def test_update_submission_without_fields_raises(self, mock_client):
+        client, transport = mock_client
+        with pytest.raises(ValueError, match="excuse or late_policy_status"):
+            client.update_submission(7, 5)
+        assert transport.requests == []

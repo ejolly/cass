@@ -4,6 +4,8 @@ from __future__ import annotations
 
 __docformat__ = "google"
 
+from collections.abc import Sequence
+
 import msgspec
 
 from ..schema import (
@@ -29,19 +31,27 @@ class CourseMixin(BaseClient):
         resp = self._client.get(self._course("?include[]=total_students"))
         return msgspec.convert(resp.json(), CanvasCourse, strict=False)
 
-    def list_users(self, enrollment_type: str | None = None) -> list[CanvasUser]:
+    def list_users(
+        self, enrollment_type: str | None = None, *, states: Sequence[str] = ()
+    ) -> list[CanvasUser]:
         """List course users with enrollments.
 
         Args:
             enrollment_type: Filter by role (e.g. ``student``, ``teacher``).
+            states: Enrollment states to include (e.g. ``active``,
+                ``completed``); empty keeps Canvas's default.
 
         Returns:
             Users sorted by name.
         """
-        path = self._course("/users?include[]=enrollments&include[]=email")
+        params: list[tuple[str, object]] = [
+            ("include[]", "enrollments"),
+            ("include[]", "email"),
+        ]
         if enrollment_type:
-            path += f"&enrollment_type[]={enrollment_type}"
-        data = self._get_paginated(path)
+            params.append(("enrollment_type[]", enrollment_type))
+        params.extend(("enrollment_state[]", state) for state in states)
+        data = self.get_all(self._course("/users"), params)
         return msgspec.convert(data, list[CanvasUser], strict=False)
 
     def list_students(self) -> list[CanvasStudentResponse]:
@@ -65,22 +75,30 @@ class CourseMixin(BaseClient):
         return msgspec.convert(data, list[CanvasSection], strict=False)
 
     def list_enrollments(
-        self, *, enrollment_type: str = "StudentEnrollment"
+        self,
+        *,
+        enrollment_type: str | None = "StudentEnrollment",
+        states: Sequence[str] = ("active",),
+        include_scores: bool = True,
     ) -> list[CanvasEnrollment]:
-        """List enrollments with computed scores.
+        """List enrollments, optionally with computed scores.
 
         Args:
-            enrollment_type: Filter by type (default: StudentEnrollment).
+            enrollment_type: Filter by type (default: StudentEnrollment);
+                ``None`` returns every type.
+            states: Enrollment states to include (default: active).
+            include_scores: Include computed scores (``total_scores``).
 
         Returns:
-            Enrollments including computed_final_score.
+            Enrollments, including computed_final_score when requested.
         """
-        data = self._get_paginated(
-            self._course(
-                f"/enrollments?type[]={enrollment_type}"
-                "&state[]=active&include[]=total_scores"
-            )
-        )
+        params: list[tuple[str, object]] = []
+        if enrollment_type:
+            params.append(("type[]", enrollment_type))
+        params.extend(("state[]", state) for state in states)
+        if include_scores:
+            params.append(("include[]", "total_scores"))
+        data = self.get_all(self._course("/enrollments"), params)
         return msgspec.convert(data, list[CanvasEnrollment], strict=False)
 
     def list_grading_standards(self) -> list[CanvasGradingStandard]:
