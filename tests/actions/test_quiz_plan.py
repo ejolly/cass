@@ -272,6 +272,21 @@ def test_prune_deletes_emptied_group():
     assert [g.action for g in plan.groups] == ["extra"]
     assert plan.order == [("question", 0), ("question", 1), ("group", "Pair")]
     assert plan.group_members == {"Pair": [2]}
+    assert plan_summary(plan) == "0 added, 1 updated, 0 deleted, 1 kept, 1 extra"
+
+
+def test_emptied_extra_group_is_not_reordered():
+    spec = _spec(
+        [
+            QuestionSpec(text="<p>11</p>", id=11),
+            QuestionSpec(text="<p>12</p>", id=12),
+            QuestionSpec(text="<p>13</p>", id=13),
+        ]
+    )
+    plan = plan_quiz_questions(spec, _paired_state(), prune=False)
+    assert [g.action for g in plan.groups] == ["extra"]
+    assert plan.reordered_groups == []
+    assert plan.order_changed is True
 
 
 def test_extra_question_stays_in_its_matched_group():
@@ -305,6 +320,9 @@ def test_group_settings_change():
     assert plan.groups[0].changed == ["pick_count"]
     assert _actions(plan) == ["keep", "keep", "keep"]
     assert plan.has_changes is True
+    assert plan_summary(plan) == (
+        "0 added, 0 updated, 0 deleted, 3 kept, 0 extra; groups: 1 updated"
+    )
 
 
 def test_duplicate_live_group_names_raise():
@@ -334,6 +352,42 @@ def test_empty_file_name_never_reported():
     plan = plan_quiz_questions(spec, state, prune=False)
     assert _actions(plan) == ["keep", "keep"]
     assert all("name" not in change.changed for change in plan.questions)
+
+
+def test_default_file_name_built_in_code_is_not_a_change():
+    state = _state([_live(11, 1, name="Custom")])
+    spec = _spec([QuestionSpec(text="<p>11</p>", id=11, name="Question 2")])
+    plan = plan_quiz_questions(spec, state, prune=False)
+    assert _actions(plan) == ["keep"]
+
+
+def test_unchanged_partial_weight_answers_keep():
+    live = _live(
+        11,
+        1,
+        question_type="multiple_answers_question",
+        answers=[
+            CanvasQuizAnswer(id=1, text="A", weight=50.0),
+            CanvasQuizAnswer(id=2, text="B", weight=50.0),
+            CanvasQuizAnswer(id=3, text="C", weight=0.0),
+        ],
+    )
+    spec = _spec(
+        [
+            QuestionSpec(
+                text="<p>11</p>",
+                id=11,
+                type="multiple_answers_question",
+                answers=[
+                    AnswerSpec("A", correct=True),
+                    AnswerSpec("B", correct=True),
+                    AnswerSpec("C"),
+                ],
+            )
+        ]
+    )
+    plan = plan_quiz_questions(spec, _state([live]), prune=False)
+    assert _actions(plan) == ["keep"]
 
 
 def _answer_change(student_attempts: int):

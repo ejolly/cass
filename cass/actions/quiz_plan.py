@@ -178,8 +178,9 @@ def _question_changes(
     live_answers = [(a.text, a.weight > 0) for a in live.answers]
     differs = {
         "text": question.text != live.question_text,
-        # An empty file name keeps whatever name Canvas has.
-        "name": bool(question.name) and question.name != live.question_name,
+        # An empty or Canvas-default file name keeps whatever name Canvas has.
+        "name": bool(_match_name(question.name))
+        and question.name != live.question_name,
         "type": question.type != live.question_type,
         "points": desired_points != (live.points_possible or 0.0),
         "answers": desired_answers != live_answers,
@@ -282,6 +283,7 @@ def plan_quiz_questions(
     for live_group in state.groups:
         if live_group.name in file_group_names:
             continue
+        # Only matters without prune: extras left in the group keep it alive.
         still_holds_questions = any(
             change.live is not None
             and change.live.quiz_group_id == live_group.id
@@ -383,8 +385,10 @@ def _reordered_groups(
         if group.action == "add" or group.live is None:
             reordered.append(group.name)
             continue
-        live_group_id = group.live.id
         desired = [_live_id(questions[i]) for i in members.get(group.name, [])]
+        if not desired:
+            continue  # nothing to reorder in a group left empty
+        live_group_id = group.live.id
         current = [
             q.id
             for q in state.questions
@@ -462,12 +466,26 @@ def question_plan_warning(plan: QuestionPlan) -> str | None:
 
 
 def plan_summary(plan: QuestionPlan) -> str:
-    """Question counts by action.
+    """Question counts by action, plus group changes when there are any.
 
-    For example ``"1 added, 1 updated, 0 deleted, 3 kept, 0 extra"``.
+    For example ``"1 added, 1 updated, 0 deleted, 3 kept, 0 extra"`` or
+    ``"0 added, 0 updated, 0 deleted, 3 kept, 0 extra; groups: 1 updated"``.
     """
     counts = Counter(change.action for change in plan.questions)
-    return (
+    summary = (
         f"{counts['add']} added, {counts['update']} updated, "
         f"{counts['delete']} deleted, {counts['keep']} kept, {counts['extra']} extra"
     )
+    group_counts = Counter(change.action for change in plan.groups)
+    group_parts = [
+        f"{group_counts[action]} {label}"
+        for action, label in (
+            ("add", "added"),
+            ("update", "updated"),
+            ("delete", "deleted"),
+        )
+        if group_counts[action]
+    ]
+    if group_parts:
+        summary += f"; groups: {', '.join(group_parts)}"
+    return summary
