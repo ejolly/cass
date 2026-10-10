@@ -9,13 +9,15 @@ cass canvas quizzes list
 cass canvas quizzes show "Survey 1"                   # settings and questions (--json for machines)
 cass canvas quizzes export "Survey 1" -o quizzes/survey-1.toml
 cass canvas quizzes create --from quizzes/survey-1.toml [--publish] [--create-groups]
-cass canvas quizzes update "Survey 1" --from quizzes/survey-1.toml
+cass canvas quizzes update "Survey 1" --from quizzes/survey-1.toml [--questions [--apply] [--prune]]
+cass canvas quizzes questions "Survey 1"              # question IDs, groups, types (--json for machines)
+cass canvas quizzes preview "Survey 1"                # one student-style draw of the questions
 cass canvas quizzes publish "Survey 1"                # also unpublish, delete
 cass canvas quizzes responses "Survey 1" [--all-attempts] [--csv responses.csv] [--wide]
 cass canvas sync [--apply] [--create-groups]          # reconcile [[canvas.quizzes]] declarations
 ```
 
-`update` and `sync` change quiz settings only. Questions on an existing quiz are never modified.
+`sync` and plain `update` change quiz settings only. `update --questions` also reconciles questions; see [Editing questions](#editing-questions).
 
 ## Quiz file
 
@@ -44,8 +46,54 @@ answers = [{ text = "A", correct = true }, { text = "B" }]
 
 - `title` and `type` are required; every other setting has a default (`description`, `lock_at`, `time_limit`, `scoring_policy`, `shuffle_answers`, `one_question_at_a_time`, `published`).
 - Question `type` aliases: `essay`, `multiple_choice`, `multiple_answers`, `true_false`, `short_answer`, `numerical`, `text_only`. Other Canvas question types pass through verbatim.
-- Question `points` default to 0 for surveys and 1 otherwise; `name` defaults to `Question N`.
+- Question `points` default to 0 for surveys and 1 otherwise; `name` defaults to `Question`.
 - `answers` are required for `multiple_choice`, `multiple_answers`, and `true_false`; `correct = true` marks the right answer.
+
+## Editing questions
+
+`export` writes the questions with their Canvas IDs; edit the file and send it back:
+
+```bash
+cass canvas quizzes export "Survey 1" -o quizzes/survey-1.toml
+# edit the file
+cass canvas quizzes update "Survey 1" --from quizzes/survey-1.toml --questions           # dry run: shows the plan
+cass canvas quizzes update "Survey 1" --from quizzes/survey-1.toml --questions --apply   # send it
+```
+
+Without `--apply`, `--questions` prints one line per question and group (`keep`, `add`, `update`, `delete`, `extra`) and sends nothing. Questions on Canvas but not in the file are `extra` and left alone; `--prune` deletes them, and any group missing from the file, instead.
+
+A file question is matched to a Canvas question by `id`, then by name when it is unique, then by relative order among the rest. Questions with no `id` (new ones) match by name or order, or are added. Reordering the file reorders the quiz. `Question` and `Question N` count as no name, and an unnamed new question is posted as `Question`.
+
+Question groups make Canvas draw a few questions from a pool for each attempt:
+
+```toml
+[[groups]]
+name = "Pool"
+pick_count = 1         # default 1
+points_per_item = 2    # default: the quiz type's question points
+
+[[questions]]
+group = "Pool"         # a question group, not the quiz's assignment `group`
+text = "<p>First candidate</p>"
+
+[[questions]]
+group = "Pool"
+text = "<p>Second candidate</p>"
+```
+
+Questions in one group must be next to each other. The group sits at its first question's place in the quiz.
+
+`update --questions --apply` sends settings changes first. If a question change then fails, the settings stay applied, and the error lists what was applied before the failure.
+
+If students have finished attempts, cass warns first: Canvas keeps earlier attempts on the old version of each question. Plan lines for questions whose answers change are marked, because editing answers replaces their answer IDs.
+
+`questions` lists a quiz's questions in order with IDs and groups. `preview` starts a teacher preview and lists the questions in the order a student would see them. Groups and shuffling make each attempt differ, and the preview submission stays on Canvas.
+
+### Canvas quirks
+
+- Positions sent when creating questions are ignored, so cass reorders after creating.
+- `position` is null until the quiz is re-saved. cass re-saves after every change.
+- Changing a question's answers on a quiz with submissions replaces their answer IDs.
 
 ## Declaring quizzes in cass.toml
 
