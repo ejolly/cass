@@ -86,9 +86,7 @@ def main() -> None:
     with practice_client() as client:
         cfg = get_config()
         specs = [load_quiz_file(ref.file) for ref in cfg.canvas_quizzes]
-        for action, _, name in sync_quizzes(
-            client, specs, {}, client.time_zone, apply=True
-        ):
+        for action, _, name in sync_quizzes(client, specs, {}, client.time_zone):
             print(f"{action}: {name}")
 
         student_id = get_test_student_id(client)

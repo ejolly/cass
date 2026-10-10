@@ -54,7 +54,7 @@ def sync(
         q.group for q in quiz_specs if q.group
     ]
 
-    with _common.client() as c:
+    with _common.client(dry_run=dry_run) as c:
         tz = c.time_zone
         actions: list[tuple[str, str, str]] = []  # (action, type, name)
 
@@ -70,8 +70,7 @@ def sync(
                 raise typer.Exit(code=1)
             for name in missing:
                 actions.append(("create", "group", name))
-                if not dry_run:
-                    group_ids[name.lower()] = c.create_assignment_group(name).id
+                group_ids[name.lower()] = c.create_assignment_group(name).id
 
         # --- Modules ---
         if cfg.canvas_modules:
@@ -90,19 +89,17 @@ def sync(
                                 f"{spec.name} (published: {spec.published})",
                             )
                         )
-                        if not dry_run:
-                            if spec.published:
-                                c.publish("modules", live.id)
-                            else:
-                                c.unpublish("modules", live.id)
+                        if spec.published:
+                            c.publish("modules", live.id)
+                        else:
+                            c.unpublish("modules", live.id)
                     else:
                         actions.append(("skip", "module", spec.name))
                 else:
                     actions.append(("create", "module", spec.name))
-                    if not dry_run:
-                        mod = c.create_module(spec.name)
-                        if spec.published:
-                            c.publish("modules", mod.id)
+                    mod = c.create_module(spec.name)
+                    if spec.published:
+                        c.publish("modules", mod.id)
 
         # --- Assignments ---
         if cfg.canvas_assignments:
@@ -133,27 +130,24 @@ def sync(
                         actions.append(("skip", "assignment", spec.name))
                 else:
                     actions.append(("create", "assignment", spec.name))
-                    if not dry_run:
-                        group_id = (
-                            group_ids.get(spec.group.lower()) if spec.group else None
-                        )
-                        c.create_assignment(
-                            spec.name,
-                            points_possible=spec.points,
-                            due_at=wanted_due or None,
-                            submission_types=spec.submission_types,
-                            published=spec.published,
-                            assignment_group_id=group_id,
-                        )
+                    group_id = group_ids.get(spec.group.lower()) if spec.group else None
+                    c.create_assignment(
+                        spec.name,
+                        points_possible=spec.points,
+                        due_at=wanted_due or None,
+                        submission_types=spec.submission_types,
+                        published=spec.published,
+                        assignment_group_id=group_id,
+                    )
 
-            if not dry_run and updates_by_id:
+            if updates_by_id:
                 push_assignments(c, updates_by_id)
 
         # --- Quizzes ---
         if quiz_specs:
-            actions.extend(
-                sync_quizzes(c, quiz_specs, group_ids, tz, apply=not dry_run)
-            )
+            actions.extend(sync_quizzes(c, quiz_specs, group_ids, tz))
+
+        plan_client = c
 
     # --- Display results ---
     table = Table(
@@ -177,6 +171,9 @@ def sync(
     updates = sum(1 for a, _, _ in actions if a == "update")
     skips = sum(1 for a, _, _ in actions if a == "skip")
     console.print(f"  {creates} create, {updates} update, {skips} skip")
+
+    if dry_run:
+        _common.print_plan(plan_client)
 
     if dry_run and (creates or updates):
         console.print(

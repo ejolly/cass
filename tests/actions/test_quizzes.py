@@ -294,19 +294,11 @@ class TestSyncQuizzes:
             QuizSpec(title="Existing", quiz_type="survey", attempts=2),
             QuizSpec(title="Existing", quiz_type="survey"),
         ]
-        rows = sync_quizzes(client, specs, {"participation": 9}, LA, apply=True)
+        rows = sync_quizzes(client, specs, {"participation": 9}, LA)
         assert [r[0] for r in rows] == ["create", "update", "skip"]
         assert "allowed_attempts: 2" in rows[1][2]
         client.create_quiz.assert_called_once_with(specs[0], assignment_group_id=9)
         client.update_quiz.assert_called_once_with(1, {"allowed_attempts": 2})
-
-    def test_dry_run_calls_nothing(self):
-        client = MagicMock()
-        client.list_quizzes.return_value = []
-        sync_quizzes(
-            client, [QuizSpec(title="New", quiz_type="survey")], {}, LA, apply=False
-        )
-        client.create_quiz.assert_not_called()
 
 
 def test_strip_html():

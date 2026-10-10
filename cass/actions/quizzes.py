@@ -396,12 +396,11 @@ def sync_quizzes(
     specs: list[QuizSpec],
     group_ids: dict[str, int],
     tz: str,
-    *,
-    apply: bool,
 ) -> list[tuple[str, str, str]]:
     """Reconcile quiz specs against live quizzes, matched by title.
 
-    Questions on an existing quiz are never compared or modified.
+    Questions on an existing quiz are never compared or modified. Writes
+    always go through ``client``; dry runs pass a dry-run client.
 
     Returns:
         ``(action, "quiz", name)`` rows: create, update (with the changed
@@ -414,8 +413,7 @@ def sync_quizzes(
         live = live_by_title.get(spec.title.lower())
         if live is None:
             rows.append(("create", "quiz", spec.title))
-            if apply:
-                client.create_quiz(spec, assignment_group_id=group_id)
+            client.create_quiz(spec, assignment_group_id=group_id)
             continue
         changes = quiz_settings_diff(spec, live, tz, group_id=group_id)
         if not changes:
@@ -423,6 +421,5 @@ def sync_quizzes(
             continue
         detail = ", ".join(f"{k}: {v}" for k, v in changes.items())
         rows.append(("update", "quiz", f"{spec.title} ({detail})"))
-        if apply:
-            client.update_quiz(live.id, changes)
+        client.update_quiz(live.id, changes)
     return rows

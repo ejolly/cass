@@ -909,6 +909,7 @@ class TestCanvasSync:
         fake = MagicMock()
         fake.__enter__.return_value = fake
         fake.time_zone = "America/Los_Angeles"
+        fake.planned_requests = []
         fake.list_assignments.return_value = [
             CanvasAssignmentResponse(
                 id=1,
@@ -937,6 +938,7 @@ class TestCanvasSync:
         fake = MagicMock()
         fake.__enter__.return_value = fake
         fake.time_zone = "America/Los_Angeles"
+        fake.planned_requests = []
         fake.list_assignments.return_value = [
             CanvasAssignmentResponse(
                 id=1,
@@ -970,6 +972,7 @@ class TestCanvasSync:
         fake.list_quizzes.return_value = []
         fake.list_assignments.return_value = []
         fake.list_assignment_groups.return_value = []
+        fake.planned_requests = []
         monkeypatch.setattr("cass.cli.canvas._common.client", lambda **_: fake)
         return fake
 
@@ -982,13 +985,55 @@ class TestCanvasSync:
 
     def test_quiz_dry_run_lists_group_and_quiz(self, monkeypatch, tmp_path):
         fake = self._quiz_project(tmp_path, monkeypatch)
+        calls: list[bool] = []
+        monkeypatch.setattr(
+            "cass.cli.canvas._common.client",
+            lambda dry_run=False: (calls.append(dry_run), fake)[1],
+        )
         result = runner.invoke(app, ["canvas", "sync", "--create-groups"])
         assert result.exit_code == 0, result.output
+        assert calls == [True]
         assert "group" in result.stdout
         assert "quiz" in result.stdout
         assert "2 create" in result.stdout
-        fake.create_assignment_group.assert_not_called()
-        fake.create_quiz.assert_not_called()
+
+    def test_dry_run_sends_no_write_and_prints_table_and_plan(
+        self, monkeypatch, tmp_path
+    ):
+        import httpx
+
+        from cass.apis.canvas.client import CanvasClient
+
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "cass.toml").write_text(
+            '[canvas]\nbase_url = "https://canvas.example.com"\ncourse_id = 1\n'
+            'time_zone = "America/Los_Angeles"\n\n'
+            '[[canvas.modules]]\nname = "Week 9"\npublished = true\n'
+        )
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(200, json=[])
+
+        monkeypatch.setattr(
+            "cass.cli.canvas._common.client",
+            lambda dry_run=False: CanvasClient(
+                "https://canvas.example.com",
+                token="t",
+                course_id=1,
+                transport=httpx.MockTransport(handler),
+                time_zone="America/Los_Angeles",
+                dry_run=dry_run,
+            ),
+        )
+        result = runner.invoke(app, ["canvas", "sync"])
+        assert result.exit_code == 0, result.output
+        assert [r for r in seen if r.method != "GET"] == []
+        assert "Canvas Sync" in result.stdout
+        assert "1 create" in result.stdout
+        assert "POST /courses/1/modules" in result.stdout
+        assert "PUT /courses/1/modules/<new 1>" in result.stdout
 
     def test_quiz_apply_creates_group_then_quiz(self, monkeypatch, tmp_path):
         from cass.apis.canvas.schema import CanvasAssignmentGroup
