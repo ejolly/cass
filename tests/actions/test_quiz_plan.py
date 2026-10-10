@@ -4,15 +4,22 @@ from __future__ import annotations
 
 __docformat__ = "google"
 
+import json
 import re
+from urllib.parse import parse_qsl
 
+import httpx
 import pytest
 
 from cass.actions.quiz_plan import (
+    QuestionApplyError,
+    QuestionChange,
+    apply_question_plan,
     format_question_plan,
     plan_quiz_questions,
     plan_summary,
     question_plan_warning,
+    question_update_fields,
 )
 from cass.actions.quizzes import (
     AnswerSpec,
@@ -462,3 +469,154 @@ def test_long_text_is_cut_to_sixty_characters():
     spec = _spec([QuestionSpec(text="<p>" + "x" * 100 + "</p>")])
     plan = plan_quiz_questions(spec, state, prune=False)
     assert format_question_plan(plan)[0] == "add    question         " + "x" * 60
+
+
+# --- Applying ---
+
+BASE = "/api/v1/courses/1/quizzes/20"
+
+
+def _apply_client(fail_path: str | None = None):
+    """A real CanvasClient over a transport that records every request."""
+    from cass.apis.canvas.client import CanvasClient
+
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        path = request.url.path
+        if path == fail_path:
+            return httpx.Response(500, json={"errors": "boom"})
+        if request.method == "POST" and path.endswith("/groups"):
+            return httpx.Response(
+                200, json={"quiz_groups": [{"id": 50, "name": "Pair"}]}
+            )
+        if request.method == "POST" and path.endswith("/questions"):
+            return httpx.Response(200, json={"id": 900})
+        if request.method == "PUT" and "/questions/" in path:
+            return httpx.Response(200, json={"id": int(path.rsplit("/", 1)[1])})
+        return httpx.Response(200, json={})
+
+    client = CanvasClient(
+        "https://canvas.example.com",
+        token="test-token",
+        course_id=1,
+        transport=httpx.MockTransport(handler),
+        time_zone=LA,
+    )
+    return client, requests
+
+
+def _pair_plan():
+    """Update 11, move 12 and a new question into new group "Pair", delete 13."""
+    state = _state([_live(11, 1), _live(12, 2)])
+    spec = _spec(
+        [
+            QuestionSpec(text="<p>new 11</p>", id=11),
+            QuestionSpec(text="<p>12</p>", id=12, group="Pair"),
+            QuestionSpec(text="<p>fresh</p>", group="Pair"),
+        ],
+        [GroupSpec("Pair")],
+    )
+    plan = plan_quiz_questions(spec, state, prune=True)
+    # A file question always claims a leftover live one, so a plan never holds
+    # an add and a delete together; append the delete to cover both.
+    plan.questions.append(QuestionChange("delete", None, _live(13, 3)))
+    return plan
+
+
+def test_apply_request_sequence():
+    client, requests = _apply_client()
+    applied = apply_question_plan(client, 20, _pair_plan())
+    assert [(r.method, r.url.path) for r in requests] == [
+        ("POST", f"{BASE}/groups"),
+        ("PUT", f"{BASE}/questions/11"),
+        ("PUT", f"{BASE}/questions/12"),
+        ("POST", f"{BASE}/questions"),
+        ("DELETE", f"{BASE}/questions/13"),
+        ("POST", f"{BASE}/reorder"),
+        ("POST", f"{BASE}/groups/50/reorder"),
+        ("PUT", BASE),
+    ]
+    assert applied == [
+        "create group 'Pair'",
+        "update question 11 (text)",
+        "update question 12 (group)",
+        "create question 3",
+        "delete question 13",
+        "reorder quiz",
+        "reorder group 'Pair'",
+        "re-save quiz",
+    ]
+    assert json.loads(requests[1].content) == {
+        "question": {"question_text": "<p>new 11</p>"}
+    }
+    assert json.loads(requests[2].content) == {"question": {"quiz_group_id": 50}}
+    assert json.loads(requests[3].content)["question"]["quiz_group_id"] == 50
+    reorder = parse_qsl(requests[5].content.decode())
+    assert ("order[][type]", "group") in reorder
+    assert ("order[][id]", "50") in reorder
+    group_reorder = parse_qsl(requests[6].content.decode())
+    assert [v for k, v in group_reorder if k == "order[]" or k == "order[][id]"] == [
+        "12",
+        "900",
+    ]
+    assert ("quiz[notify_of_update]", "false") in parse_qsl(
+        requests[7].content.decode()
+    )
+
+
+def test_apply_failure_in_questions_stops():
+    client, requests = _apply_client(fail_path=f"{BASE}/questions/12")
+    with pytest.raises(QuestionApplyError) as excinfo:
+        apply_question_plan(client, 20, _pair_plan())
+    assert excinfo.value.applied == [
+        "create group 'Pair'",
+        "update question 11 (text)",
+    ]
+    assert "Stopped; applied before the failure:" in str(excinfo.value)
+    assert [(r.method, r.url.path) for r in requests][-1] == (
+        "PUT",
+        f"{BASE}/questions/12",
+    )
+    assert not any(r.url.path.endswith("/reorder") for r in requests)
+
+
+def test_apply_failure_before_any_change_says_so():
+    client, _ = _apply_client(fail_path=f"{BASE}/groups")
+    with pytest.raises(QuestionApplyError, match="Stopped before any change"):
+        apply_question_plan(client, 20, _pair_plan())
+
+
+def test_apply_all_keep_sends_nothing(tmp_path):
+    question = _live(11, 1, name="Intro")
+    state = _state([question])
+    spec = quiz_spec_from_canvas(QUIZ, [question], "", LA)
+    path = tmp_path / "quiz.toml"
+    dump_quiz_file(spec, path)
+    plan = plan_quiz_questions(load_quiz_file(path), state, prune=False)
+    client, requests = _apply_client()
+    assert apply_question_plan(client, 20, plan) == []
+    assert requests == []
+
+
+def test_update_fields_leave_group_sends_null():
+    change = QuestionChange(
+        "update",
+        QuestionSpec(text="<p>x</p>", id=11),
+        _live(11, 1, group_id=5),
+        changed=["group"],
+    )
+    assert question_update_fields(change, "survey", None) == {"quiz_group_id": None}
+
+
+def test_update_fields_never_sends_empty_name():
+    change = QuestionChange(
+        "update",
+        QuestionSpec(text="<p>x</p>", name="", id=11),
+        _live(11, 1),
+        changed=["text"],
+    )
+    assert question_update_fields(change, "survey", None) == {
+        "question_text": "<p>x</p>"
+    }

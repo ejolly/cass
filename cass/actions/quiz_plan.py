@@ -2,7 +2,8 @@
 
 ``plan_quiz_questions`` matches each file question to a live question (by id,
 then unique name, then relative order) and records what must change. It does
-no I/O; applying the plan is a separate step.
+no I/O. ``apply_question_plan`` then sends the plan to Canvas, the only
+function here that calls the client.
 """
 
 from __future__ import annotations
@@ -21,16 +22,20 @@ from .quizzes import (
     canvas_layout,
     default_question_points,
     file_layout,
+    group_form_fields,
     group_members,
     is_default_question_name,
+    question_form_fields,
     strip_html,
 )
 
 if TYPE_CHECKING:
+    from ..apis.canvas.client import CanvasClient
     from ..apis.canvas.schema import CanvasQuizGroup, CanvasQuizQuestion
 
 QUESTION_FIELDS = ("text", "name", "type", "points", "answers", "group")
 GROUP_FIELDS = ("pick_count", "points_per_item")
+GROUP_CANVAS_FIELDS = {"pick_count": "pick_count", "points_per_item": "question_points"}
 
 ANSWERS_REPLACED_NOTE = (
     "(answers replaced: existing responses may lose their answer link)"
@@ -489,3 +494,160 @@ def plan_summary(plan: QuestionPlan) -> str:
     if group_parts:
         summary += f"; groups: {', '.join(group_parts)}"
     return summary
+
+
+# --- Applying ---
+
+
+class QuestionApplyError(RuntimeError):
+    """A plan stopped part-way; ``applied`` lists the steps that succeeded."""
+
+    def __init__(self, cause: object, applied: list[str]):
+        if applied:
+            steps = "\n".join(f"  {step}" for step in applied)
+            message = f"{cause}\nStopped; applied before the failure:\n{steps}"
+        else:
+            message = f"{cause}\nStopped before any change was applied."
+        super().__init__(message)
+        self.applied = applied
+
+
+def question_update_fields(
+    change: QuestionChange, quiz_type: str, group_id: int | None
+) -> dict[str, object]:
+    """Canvas fields to send for an "update" change: only what changed.
+
+    Args:
+        change: An update change; its spec holds the desired values.
+        quiz_type: Canvas quiz type, which decides default points.
+        group_id: Canvas id of the desired group, or None to leave any group.
+    """
+    assert change.spec is not None
+    form = question_form_fields(change.spec, quiz_type)
+    fields: dict[str, object] = {}
+    for name in change.changed:
+        if name == "text":
+            fields["question_text"] = form["question_text"]
+        elif name == "name":
+            fields["question_name"] = form["question_name"]
+        elif name == "type":
+            fields["question_type"] = form["question_type"]
+            if "answers" in form:
+                fields["answers"] = form["answers"]
+        elif name == "points":
+            fields["points_possible"] = form["points_possible"]
+        elif name == "answers":
+            fields["answers"] = form["answers"]
+        elif name == "group":
+            fields["quiz_group_id"] = group_id
+    return fields
+
+
+def apply_question_plan(
+    client: CanvasClient, quiz_id: int, plan: QuestionPlan
+) -> list[str]:
+    """Send *plan* to Canvas in a fixed order and re-save the quiz.
+
+    Order: create groups; add, update and delete questions; update and delete
+    groups; reorder the quiz; reorder groups; re-save (only if anything was
+    sent).
+
+    Returns:
+        A description of each step applied.
+
+    Raises:
+        QuestionApplyError: A request failed. Nothing after it was sent; the
+            error lists the steps that had already succeeded.
+    """
+    applied: list[str] = []
+    try:
+        _apply_steps(client, quiz_id, plan, applied)
+        if applied:
+            client.resave_quiz(quiz_id)
+            applied.append("re-save quiz")
+    except Exception as error:
+        raise QuestionApplyError(error, applied) from error
+    return applied
+
+
+def _apply_steps(
+    client: CanvasClient, quiz_id: int, plan: QuestionPlan, applied: list[str]
+) -> None:
+    """Steps 1-5 of ``apply_question_plan``; records each finished step."""
+    # 1. New groups (start the name -> id map from groups already on Canvas)
+    group_ids = {
+        g.name: g.live.id
+        for g in plan.groups
+        if g.live is not None and g.action != "delete"
+    }
+    for group in plan.groups:
+        if group.action == "add":
+            assert group.spec is not None
+            fields = group_form_fields(group.spec, plan.quiz_type)
+            group_ids[group.name] = client.create_question_group(quiz_id, fields).id
+            applied.append(f"create group {group.name!r}")
+
+    # 2. Questions, in plan order
+    question_ids: dict[int, int] = {}
+    for index, change in enumerate(plan.questions):
+        if change.live is not None:
+            question_ids[index] = change.live.id
+        if change.action == "add":
+            assert change.spec is not None
+            created = client.create_quiz_question(
+                quiz_id,
+                change.spec,
+                position=index + 1,
+                quiz_type=plan.quiz_type,
+                quiz_group_id=group_ids.get(change.group),
+            )
+            question_ids[index] = created.id
+            applied.append(f"create question {index + 1}")
+        elif change.action == "update":
+            assert change.live is not None
+            fields = question_update_fields(
+                change, plan.quiz_type, group_ids.get(change.group)
+            )
+            client.update_quiz_question(quiz_id, change.live.id, fields)
+            applied.append(
+                f"update question {change.live.id} ({', '.join(change.changed)})"
+            )
+        elif change.action == "delete":
+            assert change.live is not None
+            client.delete_quiz_question(quiz_id, change.live.id)
+            applied.append(f"delete question {change.live.id}")
+
+    # 3. Group settings, then group deletes
+    for group in plan.groups:
+        if group.action == "update":
+            assert group.spec is not None
+            assert group.live is not None
+            form = group_form_fields(group.spec, plan.quiz_type)
+            canvas_names = [GROUP_CANVAS_FIELDS[name] for name in group.changed]
+            fields = {name: form[name] for name in canvas_names}
+            client.update_question_group(quiz_id, group.live.id, fields)
+            applied.append(f"update group {group.name!r}")
+    for group in plan.groups:
+        if group.action == "delete":
+            assert group.live is not None
+            client.delete_question_group(quiz_id, group.live.id)
+            applied.append(f"delete group {group.name!r}")
+
+    # 4. Top-level order
+    if plan.order_changed:
+        items: list[tuple[str, int]] = []
+        for kind, entry in plan.order:
+            if kind == "question":
+                assert isinstance(entry, int)
+                items.append(("question", question_ids[entry]))
+            else:
+                assert isinstance(entry, str)
+                items.append(("group", group_ids[entry]))
+        client.reorder_quiz(quiz_id, items)
+        applied.append("reorder quiz")
+
+    # 5. Order inside groups
+    for name in plan.reordered_groups:
+        members = [question_ids[i] for i in plan.group_members[name]]
+        client.reorder_question_group(quiz_id, group_ids[name], members)
+        applied.append(f"reorder group {name!r}")
