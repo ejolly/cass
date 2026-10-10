@@ -3,7 +3,11 @@
 Provides ``CanvasClient``, a typed httpx client with ``course_id`` baked in.
 All methods return msgspec.Struct instances, never raw dicts. The client is
 assembled from one mixin per resource; ``base`` holds the transport, auth
-lookup, pagination, and the shared ``_resolve`` helper."""
+lookup, pagination, and the shared ``_resolve`` helper.
+
+``CanvasClient(..., dry_run=True)`` records writes instead of sending them;
+read them from ``planned_requests`` and render with
+``cass.apis.canvas.dry_run.format_plan``."""
 
 from __future__ import annotations
 

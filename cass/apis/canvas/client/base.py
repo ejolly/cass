@@ -30,6 +30,7 @@ from ..auth import (
     check_response,
     find_auth,
 )
+from ..dry_run import DryRunRecorder, DryRunTransport, PlannedRequest
 from ..errors import raise_for_canvas_status
 from ..raw import api_path, form_content
 
@@ -195,6 +196,9 @@ class BaseClient:
         transport: HTTP transport override (tests inject a mock here).
         time_zone: IANA course time zone; defaults to ``[canvas] time_zone``
             in cass.toml and is fetched from the course when that is empty.
+        dry_run: Record writes instead of sending them (see
+            ``planned_requests``). GETs are still sent, except to paths the
+            dry run created; each write gets a synthetic 200 response.
     """
 
     def __init__(
@@ -206,6 +210,7 @@ class BaseClient:
         auth: CanvasAuth | None = None,
         transport: httpx.BaseTransport | None = None,
         time_zone: str | None = None,
+        dry_run: bool = False,
     ) -> None:
         cfg = get_config() if base_url is None or course_id is None else None
         resolved_base = base_url or (cfg.canvas_base_url if cfg else "")
@@ -226,6 +231,8 @@ class BaseClient:
         self._time_zone = time_zone or (cfg.canvas_time_zone if cfg else "")
         self._transport = transport
         self._http: httpx.Client | None = None
+        self.dry_run = dry_run
+        self._recorder = DryRunRecorder() if dry_run else None
 
     @classmethod
     def from_config(cls, path: str | Path, **kwargs: Any) -> Self:
@@ -237,7 +244,8 @@ class BaseClient:
 
         Args:
             path: A cass.toml file, which may have any name.
-            **kwargs: Passed to the constructor (e.g. ``transport``).
+            **kwargs: Passed to the constructor (e.g. ``transport``,
+                ``dry_run``).
 
         Raises:
             SystemExit: If the file or its credentials are missing.
@@ -268,6 +276,10 @@ class BaseClient:
                     wrapped=transport,
                     refresh=refresh,
                 )
+            if self._recorder:
+                transport = DryRunTransport(
+                    self._recorder, wrapped=transport, api_root=self._base_url
+                )
             self._http = httpx.Client(
                 base_url=self._base_url,
                 headers={
@@ -280,6 +292,14 @@ class BaseClient:
                 event_hooks={"response": [raise_for_canvas_status]},
             )
         return self._http
+
+    @property
+    def planned_requests(self) -> list[PlannedRequest]:
+        """Writes a dry run recorded, in order (empty when not a dry run).
+
+        Render them with ``format_plan``.
+        """
+        return list(self._recorder.planned) if self._recorder else []
 
     def _refresh_browser(self) -> SessionAuth:
         from ..browser import login_from_browser
@@ -387,7 +407,13 @@ class BaseClient:
     def _post_upload(
         self, url: str, *, data: dict[str, Any], filename: str, file: IO[bytes]
     ) -> httpx.Response:
-        """POST a file to an absolute upload URL (outside the Canvas API client)."""
+        """POST a file to an absolute upload URL (outside the Canvas API client).
+
+        Under a dry run the POST is recorded, not sent.
+        """
+        if self._recorder:
+            body = self._recorder.record_upload(url, data, filename)
+            return httpx.Response(200, json=body, request=httpx.Request("POST", url))
         resp = httpx.post(
             url, data=data, files={"file": (filename, file)}, timeout=120.0
         )
