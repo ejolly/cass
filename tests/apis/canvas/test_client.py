@@ -1000,6 +1000,14 @@ class TestCanvasClient:
         assert fallback is False
         assert [q.id for q in questions] == [2, 1]
 
+    def test_list_quiz_questions_asks_for_stored_html(self, mock_client):
+        # Without plain_html Canvas wraps question text in the account theme
+        client, transport = mock_client
+        transport.add(json_data=[])
+        client.list_quiz_questions(20)
+        params = transport.requests[0].url.params
+        assert params.get_list("include[]") == ["plain_html"]
+
     def test_list_quiz_questions_falls_back_to_statistics_on_403(self, mock_client):
         client, transport = mock_client
         transport.add(403, json_data={"status": "unauthorized"})

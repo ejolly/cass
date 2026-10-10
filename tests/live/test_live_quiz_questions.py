@@ -183,12 +183,13 @@ def test_question_editing_round_trip(
             assert preview.exit_code == 0, f"preview run {run}: {preview.output}"
             assert "differ" in preview.stderr
             if run == 1:
+                # Canvas shows students "Question N" instead of names; compare ids
                 shown = {
-                    json.loads(line)["question_name"]
+                    json.loads(line)["id"]
                     for line in preview.stdout.splitlines()
                     if line.strip()
                 }
-                assert shown == {"C", "First", "B", "D"}
+                assert shown == {r["id"] for r in rows}
 
         # Dry run of the same file: Canvas stores questions as cass sends them,
         # so everything is "keep" (answers included) and nothing would be written.

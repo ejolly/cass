@@ -144,6 +144,10 @@ class QuizzesMixin(BaseClient):
         ``position`` field is null for API-created questions; see
         ``canvas_layout`` for rebuilding the quiz order.
 
+        ``include[]=plain_html`` returns the HTML as stored. Without it, Canvas
+        wraps each question's text in the account's theme CSS and JS and
+        rewrites file links, so the text would never match what was sent.
+
         Concluded courses return 403 from the questions endpoint; then the
         questions are rebuilt from ``/statistics``, which carries text and
         which answers are correct but no answer weights or names.
@@ -152,7 +156,10 @@ class QuizzesMixin(BaseClient):
             ``(questions, used_statistics_fallback)``.
         """
         try:
-            data = self._get_paginated(self._course(f"/quizzes/{quiz_id}/questions"))
+            data = self.get_all(
+                self._course(f"/quizzes/{quiz_id}/questions"),
+                params=[("include[]", "plain_html")],
+            )
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code != 403:
                 raise
