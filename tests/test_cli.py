@@ -312,7 +312,8 @@ class TestPush:
         result = runner.invoke(app, ["push", "--dry-run"])
         assert result.exit_code == 0
         assert "Canvas Push Preview" in result.stdout
-        assert "Dry run" in result.stdout
+        assert "Dry run" not in result.stdout
+        assert "Dry run: nothing pushed" in result.stderr
         apply_mock.assert_not_called()
         assert db.get_pending_changes(sdb) == before
 
@@ -357,6 +358,47 @@ class TestPush:
         result = runner.invoke(app, ["push", "--yes"])
         assert result.exit_code == 0
         assert "Pushed 1 grades/updates" in result.stdout
+
+    def test_push_warnings_and_failures_go_to_stderr(self, project_dir, monkeypatch):
+        monkeypatch.chdir(project_dir)
+        sdb = sqlite_utils.Database(str(project_dir / "cass.db"))
+        db.init_schema(sdb)
+        monkeypatch.setattr("cass.db.core._db", sdb)
+        sdb["canvas_assignments"].insert(
+            {"canvas_id": 7, "name": "HW1", "points_possible": 10, "published": 1}
+        )
+        db.snapshot_canvas_synced(sdb)
+        sdb.execute("UPDATE canvas_assignments SET name = 'HW 1'")
+        monkeypatch.setattr(
+            "cass.db.canvas_preview",
+            lambda conn, pending: {
+                "ok": True,
+                "changes": [
+                    {"table": "canvas_assignments", "name": "A", "column": "name"}
+                ],
+                "has_conflicts": True,
+                "has_errors": True,
+            },
+        )
+        monkeypatch.setattr(
+            "cass.db.canvas_apply",
+            lambda conn, pending: {
+                "ok": False,
+                "results": [{"ok": False, "canvas_id": 7, "error": "boom"}],
+            },
+        )
+
+        result = runner.invoke(app, ["push", "--yes"])
+        assert "Canvas Push Preview" in result.stdout
+        for text in (
+            "Conflicts detected",
+            "Preview errors detected",
+            "boom",
+            "Failed 1",
+        ):
+            assert text in result.stderr
+            assert text not in result.stdout
+        assert "Pushed 0 grades/updates" in result.stdout
 
 
 class TestRevert:

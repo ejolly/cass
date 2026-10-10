@@ -136,12 +136,12 @@ def _render_push_preview(preview: dict[str, object]) -> None:
     console.print()
     console.print(table)
     if preview.get("has_conflicts"):
-        console.print(
+        err_console.print(
             "\n[yellow]Conflicts detected: live Canvas values differ from the "
             "last synced baseline.[/yellow]"
         )
     if preview.get("has_errors"):
-        console.print(
+        err_console.print(
             "[yellow]Preview errors detected: some live Canvas values could "
             "not be fetched.[/yellow]"
         )
@@ -175,12 +175,12 @@ def _render_push_results(results: list[dict[str, object]]) -> None:
                 result.get("canvas_id", result.get("canvas_assignment_id", "Canvas"))
             )
             failed.append(f"{label}: {result.get('error', 'unknown error')}")
-            console.print(
+            err_console.print(
                 f"  [red]✗[/red] {label}: {result.get('error', 'unknown error')}"
             )
 
     if failed:
-        console.print(f"\n[red]Failed {len(failed)} operation(s).[/red]")
+        err_console.print(f"\n[red]Failed {len(failed)} operation(s).[/red]")
     console.print(f"\n[green]Pushed {total_posted} grades/updates.[/green]")
 
 
@@ -531,7 +531,7 @@ def push(
     _render_push_preview(preview)
 
     if dry_run:
-        console.print("Dry run: nothing pushed; pending changes stay pending.")
+        err_console.print("Dry run: nothing pushed; pending changes stay pending.")
         return
 
     confirm("Push these changes to Canvas?", yes=yes, default=False)

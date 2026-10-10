@@ -98,7 +98,7 @@ def group_id_for(c: CanvasClient, name: str, *, create: bool) -> int | None:
     group = c.create_assignment_group(name)
     if c.dry_run:
         # The plan already lists the POST; the returned id is a placeholder.
-        console.print(f"Would create group: {name}", markup=False, highlight=False)
+        err_console.print(f"Would create group: {name}", markup=False, highlight=False)
     else:
         console.print(f"[green]Created group:[/green] {group.name} (id={group.id})")
     return group.id

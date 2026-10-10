@@ -273,7 +273,8 @@ def test_dry_run_create_groups_does_not_claim_creation(course):
 
     assert result.exit_code == 0, result.output
     assert "Created group" not in result.stdout
-    assert "Would create group: New" in result.stdout
+    assert "Would create group: New" in result.stderr
+    assert "Would create group" not in result.stdout
     assert re.search(
         r"^\s*POST /courses/1/assignment_groups", result.stdout, re.MULTILINE
     )
