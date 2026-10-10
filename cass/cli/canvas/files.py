@@ -70,7 +70,7 @@ def files_list(
     tree = Tree("[bold]Course Files[/bold]")
     folder_nodes: dict[int, Tree] = {}
     for fld in sorted(folders, key=lambda f: f.full_name):
-        label = f"[bold]{fld.name}[/bold]"
+        label = f"[bold]{fld.name}[/bold]  [dim]id={fld.id}[/dim]"
         if fld.parent_folder_id and fld.parent_folder_id in folder_nodes:
             node = folder_nodes[fld.parent_folder_id].add(label)
         else:

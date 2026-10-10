@@ -40,10 +40,15 @@ def render_list(
     title: str | None = None,
 ) -> None:
     """Print headers/rows as a Rich table."""
-    # Fold long space-free values (IDs, URLs) instead of truncating them
     table = Table(show_edge=False, pad_edge=False, title=title)
-    for h in headers:
-        table.add_column(h, overflow="fold")
+    for index, header in enumerate(headers):
+        if header == "ID" or header.endswith(" ID"):
+            # IDs are copied into other commands: never truncate or fold them
+            longest = max([len(header), *(len(row[index]) for row in rows)])
+            table.add_column(header, no_wrap=True, min_width=longest)
+        else:
+            # Fold long space-free values (URLs) instead of truncating them
+            table.add_column(header, overflow="fold")
     for row in rows:
         table.add_row(*row)
     console.print()

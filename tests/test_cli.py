@@ -5,6 +5,7 @@ from __future__ import annotations
 __docformat__ = "google"
 
 import json
+import re
 import shutil
 import time
 from collections.abc import Iterator
@@ -856,22 +857,35 @@ class TestReportHelpers:
         assert due("2026-10-01T23:59:00-07:00", "America/Los_Angeles") == "2026-10-01"
         assert due(None, "America/Los_Angeles") == ""
 
-    def test_long_ids_fold_instead_of_truncating(self, monkeypatch, capsys):
+    def test_id_column_stays_on_one_line(self, monkeypatch, capsys):
         from rich.console import Console
 
         from cass.cli import report
 
-        monkeypatch.setattr(report, "console", Console(width=40, force_terminal=False))
+        monkeypatch.setattr(report, "console", Console(width=80, force_terminal=False))
         report.render_list(
-            ["Label", "Type", "ID"],
-            [["Media Gallery", "external", "context_external_tool_5826"]],
+            ["Label", "Type", "Position", "Visibility", "ID"],
+            [
+                [
+                    "Media Gallery",
+                    "external",
+                    "3",
+                    "visible",
+                    "context_external_tool_5826",
+                ],
+                [
+                    "A much longer navigation label here",
+                    "external",
+                    "4",
+                    "hidden",
+                    "context_external_tool_99999",
+                ],
+            ],
         )
         out = capsys.readouterr().out
         assert "…" not in out
-        # ID may wrap across lines but every character must survive
-        assert "context_external_tool_5826" in "".join(
-            line.split("│")[-1].strip() for line in out.splitlines() if "│" in line
-        )
+        for tab_id in ("context_external_tool_5826", "context_external_tool_99999"):
+            assert any(tab_id in line for line in out.splitlines())
 
     def test_row_count_pluralizes(self, capsys):
         from cass.cli import report
@@ -1487,6 +1501,32 @@ class TestCanvasTabsAndFiles:
         assert result.exit_code == 0, result.output
         assert "notes.txt" in result.stdout
         assert "18962999" in result.stdout
+
+    def test_files_tree_shows_folder_ids(self, fake_client):
+        result = runner.invoke(app, ["canvas", "files"])
+        assert result.exit_code == 0, result.output
+        assert re.search(r"id=1\b", result.stdout)
+        assert "id=18962999" in result.stdout
+
+    def test_tabs_list_full_ids_at_80_columns(self, fake_client, monkeypatch):
+        from rich.console import Console
+
+        from cass.apis.canvas.schema import CanvasTab
+        from cass.cli import report
+
+        monkeypatch.setattr(report, "console", Console(width=80, force_terminal=False))
+        fake_client.list_tabs.return_value = [
+            CanvasTab(id="context_external_tool_5826", label="Media Gallery"),
+            CanvasTab(
+                id="context_external_tool_99999",
+                label="A much longer navigation label here",
+                hidden=True,
+            ),
+        ]
+        result = runner.invoke(app, ["canvas", "tabs", "list"])
+        assert result.exit_code == 0, result.output
+        for tab_id in ("context_external_tool_5826", "context_external_tool_99999"):
+            assert any(tab_id in line for line in result.stdout.splitlines())
 
 
 class TestCanvasAnnouncements:
