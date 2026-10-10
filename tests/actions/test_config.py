@@ -7,7 +7,9 @@ import pytest
 from cass.actions.config import (
     CanvasModuleSpec,
     Config,
+    ModuleItemSpec,
     find_project_root,
+    load_config,
     parse_canvas_course_url,
     reset_config,
     update_config,
@@ -326,3 +328,138 @@ class TestTimeZoneAndQuizRefs:
         path.write_text('[canvas]\nbase_url = "https://c.edu"\ncourse_id = 1\n')
         update_config(path, canvas_time_zone="America/Los_Angeles")
         assert 'time_zone = "America/Los_Angeles"' in path.read_text()
+
+
+HEADER = '[canvas]\nbase_url = "https://c.edu"\ncourse_id = 1\n\n'
+
+
+def _write(tmp_path, body: str):
+    path = tmp_path / "cass.toml"
+    path.write_text(HEADER + body)
+    return path
+
+
+class TestModuleItems:
+    def test_loads_each_item_type(self, tmp_path):
+        path = _write(
+            tmp_path,
+            """[[canvas.modules]]
+name = "Week 1"
+
+[[canvas.modules.items]]
+type = "Assignment"
+title = "HW 1"
+
+[[canvas.modules.items]]
+type = "Quiz"
+title = "Quiz 1"
+
+[[canvas.modules.items]]
+type = "Page"
+title = "Overview"
+
+[[canvas.modules.items]]
+type = "File"
+file = "readings/w1.pdf"
+source = "readings/w1.pdf"
+title = "Reading"
+indent = 1
+published = false
+
+[[canvas.modules.items]]
+type = "ExternalUrl"
+url = "https://example.com"
+title = "Link"
+
+[[canvas.modules.items]]
+type = "SubHeader"
+title = "Extras"
+""",
+        )
+        items = load_config(path).canvas_modules[0].items
+        assert items == [
+            ModuleItemSpec(type="Assignment", title="HW 1"),
+            ModuleItemSpec(type="Quiz", title="Quiz 1"),
+            ModuleItemSpec(type="Page", title="Overview"),
+            ModuleItemSpec(
+                type="File",
+                title="Reading",
+                file="readings/w1.pdf",
+                source=(tmp_path / "readings/w1.pdf").resolve(),
+                indent=1,
+                published=False,
+            ),
+            ModuleItemSpec(type="ExternalUrl", url="https://example.com", title="Link"),
+            ModuleItemSpec(type="SubHeader", title="Extras"),
+        ]
+        assert items is not None
+        assert items[0].published is None
+        assert items[0].indent == 0
+
+    def test_type_is_case_insensitive(self, tmp_path):
+        path = _write(
+            tmp_path,
+            '[[canvas.modules]]\nname = "W"\n\n'
+            '[[canvas.modules.items]]\ntype = "subheader"\ntitle = "X"\n',
+        )
+        items = load_config(path).canvas_modules[0].items
+        assert items is not None
+        assert items[0].type == "SubHeader"
+
+    def test_module_without_items_key_has_none(self, tmp_path):
+        path = _write(tmp_path, '[[canvas.modules]]\nname = "W"\n')
+        assert load_config(path).canvas_modules[0].items is None
+
+    def test_empty_items_list(self, tmp_path):
+        path = _write(tmp_path, '[[canvas.modules]]\nname = "W"\nitems = []\n')
+        assert load_config(path).canvas_modules[0].items == []
+
+    def test_file_path_is_normalized(self, tmp_path):
+        path = _write(
+            tmp_path,
+            '[[canvas.modules]]\nname = "W"\n\n'
+            '[[canvas.modules.items]]\ntype = "File"\nfile = "/readings//w1.pdf"\n',
+        )
+        items = load_config(path).canvas_modules[0].items
+        assert items is not None
+        assert items[0].file == "readings/w1.pdf"
+
+    @pytest.mark.parametrize(
+        ("bad_item", "message"),
+        [
+            ('title = "x"', ": missing 'type'"),
+            ('type = "Discussion"', ": unknown type 'Discussion' (expected one of:"),
+            ('type = "Page"', " (Page): missing required key 'title'"),
+            (
+                'type = "ExternalUrl"\ntitle = "t"',
+                " (ExternalUrl): missing required key 'url'",
+            ),
+            ('type = "File"', " (File): missing required key 'file'"),
+            (
+                'type = "Page"\ntitle = "t"\npublish = true',
+                " (Page): unknown key 'publish'",
+            ),
+            (
+                'type = "Page"\ntitle = "t"\nindent = -1',
+                " (Page): indent must be a whole number",
+            ),
+            (
+                'type = "Page"\ntitle = "t"\npublished = "yes"',
+                " (Page): published must be true or false",
+            ),
+        ],
+    )
+    def test_invalid_item_fails_naming_module_and_index(
+        self, tmp_path, bad_item, message
+    ):
+        path = _write(
+            tmp_path,
+            '[[canvas.modules]]\nname = "Week 1"\n\n'
+            '[[canvas.modules.items]]\ntype = "SubHeader"\ntitle = "ok"\n\n'
+            f"[[canvas.modules.items]]\n{bad_item}\n",
+        )
+        with pytest.raises(SystemExit) as exc:
+            load_config(path)
+        text = str(exc.value)
+        assert "module 'Week 1' item 2" in text
+        assert message in text

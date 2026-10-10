@@ -22,12 +22,62 @@ CONFIG_ENV = "CASS_CONFIG"
 _CANVAS_COURSE_URL_RE = re.compile(r"^(https?://[^/]+)/courses/(\d+)(?:[/?#].*)?$")
 
 
+MODULE_ITEM_TYPES: tuple[str, ...] = (
+    "Assignment",
+    "Quiz",
+    "Page",
+    "File",
+    "ExternalUrl",
+    "SubHeader",
+)
+
+# Keys allowed per item type, beyond the always-allowed type/indent/published.
+_ITEM_REQUIRED_KEYS: dict[str, tuple[str, ...]] = {
+    "Assignment": ("title",),
+    "Quiz": ("title",),
+    "Page": ("title",),
+    "File": ("file",),
+    "ExternalUrl": ("url", "title"),
+    "SubHeader": ("title",),
+}
+_ITEM_OPTIONAL_KEYS: dict[str, tuple[str, ...]] = {
+    "File": ("title", "source"),
+}
+_ITEM_COMMON_KEYS = ("type", "indent", "published")
+
+
+def canonical_item_type(name: str) -> str | None:
+    """Return the canonical module item type for *name* (case-insensitive)."""
+    for item_type in MODULE_ITEM_TYPES:
+        if item_type.lower() == name.lower():
+            return item_type
+    return None
+
+
+@dataclass
+class ModuleItemSpec:
+    """A module item declared under ``[[canvas.modules.items]]``."""
+
+    type: str
+    title: str = ""
+    file: str = ""
+    source: Path | None = None
+    url: str = ""
+    indent: int = 0
+    published: bool | None = None
+
+
 @dataclass
 class CanvasModuleSpec:
-    """Desired state for a Canvas module declared in cass.toml."""
+    """Desired state for a Canvas module declared in cass.toml.
+
+    ``items`` is ``None`` when the module has no ``items`` key (never
+    reconciled) and ``[]`` when it declares ``items = []`` (an empty module).
+    """
 
     name: str
     published: bool = False
+    items: list[ModuleItemSpec] | None = None
 
 
 @dataclass
@@ -153,6 +203,57 @@ def config_file_path() -> Path | None:
     return path if path.exists() else None
 
 
+def _load_module_items(
+    raw_items: list[dict[str, Any]], module_name: str, root: Path, path: Path
+) -> list[ModuleItemSpec]:
+    """Validate and build the items declared for one module.
+
+    Raises:
+        SystemExit: On the first invalid item, naming the module and item number.
+    """
+    from cass.apis.canvas.client.files import normalize_folder_path
+
+    specs: list[ModuleItemSpec] = []
+    for number, entry in enumerate(raw_items, start=1):
+        where = f"Invalid config: {path}: module {module_name!r} item {number}"
+        if "type" not in entry:
+            raise SystemExit(f"{where}: missing 'type'")
+        item_type = canonical_item_type(str(entry["type"]))
+        if item_type is None:
+            raise SystemExit(
+                f"{where}: unknown type {entry['type']!r} "
+                f"(expected one of: {', '.join(MODULE_ITEM_TYPES)})"
+            )
+        where = f"{where} ({item_type})"
+        required = _ITEM_REQUIRED_KEYS[item_type]
+        allowed = _ITEM_COMMON_KEYS + required + _ITEM_OPTIONAL_KEYS.get(item_type, ())
+        for key in required:
+            if key not in entry:
+                raise SystemExit(f"{where}: missing required key {key!r}")
+        for key in entry:
+            if key not in allowed:
+                raise SystemExit(f"{where}: unknown key {key!r}")
+        indent = entry.get("indent", 0)
+        if isinstance(indent, bool) or not isinstance(indent, int) or indent < 0:
+            raise SystemExit(f"{where}: indent must be a whole number ≥ 0")
+        published = entry.get("published")
+        if published is not None and not isinstance(published, bool):
+            raise SystemExit(f"{where}: published must be true or false")
+        source = entry.get("source")
+        specs.append(
+            ModuleItemSpec(
+                type=item_type,
+                title=entry.get("title", ""),
+                file=normalize_folder_path(entry.get("file", "")),
+                source=(root / source).resolve() if source else None,
+                url=entry.get("url", ""),
+                indent=indent,
+                published=published,
+            )
+        )
+    return specs
+
+
 def load_config(path: Path | None = None) -> Config:
     """Read a config file; the one in use (``config_file()``) by default.
 
@@ -177,6 +278,11 @@ def load_config(path: Path | None = None) -> Config:
         CanvasModuleSpec(
             name=m["name"],
             published=m.get("published", False),
+            items=(
+                _load_module_items(m["items"], m["name"], root, path)
+                if "items" in m
+                else None
+            ),
         )
         for m in canvas.get("modules", [])
         if "name" in m
