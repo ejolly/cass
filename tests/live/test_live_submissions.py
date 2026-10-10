@@ -151,7 +151,13 @@ def test_enrolled_after_dry_run_on_real_course(
         return client
 
     monkeypatch.setattr("cass.cli.canvas._common.client", dry_run_client)
-    ts = get_test_student_id(real_course)
+    # Read the Test Student's enrollment; get_test_student_id would create one
+    # in the real course, which must stay read-only.
+    test_students = real_course.get_all(
+        real_course.course_path("/enrollments"),
+        params=[("type[]", "StudentViewEnrollment")],
+    )
+    ts = test_students[0]["user_id"] if test_students else None
     since = (datetime.now(UTC) - timedelta(days=60)).strftime("%Y-%m-%d")
 
     out = _invoke("submissions", "excuse", "--enrolled-after", since)
@@ -167,5 +173,6 @@ def test_enrolled_after_dry_run_on_real_course(
     # Zero planned requests is fine: nobody may have enrolled recently.
     rows = re.findall(r"^\s*(excuse|skip)\b", out, re.MULTILINE)
     assert len([r for r in rows if r == "excuse"]) == len(planned)
-    assert f"({ts})" not in out
-    assert all(not r.path.endswith(f"/submissions/{ts}") for r in planned)
+    if ts is not None:
+        assert f"({ts})" not in out
+        assert all(not r.path.endswith(f"/submissions/{ts}") for r in planned)
