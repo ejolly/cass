@@ -4,6 +4,7 @@ from __future__ import annotations
 
 __docformat__ = "google"
 
+import contextlib
 import re
 import warnings
 from pathlib import Path
@@ -170,11 +171,15 @@ title = "{assignment_name}"
         assert "kept" in settled
         assert "no Canvas writes needed" in settled
     finally:
-        for module in practice.list_modules():
-            if module.name == module_name:
-                practice.delete_module(module.id)
-        folder = practice.find_folder(folder_path)
-        if folder is not None:
-            practice.delete_folder(folder.id, force=True)
-        practice.delete_assignment(assignment.id)
+        # Each cleanup step runs even if an earlier one fails
+        with contextlib.suppress(Exception):
+            for module in practice.list_modules():
+                if module.name == module_name:
+                    practice.delete_module(module.id)
+        with contextlib.suppress(Exception):
+            folder = practice.find_folder(folder_path)
+            if folder is not None:
+                practice.delete_folder(folder.id, force=True)
+        with contextlib.suppress(Exception):
+            practice.delete_assignment(assignment.id)
         set_config_path(CONFIG_PATH)

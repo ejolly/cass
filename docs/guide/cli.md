@@ -46,7 +46,7 @@ cass canvas api GET /courses/{course}/modules --all     # raw API request
 cass canvas api PUT /courses/{course}/modules/5 --data 'module[name]=Week1'
 ```
 
-`modules items add` takes `--type` Assignment, Quiz, File, Page, ExternalUrl or SubHeader, plus the matching reference: `--content-id` (Assignment, Quiz, File), `--page-url` (Page), or `--url` and `--title` (ExternalUrl); SubHeader needs `--title`. No other item types are supported. To manage a module's items from `cass.toml`, see [Module items](configuration.md#module-items).
+`modules items add` takes `--type` Assignment, Quiz, File, Page, ExternalUrl or SubHeader, and the matching reference: `--content-id` (Assignment, Quiz, File), `--page-url` (Page), or `--url` and `--title` (ExternalUrl); SubHeader needs `--title`. No other item types are supported. To manage a module's items from `cass.toml`, see [Module items](configuration.md#module-items).
 
 Folder paths are relative to the course files root (no `course files/` prefix). `files upload --folder` and `files mv` create missing folders. `--unpublished` locks new uploads so students cannot see them. `files upload --on-duplicate` defaults to `overwrite`, which replaces a same-named file in place (same ID, links intact). `rename` keeps both files. `skip` skips the upload when a file with the same name and size is already there, and overwrites when only the name matches. `files mv` and `files rename` accept `--on-duplicate rename|overwrite`; without it, a name clash fails in Canvas. `files list --folder` takes a folder ID or path. `files folders delete --force` deletes non-empty folders.
 

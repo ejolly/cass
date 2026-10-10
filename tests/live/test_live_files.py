@@ -10,26 +10,13 @@ from uuid import uuid4
 import pytest
 from typer.testing import CliRunner
 
-from cass.actions.config import get_config
 from cass.apis.canvas.client import CanvasClient
 from cass.cli import app
 
 runner = CliRunner()
 
 
-@pytest.fixture(autouse=True)
-def practice_cli_client(practice: CanvasClient, monkeypatch: pytest.MonkeyPatch):
-    """Point the CLI at the practice course using the fixture's credentials."""
-    monkeypatch.setattr(
-        "cass.cli.canvas._common.client",
-        lambda dry_run=False: CanvasClient(
-            get_config().canvas_base_url,
-            course_id=practice.course_id,
-            auth=practice.auth,
-            time_zone=practice.time_zone,
-            dry_run=dry_run,
-        ),
-    )
+pytestmark = pytest.mark.usefixtures("practice_cli_client")
 
 
 def _run(*args: str):
