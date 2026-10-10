@@ -136,8 +136,8 @@ class DryRunRecorder:
 
         A POST to a collection creates a resource with the next placeholder
         ID. Any other write merges the request fields into the resource's
-        current body: the stored one, else ``fetch_current()`` (called once
-        per path).
+        current body: the stored one, else ``{}`` under a placeholder path,
+        else ``fetch_current()`` (called once per path).
         """
         self.planned.append(PlannedRequest(method, path, body))
         fields = _clear_empty(request_fields(body))
@@ -152,6 +152,9 @@ class DryRunRecorder:
             return result
 
         current = self._bodies.get(path)
+        if current is None and self.has_placeholder(path):
+            # Under a resource the dry run created; Canvas has nothing to fetch.
+            current = {}
         if current is None:
             current = fetch_current()
         # Keep the ID as Canvas types it: numeric IDs are ints, tab IDs strings.

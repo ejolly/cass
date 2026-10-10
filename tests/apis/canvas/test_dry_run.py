@@ -156,6 +156,19 @@ def test_get_under_placeholder_is_not_sent(dry):
     assert sent == []
 
 
+def test_write_under_unstored_placeholder_is_not_fetched(dry):
+    client, sent = dry
+    client.request("POST", "/courses/1/assignments", data={"assignment[name]": "A"})
+    resp = client.request(
+        "PUT",
+        "/courses/1/assignments/-1/submissions/5",
+        data={"submission[posted_grade]": "10"},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"posted_grade": "10", "id": 5}
+    assert sent == []
+
+
 def test_placeholders_count_down_per_client(dry):
     client, _ = dry
     assert client.create_module("A").id == -1
