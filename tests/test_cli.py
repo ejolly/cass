@@ -1001,25 +1001,6 @@ class TestCanvasModules:
         modules_client.resolve_module.assert_called_once_with("Week 1")
         assert "Reading" in result.stdout
 
-    def test_add_item_defaults_title_to_content(self, modules_client):
-        result = runner.invoke(
-            app,
-            [
-                "canvas",
-                "modules",
-                "add-item",
-                "Week 1",
-                "--type",
-                "Assignment",
-                "--content-id",
-                "42",
-            ],
-        )
-        assert result.exit_code == 0, result.output
-        modules_client.create_module_item.assert_called_once_with(
-            1, item_type="Assignment", content_id=42, title=None
-        )
-
 
 class TestCanvasQuizzes:
     @pytest.fixture

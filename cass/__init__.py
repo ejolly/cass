@@ -48,7 +48,10 @@ makes a tab visible: a write that accepts `--dry-run`.
 | `cass canvas modules publish` | Publish a module |
 | `cass canvas modules unpublish` | Unpublish a module |
 | `cass canvas modules delete` | Delete a module |
-| `cass canvas modules add-item` | Add an item to a module |
+| `cass canvas modules items add` | Add an item to a module |
+| `cass canvas modules items update` | Change an item's title, indent or visibility |
+| `cass canvas modules items move` | Move an item within its module |
+| `cass canvas modules items remove` | Remove an item from a module |
 
 ### Assignments (`cass canvas assignments`)
 

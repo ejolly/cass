@@ -1,9 +1,10 @@
-"""``cass canvas modules`` — list, show, create, publish, delete, add-item."""
+"""``cass canvas modules`` — list, show, create, publish, delete, items."""
 
 from __future__ import annotations
 
 __docformat__ = "google"
 
+import click
 import typer
 
 from . import _common
@@ -82,16 +83,18 @@ def modules_show(
         _common.emit_json(module_detail_record(mod, items))
         return
 
-    headers = ["ID", "Title", "Type", "Content ID", "Published"]
+    headers = ["ID", "Position", "Indent", "Type", "Title", "Content ID", "Published"]
     rows = [
         [
             str(it.id),
-            it.title,
+            str(index),
+            str(it.indent),
             it.type,
+            it.title,
             str(it.content_id or ""),
             pub(it.published),
         ]
-        for it in items
+        for index, it in enumerate(items, start=1)
     ]
     title = f"Module: {mod.name}"
 
@@ -183,28 +186,138 @@ def modules_delete(
     console.print(f"[red]Deleted:[/red] {mod.name}")
 
 
-@modules_app.command(name="add-item")
-def modules_add_item(
+items_app = typer.Typer(
+    no_args_is_help=True, help="Module items — add, update, move, remove."
+)
+modules_app.add_typer(items_app, name="items")
+
+
+@items_app.command(name="add")
+def items_add(
     id_or_name: str = typer.Argument(..., help="Module ID or name"),
     item_type: str = typer.Option(
-        ..., "--type", help="Item type (Assignment, Quiz, File, Page, etc.)"
+        ...,
+        "--type",
+        help="Assignment, Quiz, File, Page, ExternalUrl or SubHeader",
     ),
-    content_id: int = typer.Option(
-        ..., "--content-id", help="Canvas ID of the content"
+    content_id: int | None = typer.Option(
+        None, "--content-id", help="Canvas ID of the content (Assignment, Quiz, File)"
+    ),
+    page_url: str | None = typer.Option(
+        None, "--page-url", help="Page slug (Page items)"
+    ),
+    url: str | None = typer.Option(
+        None, "--url", help="Target URL (ExternalUrl items)"
     ),
     title: str | None = typer.Option(
-        None, "--title", help="Item title (defaults to content name)"
+        None, "--title", help="Item title (defaults to the content's name)"
     ),
+    indent: int | None = typer.Option(None, "--indent", help="Indent level"),
     dry_run: bool = _common.dry_run_option(),
 ) -> None:
     """Add an item to a module."""
+    from ...actions.module_items import check_item_add_args
+
+    try:
+        canonical = check_item_add_args(
+            item_type,
+            content_id=content_id,
+            page_url=page_url,
+            url=url,
+            title=title,
+        )
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
     _common.require_canvas()
     with _common.client(dry_run=dry_run) as c:
         mod = c.resolve_module(id_or_name)
         item = c.create_module_item(
-            mod.id, item_type=item_type, content_id=content_id, title=title
+            mod.id,
+            item_type=canonical,
+            content_id=content_id,
+            title=title,
+            indent=indent,
+            page_url=page_url,
+            external_url=url,
         )
     if dry_run:
         _common.print_plan(c)
         return
     console.print(f"[green]Added:[/green] {item.title} to {mod.name}")
+
+
+@items_app.command(name="update")
+def items_update(
+    id_or_name: str = typer.Argument(..., help="Module ID or name"),
+    item: str = typer.Argument(..., help="Item ID or title"),
+    title: str | None = typer.Option(None, "--title", help="New title"),
+    indent: int | None = typer.Option(None, "--indent", help="New indent level"),
+    published: bool | None = typer.Option(None, "--publish/--unpublish"),
+    dry_run: bool = _common.dry_run_option(),
+) -> None:
+    """Change an item's title, indent or published state."""
+    if title is None and indent is None and published is None:
+        raise click.UsageError("Give --title, --indent, --publish or --unpublish.")
+    _common.require_canvas()
+    with _common.client(dry_run=dry_run) as c:
+        mod = c.resolve_module(id_or_name)
+        current = c.resolve_module_item(mod.id, item)
+        updated = c.update_module_item(
+            mod.id,
+            current.id,
+            title=title,
+            indent=indent,
+            published=published,
+            current=current,
+        )
+    if dry_run:
+        _common.print_plan(c)
+        return
+    console.print(f"[green]Updated:[/green] {updated.title}")
+
+
+@items_app.command(name="move")
+def items_move(
+    id_or_name: str = typer.Argument(..., help="Module ID or name"),
+    item: str = typer.Argument(..., help="Item ID or title"),
+    position: int = typer.Option(
+        ..., "--position", min=1, help="New position (1 = first)"
+    ),
+    dry_run: bool = _common.dry_run_option(),
+) -> None:
+    """Move an item to a position within its module."""
+    _common.require_canvas()
+    with _common.client(dry_run=dry_run) as c:
+        mod = c.resolve_module(id_or_name)
+        current = c.resolve_module_item(mod.id, item)
+        c.update_module_item(mod.id, current.id, position=position)
+    if dry_run:
+        _common.print_plan(c)
+        return
+    console.print(f"[green]Moved:[/green] {current.title} to position {position}")
+
+
+@items_app.command(name="remove")
+def items_remove(
+    id_or_name: str = typer.Argument(..., help="Module ID or name"),
+    item: str = typer.Argument(..., help="Item ID or title"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
+    dry_run: bool = _common.dry_run_option(),
+) -> None:
+    """Remove an item from a module (the linked content is untouched)."""
+    from ..prompts import confirm
+
+    _common.require_canvas()
+    with _common.client(dry_run=dry_run) as c:
+        mod = c.resolve_module(id_or_name)
+        current = c.resolve_module_item(mod.id, item)
+        confirm(
+            f"Remove '{current.title}' from module '{mod.name}'?",
+            yes=yes,
+            dry_run=dry_run,
+        )
+        c.delete_module_item(mod.id, current.id)
+    if dry_run:
+        _common.print_plan(c)
+        return
+    console.print(f"[red]Removed:[/red] {current.title}")

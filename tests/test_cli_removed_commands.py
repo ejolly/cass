@@ -34,6 +34,16 @@ def test_old_id_selectors_removed(args):
         ["canvas", "hide-tab", "Files"],
         ["canvas", "upload", "x.txt"],
         ["canvas", "delete-file", "15"],
+        [
+            "canvas",
+            "modules",
+            "add-item",
+            "Week 1",
+            "--type",
+            "Assignment",
+            "--content-id",
+            "7",
+        ],
     ],
 )
 def test_removed_flat_verbs_exit_2(args):
