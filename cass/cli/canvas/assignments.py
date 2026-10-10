@@ -119,11 +119,15 @@ def groups_create(
         None, "--weight", help="Percent of final grade (weighted courses only)"
     ),
     position: int | None = typer.Option(None, "--position", help="Position in list"),
+    dry_run: bool = _common.dry_run_option(),
 ) -> None:
     """Create an assignment group."""
     _common.require_canvas()
-    with _common.client() as c:
+    with _common.client(dry_run=dry_run) as c:
         g = c.create_assignment_group(name, position=position, group_weight=weight)
+    if dry_run:
+        _common.print_plan(c)
+        return
     console.print(f"[green]Created group:[/green] {g.name} (id={g.id})")
 
 
@@ -131,15 +135,23 @@ def groups_create(
 def groups_delete(
     id_or_name: str = typer.Argument(..., help="Group ID or name"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
+    dry_run: bool = _common.dry_run_option(),
 ) -> None:
     """Delete an assignment group and every assignment in it."""
     from ..prompts import confirm
 
     _common.require_canvas()
-    with _common.client() as c:
+    with _common.client(dry_run=dry_run) as c:
         g = c.resolve_assignment_group(id_or_name)
-        confirm(f"Delete group '{g.name}' and all of its assignments?", yes=yes)
+        confirm(
+            f"Delete group '{g.name}' and all of its assignments?",
+            yes=yes,
+            dry_run=dry_run,
+        )
         c.delete_assignment_group(g.id)
+    if dry_run:
+        _common.print_plan(c)
+        return
     console.print(f"[red]Deleted group:[/red] {g.name}")
 
 
@@ -162,12 +174,13 @@ def assignments_create(
     description: str | None = typer.Option(
         None, "--description", "-d", help="HTML description"
     ),
+    dry_run: bool = _common.dry_run_option(),
 ) -> None:
     """Create a new assignment."""
     from ...apis.canvas.times import parse_when
 
     _common.require_canvas()
-    with _common.client() as c:
+    with _common.client(dry_run=dry_run) as c:
         group_id = c.resolve_assignment_group(group).id
         a = c.create_assignment(
             name,
@@ -178,30 +191,41 @@ def assignments_create(
             assignment_group_id=group_id,
             description=description,
         )
+    if dry_run:
+        _common.print_plan(c)
+        return
     console.print(f"[green]Created assignment:[/green] {a.name} (id={a.id})")
 
 
 @assignments_app.command(name="publish")
 def assignments_publish(
     id_or_name: str = typer.Argument(..., help="Assignment ID or name"),
+    dry_run: bool = _common.dry_run_option(),
 ) -> None:
     """Publish an assignment."""
     _common.require_canvas()
-    with _common.client() as c:
+    with _common.client(dry_run=dry_run) as c:
         a = c.resolve_assignment(id_or_name)
         c.publish("assignments", a.id)
+    if dry_run:
+        _common.print_plan(c)
+        return
     console.print(f"[green]Published:[/green] {a.name}")
 
 
 @assignments_app.command(name="unpublish")
 def assignments_unpublish(
     id_or_name: str = typer.Argument(..., help="Assignment ID or name"),
+    dry_run: bool = _common.dry_run_option(),
 ) -> None:
     """Unpublish an assignment."""
     _common.require_canvas()
-    with _common.client() as c:
+    with _common.client(dry_run=dry_run) as c:
         a = c.resolve_assignment(id_or_name)
         c.unpublish("assignments", a.id)
+    if dry_run:
+        _common.print_plan(c)
+        return
     console.print(f"[yellow]Unpublished:[/yellow] {a.name}")
 
 
@@ -209,13 +233,17 @@ def assignments_unpublish(
 def assignments_delete(
     id_or_name: str = typer.Argument(..., help="Assignment ID or name"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
+    dry_run: bool = _common.dry_run_option(),
 ) -> None:
     """Delete an assignment."""
     from ..prompts import confirm
 
     _common.require_canvas()
-    with _common.client() as c:
+    with _common.client(dry_run=dry_run) as c:
         a = c.resolve_assignment(id_or_name)
-        confirm(f"Delete assignment '{a.name}'?", yes=yes)
+        confirm(f"Delete assignment '{a.name}'?", yes=yes, dry_run=dry_run)
         c.delete_assignment(a.id)
+    if dry_run:
+        _common.print_plan(c)
+        return
     console.print(f"[red]Deleted:[/red] {a.name}")

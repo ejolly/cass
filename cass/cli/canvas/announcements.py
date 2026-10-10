@@ -38,11 +38,15 @@ def announcements(
 def announcements_create(
     title: str = typer.Argument(..., help="Announcement title"),
     message: str = typer.Option(..., "--message", "-m", help="HTML message body"),
+    dry_run: bool = _common.dry_run_option(),
 ) -> None:
     """Create an announcement."""
     _common.require_canvas()
-    with _common.client() as c:
+    with _common.client(dry_run=dry_run) as c:
         a = c.create_announcement(title, message)
+    if dry_run:
+        _common.print_plan(c)
+        return
     console.print(f"[green]Created announcement:[/green] {a.title} (id={a.id})")
 
 
@@ -51,6 +55,7 @@ def announcements_update(
     topic_id: int = typer.Argument(..., help="Announcement (discussion topic) ID"),
     title: str = typer.Option("", "--title", help="New title"),
     message: str = typer.Option("", "--message", "-m", help="New message body"),
+    dry_run: bool = _common.dry_run_option(),
 ) -> None:
     """Update an announcement."""
     _common.require_canvas()
@@ -62,8 +67,11 @@ def announcements_update(
     if not kwargs:
         console.print("[yellow]Nothing to update.[/yellow]")
         return
-    with _common.client() as c:
+    with _common.client(dry_run=dry_run) as c:
         a = c.update_announcement(topic_id, **kwargs)
+    if dry_run:
+        _common.print_plan(c)
+        return
     console.print(f"[green]Updated:[/green] {a.title}")
 
 
@@ -71,12 +79,16 @@ def announcements_update(
 def announcements_delete(
     topic_id: int = typer.Argument(..., help="Announcement (discussion topic) ID"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
+    dry_run: bool = _common.dry_run_option(),
 ) -> None:
     """Delete an announcement."""
     _common.require_canvas()
     from ..prompts import confirm
 
-    confirm(f"Delete announcement {topic_id}?", yes=yes)
-    with _common.client() as c:
+    confirm(f"Delete announcement {topic_id}?", yes=yes, dry_run=dry_run)
+    with _common.client(dry_run=dry_run) as c:
         c.delete_announcement(topic_id)
+    if dry_run:
+        _common.print_plan(c)
+        return
     console.print(f"[red]Deleted announcement {topic_id}[/red]")

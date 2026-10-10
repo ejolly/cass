@@ -45,22 +45,30 @@ def tabs(
 @canvas_app.command(name="show-tab", rich_help_panel="Manage")
 def tabs_show(
     id_or_label: str = typer.Argument(..., help="Tab ID or label"),
+    dry_run: bool = _common.dry_run_option(),
 ) -> None:
     """Make a navigation tab visible."""
     _common.require_canvas()
-    with _common.client() as c:
+    with _common.client(dry_run=dry_run) as c:
         tab = c.resolve_tab(id_or_label)
         t = c.update_tab(tab.id, hidden=False)
+    if dry_run:
+        _common.print_plan(c)
+        return
     console.print(f"[green]Visible:[/green] {t.label}")
 
 
 @canvas_app.command(name="hide-tab", rich_help_panel="Manage")
 def tabs_hide(
     id_or_label: str = typer.Argument(..., help="Tab ID or label"),
+    dry_run: bool = _common.dry_run_option(),
 ) -> None:
     """Hide a navigation tab."""
     _common.require_canvas()
-    with _common.client() as c:
+    with _common.client(dry_run=dry_run) as c:
         tab = c.resolve_tab(id_or_label)
         t = c.update_tab(tab.id, hidden=True)
+    if dry_run:
+        _common.print_plan(c)
+        return
     console.print(f"[yellow]Hidden:[/yellow] {t.label}")

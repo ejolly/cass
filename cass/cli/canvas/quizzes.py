@@ -228,6 +228,7 @@ def quizzes_create(
     create_groups: bool = typer.Option(
         False, "--create-groups", help="Create a missing assignment group"
     ),
+    dry_run: bool = _common.dry_run_option(),
 ) -> None:
     """Create a quiz from a quiz file (--from) or as an empty placeholder."""
     from pathlib import Path
@@ -258,9 +259,12 @@ def quizzes_create(
         )
     if publish:
         spec.published = True
-    with _common.client() as c:
+    with _common.client(dry_run=dry_run) as c:
         group_id = _common.group_id_for(c, spec.group, create=create_groups)
         q = c.create_quiz(spec, assignment_group_id=group_id)
+    if dry_run:
+        _common.print_plan(c)
+        return
     console.print(
         f"[green]Created quiz:[/green] {q.title} "
         f"(id={q.id}, {q.question_count} questions)"
@@ -273,6 +277,7 @@ def quizzes_update(
     from_file: str = typer.Option(
         ..., "--from", help="Quiz file with the desired settings"
     ),
+    dry_run: bool = _common.dry_run_option(),
 ) -> None:
     """Update a quiz's settings from a quiz file (questions are not touched)."""
     from pathlib import Path
@@ -281,7 +286,7 @@ def quizzes_update(
 
     _common.require_canvas()
     spec = load_quiz_file(Path(from_file))
-    with _common.client() as c:
+    with _common.client(dry_run=dry_run) as c:
         q = c.resolve_quiz(id_or_name)
         group_id = _common.group_id_for(c, spec.group, create=False)
         changes = quiz_settings_diff(spec, q, c.time_zone, group_id=group_id)
@@ -290,30 +295,41 @@ def quizzes_update(
             return
         c.update_quiz(q.id, changes)
     detail = ", ".join(f"{k}: {v!r}" for k, v in changes.items())
+    if dry_run:
+        _common.print_plan(c)
+        return
     console.print(f"[green]Updated:[/green] {q.title} ({detail})")
 
 
 @quizzes_app.command(name="publish")
 def quizzes_publish(
     id_or_name: str = typer.Argument(..., help="Quiz ID or title"),
+    dry_run: bool = _common.dry_run_option(),
 ) -> None:
     """Publish a quiz."""
     _common.require_canvas()
-    with _common.client() as c:
+    with _common.client(dry_run=dry_run) as c:
         q = c.resolve_quiz(id_or_name)
         c.publish("quizzes", q.id)
+    if dry_run:
+        _common.print_plan(c)
+        return
     console.print(f"[green]Published:[/green] {q.title}")
 
 
 @quizzes_app.command(name="unpublish")
 def quizzes_unpublish(
     id_or_name: str = typer.Argument(..., help="Quiz ID or title"),
+    dry_run: bool = _common.dry_run_option(),
 ) -> None:
     """Unpublish a quiz."""
     _common.require_canvas()
-    with _common.client() as c:
+    with _common.client(dry_run=dry_run) as c:
         q = c.resolve_quiz(id_or_name)
         c.unpublish("quizzes", q.id)
+    if dry_run:
+        _common.print_plan(c)
+        return
     console.print(f"[yellow]Unpublished:[/yellow] {q.title}")
 
 
@@ -321,13 +337,17 @@ def quizzes_unpublish(
 def quizzes_delete(
     id_or_name: str = typer.Argument(..., help="Quiz ID or title"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
+    dry_run: bool = _common.dry_run_option(),
 ) -> None:
     """Delete a quiz."""
     from ..prompts import confirm
 
     _common.require_canvas()
-    with _common.client() as c:
+    with _common.client(dry_run=dry_run) as c:
         q = c.resolve_quiz(id_or_name)
-        confirm(f"Delete quiz '{q.title}'?", yes=yes)
+        confirm(f"Delete quiz '{q.title}'?", yes=yes, dry_run=dry_run)
         c.delete_quiz(q.id)
+    if dry_run:
+        _common.print_plan(c)
+        return
     console.print(f"[red]Deleted:[/red] {q.title}")

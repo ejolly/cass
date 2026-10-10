@@ -75,6 +75,7 @@ def files(
 def files_upload(
     path: str = typer.Argument(..., help="Local file path to upload"),
     folder: str = typer.Option("", "--folder", help="Destination folder in Canvas"),
+    dry_run: bool = _common.dry_run_option(),
 ) -> None:
     """Upload a file to the course."""
     import os
@@ -84,8 +85,11 @@ def files_upload(
         console.print(f"[red]File not found: {path}[/red]")
         raise typer.Exit(code=1)
 
-    with _common.client() as c:
+    with _common.client(dry_run=dry_run) as c:
         f = c.upload_file(path, folder=folder)
+    if dry_run:
+        _common.print_plan(c)
+        return
     console.print(f"[green]Uploaded:[/green] {f.display_name} (id={f.id})")
 
 
@@ -93,12 +97,16 @@ def files_upload(
 def files_delete(
     file_id: int = typer.Argument(..., help="Canvas file ID"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
+    dry_run: bool = _common.dry_run_option(),
 ) -> None:
     """Delete a file from the course."""
     _common.require_canvas()
     from ..prompts import confirm
 
-    confirm(f"Delete file {file_id}?", yes=yes)
-    with _common.client() as c:
+    confirm(f"Delete file {file_id}?", yes=yes, dry_run=dry_run)
+    with _common.client(dry_run=dry_run) as c:
         c.delete_file(file_id)
+    if dry_run:
+        _common.print_plan(c)
+        return
     console.print(f"[red]Deleted file {file_id}[/red]")

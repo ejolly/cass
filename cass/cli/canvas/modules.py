@@ -73,11 +73,15 @@ def modules_callback(
 def create(
     name: str = typer.Argument(..., help="Module name"),
     position: int | None = typer.Option(None, "--position", help="Position in list"),
+    dry_run: bool = _common.dry_run_option(),
 ) -> None:
     """Create a new module."""
     _common.require_canvas()
-    with _common.client() as c:
+    with _common.client(dry_run=dry_run) as c:
         mod = c.create_module(name, position=position)
+    if dry_run:
+        _common.print_plan(c)
+        return
     console.print(f"[green]Created module:[/green] {mod.name} (id={mod.id})")
 
 
@@ -85,33 +89,43 @@ def create(
 def modules_publish(
     id_or_name: str | None = typer.Argument(None, help="Module ID or name"),
     all_modules: bool = typer.Option(False, "--all", help="Publish all modules"),
+    dry_run: bool = _common.dry_run_option(),
 ) -> None:
     """Publish a module (or all modules with --all)."""
     _common.require_canvas()
     if not all_modules and not id_or_name:
         console.print("[red]Give a module ID or name, or --all.[/red]")
         raise typer.Exit(code=1)
-    with _common.client() as c:
+    with _common.client(dry_run=dry_run) as c:
         if all_modules:
             modules = c.list_modules()
-            for m in modules:
-                c.publish("modules", m.id)
-                console.print(f"  [green]Published:[/green] {m.name}")
+            for module in modules:
+                c.publish("modules", module.id)
+            published = [module.name for module in modules]
         else:
             mod = c.resolve_module(id_or_name or "")
             c.publish("modules", mod.id)
-            console.print(f"[green]Published:[/green] {mod.name}")
+            published = [mod.name]
+    if dry_run:
+        _common.print_plan(c)
+        return
+    for name in published:
+        console.print(f"[green]Published:[/green] {name}")
 
 
 @modules_app.command(name="unpublish")
 def modules_unpublish(
     id_or_name: str = typer.Argument(..., help="Module ID or name"),
+    dry_run: bool = _common.dry_run_option(),
 ) -> None:
     """Unpublish a module."""
     _common.require_canvas()
-    with _common.client() as c:
+    with _common.client(dry_run=dry_run) as c:
         mod = c.resolve_module(id_or_name)
         c.unpublish("modules", mod.id)
+    if dry_run:
+        _common.print_plan(c)
+        return
     console.print(f"[yellow]Unpublished:[/yellow] {mod.name}")
 
 
@@ -119,15 +133,19 @@ def modules_unpublish(
 def modules_delete(
     id_or_name: str = typer.Argument(..., help="Module ID or name"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
+    dry_run: bool = _common.dry_run_option(),
 ) -> None:
     """Delete a module."""
     from ..prompts import confirm
 
     _common.require_canvas()
-    with _common.client() as c:
+    with _common.client(dry_run=dry_run) as c:
         mod = c.resolve_module(id_or_name)
-        confirm(f"Delete module '{mod.name}'?", yes=yes)
+        confirm(f"Delete module '{mod.name}'?", yes=yes, dry_run=dry_run)
         c.delete_module(mod.id)
+    if dry_run:
+        _common.print_plan(c)
+        return
     console.print(f"[red]Deleted:[/red] {mod.name}")
 
 
@@ -143,12 +161,16 @@ def modules_add_item(
     title: str | None = typer.Option(
         None, "--title", help="Item title (defaults to content name)"
     ),
+    dry_run: bool = _common.dry_run_option(),
 ) -> None:
     """Add an item to a module."""
     _common.require_canvas()
-    with _common.client() as c:
+    with _common.client(dry_run=dry_run) as c:
         mod = c.resolve_module(id_or_name)
         item = c.create_module_item(
             mod.id, item_type=item_type, content_id=content_id, title=title
         )
+    if dry_run:
+        _common.print_plan(c)
+        return
     console.print(f"[green]Added:[/green] {item.title} to {mod.name}")

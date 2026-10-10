@@ -74,12 +74,13 @@ def calendar_create(
     all_day: bool = typer.Option(
         False, "--all-day", help="All-day event (times ignored)"
     ),
+    dry_run: bool = _common.dry_run_option(),
 ) -> None:
     """Create a calendar event."""
     from ...apis.canvas.times import parse_when
 
     _common.require_canvas()
-    with _common.client() as c:
+    with _common.client(dry_run=dry_run) as c:
         e = c.create_calendar_event(
             title,
             start_at=parse_when(start_at, c.time_zone),
@@ -88,6 +89,9 @@ def calendar_create(
             location_name=location,
             all_day=all_day,
         )
+    if dry_run:
+        _common.print_plan(c)
+        return
     console.print(f"[green]Created event:[/green] {e.title} (id={e.id})")
 
 
@@ -108,6 +112,7 @@ def calendar_update(
     all_day: bool | None = typer.Option(
         None, "--all-day/--timed", help="Make all-day or timed"
     ),
+    dry_run: bool = _common.dry_run_option(),
 ) -> None:
     """Update a calendar event (only the given fields change)."""
     from ...apis.canvas.times import parse_when
@@ -125,12 +130,15 @@ def calendar_update(
     if not kwargs and start_at is None and end_at is None:
         console.print("[yellow]Nothing to update.[/yellow]")
         return
-    with _common.client() as c:
+    with _common.client(dry_run=dry_run) as c:
         if start_at is not None:
             kwargs["start_at"] = parse_when(start_at, c.time_zone)
         if end_at is not None:
             kwargs["end_at"] = parse_when(end_at, c.time_zone)
         e = c.update_calendar_event(event_id, **kwargs)
+    if dry_run:
+        _common.print_plan(c)
+        return
     console.print(f"[green]Updated:[/green] {e.title}")
 
 
@@ -138,12 +146,16 @@ def calendar_update(
 def calendar_delete(
     event_id: int = typer.Argument(..., help="Calendar event ID"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
+    dry_run: bool = _common.dry_run_option(),
 ) -> None:
     """Delete a calendar event."""
     _common.require_canvas()
     from ..prompts import confirm
 
-    confirm(f"Delete calendar event {event_id}?", yes=yes)
-    with _common.client() as c:
+    confirm(f"Delete calendar event {event_id}?", yes=yes, dry_run=dry_run)
+    with _common.client(dry_run=dry_run) as c:
         c.delete_calendar_event(event_id)
+    if dry_run:
+        _common.print_plan(c)
+        return
     console.print(f"[red]Deleted calendar event {event_id}[/red]")
