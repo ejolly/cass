@@ -195,5 +195,6 @@ from . import files  # noqa: E402, F401
 from . import announcements  # noqa: E402, F401
 from . import tabs  # noqa: E402, F401
 from . import sync  # noqa: E402, F401
+from . import api  # noqa: E402, F401
 
 # isort: on

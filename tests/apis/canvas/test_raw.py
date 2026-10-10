@@ -70,3 +70,27 @@ def test_parse_body_json_and_form():
     as_form = httpx.Request("PUT", url, data={"hidden": True})
     assert parse_body(as_form) == {"hidden": "true"}
     assert parse_body(httpx.Request("DELETE", url)) == {}
+
+
+def test_parse_pairs_keeps_empty_and_equals():
+    from cass.apis.canvas.raw import parse_pairs
+
+    assert parse_pairs(["a=1", "a=2", "k=", "note=a=b"]) == [
+        ("a", "1"),
+        ("a", "2"),
+        ("k", ""),
+        ("note", "a=b"),
+    ]
+
+
+def test_parse_pairs_rejects_missing_equals():
+    from cass.apis.canvas.raw import parse_pairs
+
+    with pytest.raises(ValueError, match="KEY=VALUE"):
+        parse_pairs(["oops"])
+
+
+def test_expand_course():
+    from cass.apis.canvas.raw import expand_course
+
+    assert expand_course("/courses/{course}/modules", 7) == "/courses/7/modules"

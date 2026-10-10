@@ -387,6 +387,13 @@ class BaseClient:
 
     _course = course_path
 
+    def url_for(self, path: str) -> str:
+        """Full URL for an API path; absolute URLs are returned unchanged."""
+        normalized = api_path(path)
+        if normalized.startswith(("http://", "https://")):
+            return normalized
+        return self._base_url + normalized
+
     def request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
         """Send any request with cass's auth and retry handling.
 

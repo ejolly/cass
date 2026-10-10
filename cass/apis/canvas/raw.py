@@ -5,7 +5,7 @@ from __future__ import annotations
 __docformat__ = "google"
 
 import json
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from typing import Any
 from urllib.parse import parse_qsl, urlencode
 
@@ -121,3 +121,19 @@ def request_fields(body: dict[str, Any]) -> dict[str, Any]:
         if isinstance(value, dict):
             return value
     return body
+
+
+def parse_pairs(items: Sequence[str]) -> list[tuple[str, str]]:
+    """Split ``KEY=VALUE`` strings at the first ``=``, keeping order and repeats."""
+    pairs: list[tuple[str, str]] = []
+    for item in items:
+        key, equals, value = item.partition("=")
+        if not equals:
+            raise ValueError(f"expected KEY=VALUE, got {item!r}")
+        pairs.append((key, value))
+    return pairs
+
+
+def expand_course(path: str, course_id: int) -> str:
+    """Replace every ``{course}`` in *path* with the course ID."""
+    return path.replace("{course}", str(course_id))
