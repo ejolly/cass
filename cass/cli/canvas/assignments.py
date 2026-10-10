@@ -28,22 +28,28 @@ assignments_app.add_typer(groups_app, name="groups")
 def assignments_callback(ctx: typer.Context) -> None:
     """Assignments; bare ``assignments`` runs ``assignments list``."""
     if ctx.invoked_subcommand is None:
-        assignments_list(csv_out="", save="")
+        assignments_list(csv_out="", save="", as_json=False)
 
 
 @assignments_app.command(name="list")
 def assignments_list(
     csv_out: str = typer.Option("", "--csv", help="Export as CSV file"),
     save: str = typer.Option("", "--save", help="Save output as markdown file"),
+    as_json: bool = _common.json_option(),
 ) -> None:
     """List assignments."""
     from .. import report
 
+    _common.reject_json_with_files(as_json, csv_out, save)
     _common.require_canvas()
     with _common.client() as c:
         tz = c.time_zone
         assignments = c.list_assignments()
-        groups = {g.id: g.name for g in c.list_assignment_groups()}
+        groups = {} if as_json else {g.id: g.name for g in c.list_assignment_groups()}
+
+    if as_json:
+        _common.emit_json_lines(assignments)
+        return
 
     headers = ["ID", "Name", "Points", "Due", "Published", "Group"]
     rows = [
@@ -71,14 +77,20 @@ def assignments_show(
     id_or_name: str = typer.Argument(..., help="Assignment ID or name"),
     csv_out: str = typer.Option("", "--csv", help="Export as CSV file"),
     save: str = typer.Option("", "--save", help="Save output as markdown file"),
+    as_json: bool = _common.json_option(),
 ) -> None:
     """Show details for one assignment."""
     from .. import report
 
+    _common.reject_json_with_files(as_json, csv_out, save)
     _common.require_canvas()
     with _common.client() as c:
         tz = c.time_zone
         a = c.resolve_assignment(id_or_name)
+
+    if as_json:
+        _common.emit_json(a)
+        return
 
     headers = ["Field", "Value"]
     rows = [
@@ -106,20 +118,26 @@ def assignments_show(
 def groups_callback(ctx: typer.Context) -> None:
     """Assignment groups; bare ``groups`` runs ``groups list``."""
     if ctx.invoked_subcommand is None:
-        groups_list(csv_out="", save="")
+        groups_list(csv_out="", save="", as_json=False)
 
 
 @groups_app.command(name="list")
 def groups_list(
     csv_out: str = typer.Option("", "--csv", help="Export as CSV file"),
     save: str = typer.Option("", "--save", help="Save output as markdown file"),
+    as_json: bool = _common.json_option(),
 ) -> None:
     """Show assignment groups with weights."""
     from .. import report
 
+    _common.reject_json_with_files(as_json, csv_out, save)
     _common.require_canvas()
     with _common.client() as c:
         groups = c.list_assignment_groups()
+
+    if as_json:
+        _common.emit_json_lines(groups)
+        return
 
     headers = ["ID", "Name", "Position", "Weight"]
     rows = [

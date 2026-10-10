@@ -20,24 +20,31 @@ files_app = typer.Typer(
 def files_callback(ctx: typer.Context) -> None:
     """Course files; bare ``files`` runs ``files list``."""
     if ctx.invoked_subcommand is None:
-        files_list(csv_out="", save="")
+        files_list(csv_out="", save="", as_json=False)
 
 
 @files_app.command(name="list")
 def files_list(
     csv_out: str = typer.Option("", "--csv", help="Export as CSV file"),
     save: str = typer.Option("", "--save", help="Save output as markdown file"),
+    as_json: bool = _common.json_option(),
 ) -> None:
     """Show course files as a tree."""
     from rich.tree import Tree
 
+    from ...actions.canvas_records import file_tree_records
     from .. import report
 
+    _common.reject_json_with_files(as_json, csv_out, save)
     _common.require_canvas()
     with _common.client() as c:
         tz = c.time_zone
         folders = c.list_folders()
         all_files = c.list_files()
+
+    if as_json:
+        _common.emit_json_lines(file_tree_records(folders, all_files))
+        return
 
     if csv_out or save:
         headers = ["ID", "Name", "Size", "Type", "Folder", "Created"]

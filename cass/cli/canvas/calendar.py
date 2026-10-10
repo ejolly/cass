@@ -20,7 +20,7 @@ calendar_app = typer.Typer(
 def calendar_callback(ctx: typer.Context) -> None:
     """Course calendar; bare ``calendar`` runs ``calendar list``."""
     if ctx.invoked_subcommand is None:
-        calendar_list(start_date="", end_date="", csv_out="", save="")
+        calendar_list(start_date="", end_date="", csv_out="", save="", as_json=False)
 
 
 @calendar_app.command(name="list")
@@ -33,8 +33,10 @@ def calendar_list(
     ),
     csv_out: str = typer.Option("", "--csv", help="Export as CSV file"),
     save: str = typer.Option("", "--save", help="Save output as markdown file"),
+    as_json: bool = _common.json_option(),
 ) -> None:
     """List course calendar events (all events unless a date range is given)."""
+    _common.reject_json_with_files(as_json, csv_out, save)
     _common.require_canvas()
 
     from .. import report
@@ -44,6 +46,10 @@ def calendar_list(
         events = c.list_calendar_events(
             start_date=start_date or None, end_date=end_date or None
         )
+
+    if as_json:
+        _common.emit_json_lines(events)
+        return
 
     headers = ["ID", "Start", "End", "Title", "Location"]
     rows: list[list[str]] = []

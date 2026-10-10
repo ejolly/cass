@@ -7,8 +7,11 @@ from __future__ import annotations
 
 __docformat__ = "google"
 
+from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
+import click
+import msgspec
 import typer
 from rich.console import Console
 
@@ -49,6 +52,30 @@ def dry_run_option() -> bool:
         "--dry-run",
         help="Show the Canvas requests this would send, without sending any writes",
     )
+
+
+def json_option() -> bool:
+    """Shared ``--json`` flag, used as a parameter default."""
+    return typer.Option(
+        False, "--json", help="Print JSON Lines: one Canvas object per line"
+    )
+
+
+def reject_json_with_files(as_json: bool, csv_out: str, save: str) -> None:
+    """Exit 2 when ``--json`` is combined with a file output option."""
+    if as_json and (csv_out or save):
+        raise click.UsageError("--json cannot be combined with --csv or --save.")
+
+
+def emit_json(obj: object) -> None:
+    """Print one object as a single JSON line on stdout."""
+    typer.echo(msgspec.json.encode(obj).decode())
+
+
+def emit_json_lines(items: Iterable[object]) -> None:
+    """Print each item as its own JSON line on stdout."""
+    for item in items:
+        emit_json(item)
 
 
 def print_plan(c: CanvasClient, *, err: bool = False) -> None:

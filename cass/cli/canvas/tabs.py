@@ -20,20 +20,26 @@ tabs_app = typer.Typer(
 def tabs_callback(ctx: typer.Context) -> None:
     """Navigation tabs; bare ``tabs`` runs ``tabs list``."""
     if ctx.invoked_subcommand is None:
-        tabs_list(csv_out="", save="")
+        tabs_list(csv_out="", save="", as_json=False)
 
 
 @tabs_app.command(name="list")
 def tabs_list(
     csv_out: str = typer.Option("", "--csv", help="Export as CSV file"),
     save: str = typer.Option("", "--save", help="Save output as markdown file"),
+    as_json: bool = _common.json_option(),
 ) -> None:
     """List course navigation tabs."""
     from .. import report
 
+    _common.reject_json_with_files(as_json, csv_out, save)
     _common.require_canvas()
     with _common.client() as c:
         tab_list = c.list_tabs()
+
+    if as_json:
+        _common.emit_json_lines(tab_list)
+        return
 
     headers = ["Label", "Type", "Position", "Visibility", "ID"]
     rows = [

@@ -20,20 +20,26 @@ modules_app = typer.Typer(
 def modules_callback(ctx: typer.Context) -> None:
     """Course modules; bare ``modules`` runs ``modules list``."""
     if ctx.invoked_subcommand is None:
-        modules_list(csv_out="", save="")
+        modules_list(csv_out="", save="", as_json=False)
 
 
 @modules_app.command(name="list")
 def modules_list(
     csv_out: str = typer.Option("", "--csv", help="Export as CSV file"),
     save: str = typer.Option("", "--save", help="Save output as markdown file"),
+    as_json: bool = _common.json_option(),
 ) -> None:
     """List modules."""
     from .. import report
 
+    _common.reject_json_with_files(as_json, csv_out, save)
     _common.require_canvas()
     with _common.client() as c:
         modules = c.list_modules()
+
+    if as_json:
+        _common.emit_json_lines(modules)
+        return
 
     headers = ["ID", "Position", "Name", "Published", "Items"]
     rows = [
@@ -60,14 +66,21 @@ def modules_show(
     id_or_name: str = typer.Argument(..., help="Module ID or name"),
     csv_out: str = typer.Option("", "--csv", help="Export as CSV file"),
     save: str = typer.Option("", "--save", help="Save output as markdown file"),
+    as_json: bool = _common.json_option(),
 ) -> None:
     """Show the items in a module."""
+    from ...actions.canvas_records import module_detail_record
     from .. import report
 
+    _common.reject_json_with_files(as_json, csv_out, save)
     _common.require_canvas()
     with _common.client() as c:
         mod = c.resolve_module(id_or_name)
         items = c.list_module_items(mod.id)
+
+    if as_json:
+        _common.emit_json(module_detail_record(mod, items))
+        return
 
     headers = ["ID", "Title", "Type", "Content ID", "Published"]
     rows = [

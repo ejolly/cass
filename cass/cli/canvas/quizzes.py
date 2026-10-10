@@ -20,21 +20,27 @@ quizzes_app = typer.Typer(
 def quizzes_callback(ctx: typer.Context) -> None:
     """Quizzes; bare ``quizzes`` runs ``quizzes list``."""
     if ctx.invoked_subcommand is None:
-        quizzes_list(csv_out="", save="")
+        quizzes_list(csv_out="", save="", as_json=False)
 
 
 @quizzes_app.command(name="list")
 def quizzes_list(
     csv_out: str = typer.Option("", "--csv", help="Export as CSV file"),
     save: str = typer.Option("", "--save", help="Save output as markdown file"),
+    as_json: bool = _common.json_option(),
 ) -> None:
     """List quizzes."""
     from .. import report
 
+    _common.reject_json_with_files(as_json, csv_out, save)
     _common.require_canvas()
     with _common.client() as c:
         tz = c.time_zone
         quizzes = c.list_quizzes()
+
+    if as_json:
+        _common.emit_json_lines(quizzes)
+        return
 
     headers = ["ID", "Title", "Type", "Questions", "Points", "Due", "Published"]
     rows = [
@@ -63,17 +69,26 @@ def quizzes_show(
     id_or_name: str = typer.Argument(..., help="Quiz ID or title"),
     csv_out: str = typer.Option("", "--csv", help="Export as CSV file"),
     save: str = typer.Option("", "--save", help="Save output as markdown file"),
+    as_json: bool = _common.json_option(),
 ) -> None:
     """Show settings and questions for one quiz."""
+    from ...actions.canvas_records import quiz_detail_record
     from ...actions.quizzes import strip_html
     from .. import report
 
+    _common.reject_json_with_files(as_json, csv_out, save)
     _common.require_canvas()
     with _common.client() as c:
         tz = c.time_zone
         q = c.resolve_quiz(id_or_name)
         questions, from_stats = c.list_quiz_questions(q.id)
-        groups = {g.id: g.name for g in c.list_assignment_groups()}
+        groups = {} if as_json else {g.id: g.name for g in c.list_assignment_groups()}
+
+    if as_json:
+        _common.emit_json(quiz_detail_record(q, questions, from_statistics=from_stats))
+        if from_stats:
+            err_console.print(_STATS_NOTE)
+        return
 
     attempts = "unlimited" if q.allowed_attempts == -1 else str(q.allowed_attempts)
     headers = ["Field", "Value"]

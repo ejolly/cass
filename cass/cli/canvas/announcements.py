@@ -20,21 +20,27 @@ announcements_app = typer.Typer(
 def announcements_callback(ctx: typer.Context) -> None:
     """Course announcements; bare ``announcements`` runs ``announcements list``."""
     if ctx.invoked_subcommand is None:
-        announcements_list(csv_out="", save="")
+        announcements_list(csv_out="", save="", as_json=False)
 
 
 @announcements_app.command(name="list")
 def announcements_list(
     csv_out: str = typer.Option("", "--csv", help="Export as CSV file"),
     save: str = typer.Option("", "--save", help="Save output as markdown file"),
+    as_json: bool = _common.json_option(),
 ) -> None:
     """List course announcements."""
     from .. import report
 
+    _common.reject_json_with_files(as_json, csv_out, save)
     _common.require_canvas()
     with _common.client() as c:
         tz = c.time_zone
         anns = c.list_announcements()
+
+    if as_json:
+        _common.emit_json_lines(anns)
+        return
 
     headers = ["ID", "Title", "Posted", "Author"]
     rows = [[str(a.id), a.title, due(a.posted_at, tz), a.user_name] for a in anns]
