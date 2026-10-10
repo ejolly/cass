@@ -98,4 +98,6 @@ Install: `uv tool install cass` or `uvx cass`.
 | `cass canvas calendar delete` | Delete a calendar event |
 """
 
-__version__ = "0.2.0"
+import importlib.metadata
+
+__version__ = importlib.metadata.version("cassroom")

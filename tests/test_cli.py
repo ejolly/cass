@@ -92,6 +92,13 @@ class TestCliSurface:
         for command in ("gradebook", "export", "import", "drop"):
             assert command not in result.stdout
 
+    def test_version_matches_package_metadata(self):
+        from importlib.metadata import version
+
+        result = runner.invoke(app, ["--version"])
+        assert result.exit_code == 0
+        assert result.stdout.strip() == f"cass {version('cassroom')}"
+
 
 class TestConfigOption:
     @pytest.fixture
