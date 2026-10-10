@@ -415,16 +415,37 @@ class TestSyncQuizzes:
         client.update_quiz.assert_called_once_with(1, {"allowed_attempts": 2})
 
     def test_sync_create_ignores_ids(self):
-        client = MagicMock()
-        client.list_quizzes.return_value = []
+        import httpx
+
+        from cass.apis.canvas.client import CanvasClient
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET" and request.url.path.endswith("/quizzes"):
+                return httpx.Response(200, json=[])
+            return httpx.Response(500, json={"message": "unexpected request"})
+
+        client = CanvasClient(
+            "https://canvas.example.com",
+            token="t",
+            course_id=1,
+            transport=httpx.MockTransport(handler),
+            time_zone="America/Los_Angeles",
+            dry_run=True,
+        )
         spec = QuizSpec(
             title="New",
             quiz_type="survey",
-            questions=[QuestionSpec(text="a", id=99)],
+            questions=[QuestionSpec(text="a", id=99), QuestionSpec(text="b")],
         )
-        sync_quizzes(client, [spec], {}, LA)
-        client.create_quiz.assert_called_once()
-        assert "id" not in question_form_fields(spec.questions[0], spec.quiz_type)
+        rows = sync_quizzes(client, [spec], {}, LA)
+        assert [r[0] for r in rows] == ["create"]
+        question_posts = [
+            r.body["question"]
+            for r in client.planned_requests
+            if r.path.endswith("/questions")
+        ]
+        assert len(question_posts) == 2
+        assert all("id" not in body for body in question_posts)
 
 
 def test_strip_html():

@@ -181,6 +181,20 @@ def question_form_fields(question: QuestionSpec, quiz_type: str) -> dict[str, ob
     return fields
 
 
+def group_form_fields(group: GroupSpec, quiz_type: str) -> dict[str, object]:
+    """Canvas body for creating *group* (points per item default by quiz type)."""
+    points = (
+        group.points_per_item
+        if group.points_per_item is not None
+        else default_question_points(quiz_type)
+    )
+    return {
+        "name": group.name,
+        "pick_count": group.pick_count,
+        "question_points": _number(points),
+    }
+
+
 # --- Quiz files ---
 
 

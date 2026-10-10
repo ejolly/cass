@@ -113,7 +113,7 @@ def test_create_quiz_with_groups_records_chain(dry):
     spec = QuizSpec(
         title="Week 1",
         quiz_type="survey",
-        groups=[GroupSpec(name="Pair")],
+        groups=[GroupSpec(name="Pair", pick_count=2, points_per_item=2.5)],
         questions=[
             QuestionSpec(text="a", id=99),
             QuestionSpec(text="P1", group="Pair"),
@@ -131,6 +131,9 @@ def test_create_quiz_with_groups_records_chain(dry):
         ("POST", "/courses/1/quizzes/-1/groups/-2/reorder"),
         ("PUT", "/courses/1/quizzes/-1"),
     ]
+    assert planned[1].body == {
+        "quiz_groups": [{"name": "Pair", "pick_count": 2, "question_points": 2.5}]
+    }
     bodies = [r.body for r in planned[2:6]]
     assert [b["question"].get("quiz_group_id") for b in bodies] == [None, -2, -2, None]
     assert all(
@@ -142,6 +145,41 @@ def test_create_quiz_with_groups_records_chain(dry):
         {"id": "-6", "type": "question"},
     ]
     assert writes(sent) == []
+
+
+def test_create_quiz_group_default_points_follow_quiz_type(dry):
+    client, _ = dry
+    spec = QuizSpec(
+        title="Graded",
+        quiz_type="assignment",
+        groups=[GroupSpec(name="G")],
+        questions=[QuestionSpec(text="a", group="G")],
+    )
+    client.create_quiz(spec)
+    assert client.planned_requests[1].body == {
+        "quiz_groups": [{"name": "G", "pick_count": 1, "question_points": 1}]
+    }
+
+
+def test_create_quiz_with_groups_deletes_quiz_when_question_fails(dry, monkeypatch):
+    client, _ = dry
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("question rejected")
+
+    monkeypatch.setattr(client, "create_quiz_question", boom)
+    spec = QuizSpec(
+        title="Week 1",
+        quiz_type="survey",
+        groups=[GroupSpec(name="Pair")],
+        questions=[QuestionSpec(text="P1", group="Pair")],
+    )
+    with pytest.raises(RuntimeError, match="question rejected"):
+        client.create_quiz(spec)
+    assert [(r.method, r.path) for r in client.planned_requests][-1] == (
+        "DELETE",
+        "/courses/1/quizzes/-1",
+    )
 
 
 def test_question_group_create_unwraps_envelope(dry):

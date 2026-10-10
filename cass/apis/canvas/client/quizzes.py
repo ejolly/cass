@@ -13,9 +13,8 @@ import msgspec
 from ....actions.quizzes import (
     QuestionSpec,
     QuizSpec,
-    _number,
-    default_question_points,
     file_layout,
+    group_form_fields,
     group_members,
     question_form_fields,
     quiz_form_fields,
@@ -76,16 +75,7 @@ class QuizzesMixin(BaseClient):
         try:
             group_ids = {
                 group.name: self.create_question_group(
-                    quiz.id,
-                    {
-                        "name": group.name,
-                        "pick_count": group.pick_count,
-                        "question_points": _number(
-                            group.points_per_item
-                            if group.points_per_item is not None
-                            else default_question_points(spec.quiz_type)
-                        ),
-                    },
+                    quiz.id, group_form_fields(group, spec.quiz_type)
                 ).id
                 for group in spec.groups
             }
