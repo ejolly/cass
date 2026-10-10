@@ -323,10 +323,11 @@ def quizzes_delete(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
 ) -> None:
     """Delete a quiz."""
+    from ..prompts import confirm
+
     _common.require_canvas()
     with _common.client() as c:
         q = c.resolve_quiz(id_or_name)
-        if not yes and not typer.confirm(f"Delete quiz '{q.title}'?"):
-            raise typer.Abort()
+        confirm(f"Delete quiz '{q.title}'?", yes=yes)
         c.delete_quiz(q.id)
     console.print(f"[red]Deleted:[/red] {q.title}")

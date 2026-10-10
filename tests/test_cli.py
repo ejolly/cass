@@ -63,6 +63,15 @@ def _sample_assignment_id(sdb: sqlite_utils.Database) -> int:
 
 
 class TestCliSurface:
+    def test_only_prompt_helper_calls_typer_confirm(self):
+        root = Path(__file__).parents[1]
+        users = [
+            path.relative_to(root).as_posix()
+            for path in (root / "cass" / "cli").rglob("*.py")
+            if "typer.confirm" in path.read_text()
+        ]
+        assert users == ["cass/cli/prompts.py"]
+
     def test_bare_cli_shows_help(self):
         result = runner.invoke(app, [])
         assert result.exit_code == 0
@@ -215,6 +224,7 @@ class TestPush:
         apply_mock = MagicMock(return_value={"ok": True, "results": []})
         monkeypatch.setattr("cass.db.canvas_apply", apply_mock)
 
+        monkeypatch.setattr("cass.cli.prompts._stdin_is_tty", lambda: True)
         result = runner.invoke(app, ["push"], input="n\n")
         assert result.exit_code == 1
         assert "Canvas Push Preview" in result.stdout
@@ -306,6 +316,7 @@ class TestRestore:
         bdb["canvas_assignments"].insert({"canvas_id": 10, "name": "HW 01"})
         bdb.conn.close()
 
+        monkeypatch.setattr("cass.cli.prompts._stdin_is_tty", lambda: True)
         result = runner.invoke(app, ["restore", str(backup)], input="n\n")
 
         assert "Students: 2, Assignments: 1" in result.stdout
@@ -583,7 +594,7 @@ class TestCanvasModules:
         ]
         fake.resolve_module.return_value = CanvasModule(id=1, name="Week 1", position=1)
         monkeypatch.setattr("cass.cli.canvas._common.require_canvas", lambda: None)
-        monkeypatch.setattr("cass.cli.canvas._common.client", lambda: fake)
+        monkeypatch.setattr("cass.cli.canvas._common.client", lambda **_: fake)
         return fake
 
     def test_publish_all_without_id(self, modules_client):
@@ -672,7 +683,7 @@ class TestCanvasQuizzes:
         fake.create_quiz.return_value = quiz
         fake.update_quiz.return_value = quiz
         monkeypatch.setattr("cass.cli.canvas._common.require_canvas", lambda: None)
-        monkeypatch.setattr("cass.cli.canvas._common.client", lambda: fake)
+        monkeypatch.setattr("cass.cli.canvas._common.client", lambda **_: fake)
         return fake
 
     def test_list_shows_due_in_course_time(self, quiz_client):
@@ -907,7 +918,7 @@ class TestCanvasSync:
                 published=True,
             )
         ]
-        monkeypatch.setattr("cass.cli.canvas._common.client", lambda: fake)
+        monkeypatch.setattr("cass.cli.canvas._common.client", lambda **_: fake)
 
         result = runner.invoke(app, ["canvas", "sync"])
         assert result.exit_code == 0, result.output
@@ -935,7 +946,7 @@ class TestCanvasSync:
                 published=True,
             )
         ]
-        monkeypatch.setattr("cass.cli.canvas._common.client", lambda: fake)
+        monkeypatch.setattr("cass.cli.canvas._common.client", lambda **_: fake)
 
         result = runner.invoke(app, ["canvas", "sync"])
         assert result.exit_code == 0, result.output
@@ -959,7 +970,7 @@ class TestCanvasSync:
         fake.list_quizzes.return_value = []
         fake.list_assignments.return_value = []
         fake.list_assignment_groups.return_value = []
-        monkeypatch.setattr("cass.cli.canvas._common.client", lambda: fake)
+        monkeypatch.setattr("cass.cli.canvas._common.client", lambda **_: fake)
         return fake
 
     def test_quiz_missing_group_is_an_error(self, monkeypatch, tmp_path):
@@ -1013,8 +1024,14 @@ class TestCanvasTabsAndFiles:
             CanvasFile(id=18962999, display_name="notes.txt", size=20, folder_id=1)
         ]
         monkeypatch.setattr("cass.cli.canvas._common.require_canvas", lambda: None)
-        monkeypatch.setattr("cass.cli.canvas._common.client", lambda: fake)
+        monkeypatch.setattr("cass.cli.canvas._common.client", lambda **_: fake)
         return fake
+
+    def test_delete_file_without_yes_on_non_tty_exits_1(self, fake_client):
+        result = runner.invoke(app, ["canvas", "delete-file", "15"])
+        assert result.exit_code == 1
+        assert "--yes" in result.stderr
+        fake_client.delete_file.assert_not_called()
 
     def test_hide_tab_resolves_by_label(self, fake_client):
         result = runner.invoke(app, ["canvas", "hide-tab", "Media Gallery"])
@@ -1060,7 +1077,7 @@ class TestCanvasAssignments:
         )
         fake.create_assignment.return_value = CanvasAssignmentResponse(id=1, name="HW1")
         monkeypatch.setattr("cass.cli.canvas._common.require_canvas", lambda: None)
-        monkeypatch.setattr("cass.cli.canvas._common.client", lambda: fake)
+        monkeypatch.setattr("cass.cli.canvas._common.client", lambda **_: fake)
         return fake
 
     def test_create_passes_description(self, fake_client):
@@ -1173,7 +1190,7 @@ class TestCanvasCalendar:
             id=235, title="OH (moved)"
         )
         monkeypatch.setattr("cass.cli.canvas._common.require_canvas", lambda: None)
-        monkeypatch.setattr("cass.cli.canvas._common.client", lambda: fake)
+        monkeypatch.setattr("cass.cli.canvas._common.client", lambda **_: fake)
         return fake
 
     def test_create_localizes_start(self, calendar_client):

@@ -133,13 +133,12 @@ def groups_delete(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
 ) -> None:
     """Delete an assignment group and every assignment in it."""
+    from ..prompts import confirm
+
     _common.require_canvas()
     with _common.client() as c:
         g = c.resolve_assignment_group(id_or_name)
-        if not yes and not typer.confirm(
-            f"Delete group '{g.name}' and all of its assignments?"
-        ):
-            raise typer.Abort()
+        confirm(f"Delete group '{g.name}' and all of its assignments?", yes=yes)
         c.delete_assignment_group(g.id)
     console.print(f"[red]Deleted group:[/red] {g.name}")
 
@@ -212,10 +211,11 @@ def assignments_delete(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
 ) -> None:
     """Delete an assignment."""
+    from ..prompts import confirm
+
     _common.require_canvas()
     with _common.client() as c:
         a = c.resolve_assignment(id_or_name)
-        if not yes and not typer.confirm(f"Delete assignment '{a.name}'?"):
-            raise typer.Abort()
+        confirm(f"Delete assignment '{a.name}'?", yes=yes)
         c.delete_assignment(a.id)
     console.print(f"[red]Deleted:[/red] {a.name}")

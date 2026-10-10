@@ -35,10 +35,34 @@ def require_canvas() -> None:
         raise typer.Exit(code=1)
 
 
-def client() -> CanvasClient:
+def client(*, dry_run: bool = False) -> CanvasClient:
     from ...apis.canvas.client import CanvasClient
 
-    return CanvasClient()
+    return CanvasClient(dry_run=dry_run)
+
+
+def dry_run_option() -> bool:
+    """Shared ``--dry-run`` flag, used as a parameter default."""
+    return typer.Option(
+        False,
+        "--dry-run",
+        help="Show the Canvas requests this would send, without sending any writes",
+    )
+
+
+def print_plan(c: CanvasClient, *, err: bool = False) -> None:
+    """Print the writes a dry-run client recorded."""
+    from ...apis.canvas.dry_run import format_plan
+
+    out = Console(stderr=True) if err else console
+    if not c.planned_requests:
+        out.print("Dry run: no Canvas writes needed.", markup=False, highlight=False)
+        return
+    out.print(
+        "Dry run: no changes sent. Planned requests:", markup=False, highlight=False
+    )
+    for line in format_plan(c.planned_requests):
+        out.print(f"  {line}", markup=False, highlight=False)
 
 
 def canvas_guide(heading: str, commands: list[tuple[str, str]]) -> None:

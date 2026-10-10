@@ -74,8 +74,9 @@ def announcements_delete(
 ) -> None:
     """Delete an announcement."""
     _common.require_canvas()
-    if not yes and not typer.confirm(f"Delete announcement {topic_id}?"):
-        raise typer.Abort()
+    from ..prompts import confirm
+
+    confirm(f"Delete announcement {topic_id}?", yes=yes)
     with _common.client() as c:
         c.delete_announcement(topic_id)
     console.print(f"[red]Deleted announcement {topic_id}[/red]")

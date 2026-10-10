@@ -141,8 +141,9 @@ def calendar_delete(
 ) -> None:
     """Delete a calendar event."""
     _common.require_canvas()
-    if not yes and not typer.confirm(f"Delete calendar event {event_id}?"):
-        raise typer.Abort()
+    from ..prompts import confirm
+
+    confirm(f"Delete calendar event {event_id}?", yes=yes)
     with _common.client() as c:
         c.delete_calendar_event(event_id)
     console.print(f"[red]Deleted calendar event {event_id}[/red]")

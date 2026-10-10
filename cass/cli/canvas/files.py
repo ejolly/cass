@@ -96,8 +96,9 @@ def files_delete(
 ) -> None:
     """Delete a file from the course."""
     _common.require_canvas()
-    if not yes and not typer.confirm(f"Delete file {file_id}?"):
-        raise typer.Abort()
+    from ..prompts import confirm
+
+    confirm(f"Delete file {file_id}?", yes=yes)
     with _common.client() as c:
         c.delete_file(file_id)
     console.print(f"[red]Deleted file {file_id}[/red]")

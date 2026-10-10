@@ -508,6 +508,7 @@ def push(
 ) -> None:
     """Preview and push pending Canvas-managed changes."""
     from .. import db
+    from .prompts import confirm
 
     require_canvas()
 
@@ -525,8 +526,7 @@ def push(
 
     _render_push_preview(preview)
 
-    if not yes and not typer.confirm("Push these changes to Canvas?", default=False):
-        raise typer.Abort()
+    confirm("Push these changes to Canvas?", yes=yes, default=False)
 
     result = db.canvas_apply(conn, pending)
     _render_push_results(cast(list[dict[str, object]], result.get("results", [])))
@@ -538,6 +538,7 @@ def revert(
 ) -> None:
     """Revert local pending Canvas-managed changes since the last sync."""
     from .. import db
+    from .prompts import confirm
 
     conn = db.get_db()
     pending = db.get_pending_changes(conn)
@@ -546,8 +547,7 @@ def revert(
         return
 
     _render_pending_summary(pending, title="Revert Preview")
-    if not yes and not typer.confirm("Revert these local changes?", default=False):
-        raise typer.Abort()
+    confirm("Revert these local changes?", yes=yes, default=False)
 
     count = db.revert_changes(conn, pending)
     console.print(f"[green]Reverted {count} change(s).[/green]")
@@ -633,6 +633,7 @@ def delete(
 ) -> None:
     """Delete the local database (cass.db)."""
     from .. import db
+    from .prompts import confirm
 
     db_file = Path(db.db_path())
     if not db_file.exists():
@@ -641,8 +642,7 @@ def delete(
 
     if not yes:
         size_kb = db_file.stat().st_size / 1024
-        if not typer.confirm(f"Delete {db_file} ({size_kb:.0f} KB)?", default=False):
-            raise typer.Abort()
+        confirm(f"Delete {db_file} ({size_kb:.0f} KB)?", yes=yes, default=False)
 
     db.reset()
     db_file.unlink()
@@ -725,6 +725,7 @@ def restore(
     import sqlite_utils
 
     from .. import db
+    from .prompts import confirm
 
     src = Path(file)
     if not src.exists():
@@ -766,10 +767,7 @@ def restore(
     else:
         console.print("  Current DB: [dim]none[/dim]")
 
-    if not yes and not typer.confirm(
-        "\nReplace current database with this backup?", default=False
-    ):
-        raise typer.Abort()
+    confirm("\nReplace current database with this backup?", yes=yes, default=False)
 
     db.reset()
     shutil.copy2(str(src), str(Path(target)))

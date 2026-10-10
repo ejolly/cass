@@ -121,11 +121,12 @@ def modules_delete(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
 ) -> None:
     """Delete a module."""
+    from ..prompts import confirm
+
     _common.require_canvas()
     with _common.client() as c:
         mod = c.resolve_module(id_or_name)
-        if not yes and not typer.confirm(f"Delete module '{mod.name}'?"):
-            raise typer.Abort()
+        confirm(f"Delete module '{mod.name}'?", yes=yes)
         c.delete_module(mod.id)
     console.print(f"[red]Deleted:[/red] {mod.name}")
 
