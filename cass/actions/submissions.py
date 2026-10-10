@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Literal
 
 import httpx
 
+from ..apis.canvas.auth import CanvasAuthError
 from ..apis.canvas.times import check_when, format_when, parse_when
 from .enrollments import fetch_all_enrollments, is_after, late_enrollees
 
@@ -146,7 +147,12 @@ def _detail(change: SubmissionChange, tz: str) -> str:
     if change.action == "excuse" and sub.submitted_at:
         parts.append(f"submitted {format_when(sub.submitted_at, tz)}")
     if change.action == "clear-late" and sub.points_deducted:
-        parts.append(f"{sub.points_deducted:g} pts restored")
+        # After a resubmission past the grade, Canvas keeps the deduction
+        # until the work is regraded
+        if sub.grade_matches_current_submission is False:
+            parts.append(f"{sub.points_deducted:g} pts deducted, kept until regraded")
+        else:
+            parts.append(f"{sub.points_deducted:g} pts restored")
     return ", ".join(parts)
 
 
@@ -439,7 +445,7 @@ def apply_submission_changes(
                 client.update_submission(
                     assignment_id, user_id, late_policy_status="none"
                 )
-        except httpx.HTTPError as exc:
+        except (httpx.HTTPError, CanvasAuthError) as exc:
             raise SubmissionApplyError(exc, applied) from exc
         applied.append(
             f"{change.action} {change.target.assignment.name}: "

@@ -183,10 +183,21 @@ def test_change_rows_show_submitted_date_and_points_restored():
         target(cached_due_date="2026-09-30T06:59:00Z", late=True, points_deducted=2.5),
     )
     no_penalty = SubmissionChange("clear-late", target(late=True, points_deducted=0))
-    assert [row[3] for row in change_rows([excuse, clear, no_penalty], LA)] == [
+    resubmitted = SubmissionChange(
+        "clear-late",
+        target(
+            cached_due_date=None,
+            late=True,
+            points_deducted=2.5,
+            grade_matches_current_submission=False,
+        ),
+    )
+    rows = change_rows([excuse, clear, no_penalty, resubmitted], LA)
+    assert [row[3] for row in rows] == [
         "submitted 2026-10-03 10:00",
         "due 2026-09-29 23:59, 2.5 pts restored",
         "",
+        "2.5 pts deducted, kept until regraded",
     ]
 
 
@@ -671,6 +682,26 @@ def test_apply_failure_lists_sent_changes():
     assert "Stopped; already sent:\n  excuse HW1: Ann" in str(caught.value)
     assert caught.value.__cause__ is not None
     assert len(log) == 2
+
+
+def test_apply_auth_failure_lists_sent_changes(monkeypatch):
+    # A session that expires mid-run still reports what was already sent
+    from cass.apis.canvas.auth import CanvasAuthError
+
+    client = apply_client(ok, [])
+    calls: list[int] = []
+
+    def update(assignment_id, user_id, **fields):
+        calls.append(user_id)
+        if len(calls) == 2:
+            raise CanvasAuthError("session expired")
+
+    monkeypatch.setattr(client, "update_submission", update)
+    with pytest.raises(SubmissionApplyError) as caught:
+        apply_submission_changes(
+            client, [change("excuse", 7, 5), change("excuse", 7, 6)]
+        )
+    assert caught.value.applied == ["excuse HW1: Ann"]
 
 
 def test_apply_failure_before_any_change():
