@@ -266,6 +266,31 @@ class TestExplicitConfigPath:
         finally:
             set_config_path(None)
 
+    def test_cass_config_env_drives_load_config(self, tmp_path, monkeypatch):
+        from cass.actions.config import config_file, load_config
+
+        other = tmp_path / "f25" / "cass_f25.toml"
+        other.parent.mkdir()
+        other.write_text('[canvas]\nbase_url = "https://c.edu"\ncourse_id = 5\n')
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("CASS_CONFIG", str(other))
+        assert config_file() == other.resolve()
+        assert load_config().canvas_course_id == 5
+        assert find_project_root() == other.parent.resolve()
+
+    def test_load_explicit_path_leaves_project_config(self, tmp_path, monkeypatch):
+        from cass.actions.config import get_config, load_config
+
+        (tmp_path / "cass.toml").write_text(
+            '[canvas]\nbase_url = "https://c.edu"\ncourse_id = 1\n'
+        )
+        other = tmp_path / "f25" / "cass_f25.toml"
+        other.parent.mkdir()
+        other.write_text('[canvas]\nbase_url = "https://c.edu"\ncourse_id = 5\n')
+        monkeypatch.chdir(tmp_path)
+        assert load_config(other).canvas_course_id == 5
+        assert get_config().canvas_course_id == 1
+
 
 class TestTimeZoneAndQuizRefs:
     def test_time_zone_and_quizzes(self, tmp_path, monkeypatch):

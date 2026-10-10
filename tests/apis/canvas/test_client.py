@@ -465,6 +465,43 @@ def mock_client(monkeypatch):
     return client, transport
 
 
+class TestFromConfig:
+    def test_reads_course_and_credentials_beside_the_file(self, tmp_path, monkeypatch):
+        from cass.actions.config import get_config, reset_config
+        from cass.apis.canvas.client import CanvasClient
+
+        (tmp_path / "cass.toml").write_text(
+            '[canvas]\nbase_url = "https://here.edu"\ncourse_id = 1\n'
+        )
+        (tmp_path / ".canvastoken").write_text("here-token\n")
+        other = tmp_path / "f25" / "cass_f25.toml"
+        other.parent.mkdir()
+        other.write_text(
+            '[canvas]\nbase_url = "https://there.edu"\ncourse_id = 25\n'
+            'time_zone = "America/Chicago"\n'
+        )
+        (other.parent / ".canvastoken").write_text("there-token\n")
+        monkeypatch.chdir(tmp_path)
+        reset_config()
+
+        client = CanvasClient.from_config(other)
+        assert client.course_id == 25
+        assert client._base_url == "https://there.edu/api/v1"
+        assert client.time_zone == "America/Chicago"
+        assert client.auth.headers() == {"Authorization": "Bearer there-token"}
+        assert get_config().canvas_course_id == 1
+        reset_config()
+
+    def test_missing_credentials_exit(self, tmp_path, monkeypatch):
+        from cass.apis.canvas.client import CanvasClient
+
+        monkeypatch.delenv("CANVAS_TOKEN", raising=False)
+        path = tmp_path / "cass.toml"
+        path.write_text('[canvas]\nbase_url = "https://c.edu"\ncourse_id = 1\n')
+        with pytest.raises(SystemExit, match="credentials not found"):
+            CanvasClient.from_config(path)
+
+
 class TestCanvasClient:
     def test_time_zone_from_config(self, mock_client):
         client, _ = mock_client

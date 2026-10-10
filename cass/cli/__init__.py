@@ -206,6 +206,10 @@ def status() -> None:
     if cfg.has_canvas:
         from ..apis.canvas.auth import find_auth
 
+        console.print(
+            f"Canvas course: {cfg.canvas_base_url}/courses/{cfg.canvas_course_id}"
+        )
+
         auth = find_auth(cfg.root)
         auth_label = auth.description if auth else "[red]not found[/red]"
         console.print(f"Canvas auth: {auth_label}")

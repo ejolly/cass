@@ -1,14 +1,16 @@
 """Config discovery, loading, and writing for cass.
 
-Searches for ``cass.toml`` starting from the current directory and walking
-upward, unless ``set_config_path`` points at an explicit file (``--config``).
-Config is loaded lazily on first access via ``get_config()``.
+Uses an explicit file when one is given (``set_config_path`` / ``--config``,
+else ``$CASS_CONFIG``); otherwise searches for ``cass.toml`` starting from the
+current directory and walking upward. Config is loaded lazily on first access
+via ``get_config()``.
 """
 
 from __future__ import annotations
 
 __docformat__ = "google"
 
+import os
 import re
 import tomllib
 from dataclasses import dataclass, field
@@ -16,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 CONFIG_FILENAME = "cass.toml"
+CONFIG_ENV = "CASS_CONFIG"
 _CANVAS_COURSE_URL_RE = re.compile(r"^(https?://[^/]+)/courses/(\d+)(?:[/?#].*)?$")
 
 
@@ -95,6 +98,14 @@ def set_config_path(path: Path | None) -> None:
     reset_config()
 
 
+def _explicit_config() -> Path | None:
+    """The config file chosen by ``set_config_path``, else ``$CASS_CONFIG``."""
+    if _config_path_override is not None:
+        return _config_path_override
+    env = os.environ.get(CONFIG_ENV, "")
+    return _existing_config(Path(env)) if env else None
+
+
 def _existing_config(path: Path) -> Path:
     resolved = path.expanduser().resolve()
     if not resolved.is_file():
@@ -107,11 +118,11 @@ def find_project_root(
 ) -> Path:
     """Find the project root.
 
-    With *config_path* (or a path set via ``set_config_path``) the root is that
-    file's directory. Otherwise walk up from *start* (default: cwd) looking
-    for ``cass.toml``.
+    With *config_path* (or a path from ``set_config_path`` or
+    ``$CASS_CONFIG``) the root is that file's directory. Otherwise walk up
+    from *start* (default: cwd) looking for ``cass.toml``.
     """
-    explicit = config_path or _config_path_override
+    explicit = config_path or _explicit_config()
     if explicit is not None:
         return _existing_config(explicit).parent
     current = (start or Path.cwd()).resolve()
@@ -130,9 +141,7 @@ def find_project_root(
 
 def config_file() -> Path:
     """Return the config file in use (explicit path or ``<root>/cass.toml``)."""
-    if _config_path_override is not None:
-        return _config_path_override
-    return find_project_root() / CONFIG_FILENAME
+    return _explicit_config() or find_project_root() / CONFIG_FILENAME
 
 
 def config_file_path() -> Path | None:
@@ -144,8 +153,15 @@ def config_file_path() -> Path | None:
     return path if path.exists() else None
 
 
-def load_config() -> Config:
-    path = config_file()
+def load_config(path: Path | None = None) -> Config:
+    """Read a config file; the one in use (``config_file()``) by default.
+
+    Loading an explicit *path* leaves the cached project config untouched.
+
+    Raises:
+        SystemExit: If the file is missing or has no ``[canvas]`` section.
+    """
+    path = _existing_config(path) if path is not None else config_file()
     root = path.parent
     raw = read_config_data(path)
 

@@ -11,13 +11,14 @@ import logging
 import re
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, Self, TypeVar
 
 import httpx
 from rich.console import Console
 
 from .... import __version__
-from ....actions.config import get_config
+from ....actions.config import get_config, load_config
 from ..auth import (
     TOKEN_FILENAME,
     CanvasAuth,
@@ -50,7 +51,10 @@ def get_auth() -> CanvasAuth:
     Raises:
         SystemExit: If no credentials are found.
     """
-    auth = find_auth(get_config().root)
+    return _require_auth(find_auth(get_config().root))
+
+
+def _require_auth(auth: CanvasAuth | None) -> CanvasAuth:
     if auth is None:
         raise SystemExit(
             "Canvas credentials not found. Run 'cass init' to save an API token "
@@ -219,6 +223,31 @@ class BaseClient:
         self._time_zone = time_zone or (cfg.canvas_time_zone if cfg else "")
         self._transport = transport
         self._http: httpx.Client | None = None
+
+    @classmethod
+    def from_config(cls, path: str | Path, **kwargs: Any) -> Self:
+        """Build a client for the course a ``cass.toml`` describes.
+
+        Reads the base URL, course ID and time zone from *path*, and
+        credentials (``.canvastoken`` / ``.canvascreds``) from its directory,
+        without changing the project config the CLI uses.
+
+        Args:
+            path: A cass.toml file, which may have any name.
+            **kwargs: Passed to the constructor (e.g. ``transport``).
+
+        Raises:
+            SystemExit: If the file or its credentials are missing.
+        """
+        cfg = load_config(Path(path))
+        if "auth" not in kwargs and "token" not in kwargs:
+            kwargs["auth"] = _require_auth(find_auth(cfg.root))
+        return cls(
+            base_url=cfg.canvas_base_url,
+            course_id=cfg.canvas_course_id,
+            time_zone=cfg.canvas_time_zone or None,
+            **kwargs,
+        )
 
     @property
     def _client(self) -> httpx.Client:

@@ -24,6 +24,17 @@ cass reads times on the command line and in config files (`--due`, `--start`, `d
 
 By default cass searches upward from the working directory for `cass.toml`. Point at another course with `--config PATH` or the `CASS_CONFIG` environment variable. The project root becomes that file's directory, so credentials and `cass.db` resolve beside it.
 
+Python scripts follow the same rules: `CanvasClient()` honors `CASS_CONFIG`. To work with another course without changing the working directory or environment, build the client from its file:
+
+```python
+from cass.apis.canvas.client import CanvasClient
+
+with CanvasClient.from_config("../f25/cass.toml") as c:
+    print(c.get_course().name)
+```
+
+`from_config` reads the base URL, course ID, time zone and credentials from that file and its directory, and leaves the project config alone.
+
 ## Credential files
 
 | File | Contents | Created by |
@@ -31,7 +42,7 @@ By default cass searches upward from the working directory for `cass.toml`. Poin
 | `.canvastoken` | Canvas API token | `cass init` |
 | `.canvascreds` | `canvas_session` and `_csrf_token` cookies | `cass canvas login`, or by hand |
 
-`.canvascreds` takes priority when both exist. cass creates both with owner-only permissions and adds them to `.gitignore`; keep them out of version control.
+`.canvastoken` takes priority when both exist; `$CANVAS_TOKEN` is used when neither does. cass creates both with owner-only permissions and adds them to `.gitignore`; keep them out of version control.
 
 ## Local files
 
