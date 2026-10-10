@@ -17,7 +17,7 @@ cass canvas quizzes responses "Survey 1" [--all-attempts] [--csv responses.csv] 
 cass canvas sync [--apply] [--create-groups]          # reconcile [[canvas.quizzes]] declarations
 ```
 
-`sync` and plain `update` change quiz settings only. `update --questions` also reconciles questions; see [Editing questions](#editing-questions).
+`sync` and plain `update` change quiz settings only. `update --questions` also changes questions; see [Editing questions](#editing-questions).
 
 ## Quiz file
 
@@ -51,7 +51,7 @@ answers = [{ text = "A", correct = true }, { text = "B" }]
 
 ## Editing questions
 
-`export` writes the questions with their Canvas IDs; edit the file and send it back:
+`export` writes the questions with their Canvas IDs. Edit the file, then send it back:
 
 ```bash
 cass canvas quizzes export "Survey 1" -o quizzes/survey-1.toml
@@ -60,11 +60,11 @@ cass canvas quizzes update "Survey 1" --from quizzes/survey-1.toml --questions  
 cass canvas quizzes update "Survey 1" --from quizzes/survey-1.toml --questions --apply   # send it
 ```
 
-Without `--apply`, `--questions` prints one line per question and group (`keep`, `add`, `update`, `delete`, `extra`) and sends nothing. Questions on Canvas but not in the file are `extra` and left alone; `--prune` deletes them, and any group missing from the file, instead.
+Without `--apply`, `--questions` sends nothing and prints one line per question and group (`keep`, `add`, `update`, `delete`, `extra`). A question on Canvas but not in the file is `extra` and stays untouched. `--prune` deletes those questions instead, along with any group missing from the file.
 
-A file question is matched to a Canvas question by `id`, then by name when it is unique, then by relative order among the rest. Questions with no `id` (new ones) match by name or order, or are added. Reordering the file reorders the quiz. `Question` and `Question N` count as no name, and an unnamed new question is posted as `Question`.
+cass matches each file question to a Canvas question by `id`, then by name if the name is unique, then by relative order among the rest. A question with no `id` (a new one) matches by name or order, or is added. Reordering the file reorders the quiz. `Question` and `Question N` count as no name, and cass posts an unnamed new question as `Question`.
 
-Question groups make Canvas draw a few questions from a pool for each attempt:
+A question group makes Canvas draw a few questions from a pool for each attempt:
 
 ```toml
 [[groups]]
@@ -81,22 +81,22 @@ group = "Pool"
 text = "<p>Second candidate</p>"
 ```
 
-Questions in one group must be next to each other. The group sits at its first question's place in the quiz.
+Questions in one group must be next to each other. The group takes the place of its first question in the quiz.
 
-`update --questions --apply` sends settings changes first, including `published`, so a file with `published = true` publishes the quiz before its questions change. It then creates new groups; adds, updates, and deletes questions; updates groups; reorders the quiz and each group; deletes groups; and re-saves the quiz. If a request fails, cass stops: the settings stay applied, and the error lists the steps applied before the failure.
+`update --questions --apply` sends settings changes first, including `published`, so a file with `published = true` publishes the quiz before its questions change. It then runs these steps in order: create new groups, add, update and delete questions, update groups, reorder the quiz and each group, delete groups, and re-save the quiz. If a request fails, cass stops. The settings stay applied, and the error lists the steps that finished before the failure.
 
 `update --questions` refuses quizzes in concluded courses. Canvas serves their questions only through quiz statistics, which lack names and answer weights. `questions` and `export` still work there, with a warning.
 
-If students have finished attempts, cass warns first: Canvas keeps earlier attempts on the old version of each question. Plan lines for questions whose answers change are marked, because editing answers replaces their answer IDs.
+If students have finished attempts, cass warns first, because Canvas keeps earlier attempts on the old version of each question. Plan lines for questions whose answers change are marked, because editing answers replaces their answer IDs.
 
-`questions` lists a quiz's questions in order with IDs and groups. `preview` starts a teacher preview and lists the questions in the order a student would see them. Groups and shuffling make each attempt differ, and the preview submission stays on Canvas.
+`questions` lists a quiz's questions in order, with IDs and groups. `preview` starts a teacher preview and lists the questions in the order a student would see them. Groups and shuffling make each attempt differ. The preview submission stays on Canvas.
 
 ### Canvas quirks
 
 - Positions sent when creating questions are ignored. `create --from` reorders the new quiz only when the file declares groups; `update --questions` reorders whenever the order or a question's group changes.
-- Canvas recounts `question_count` only when the quiz is re-saved, so cass re-saves after it sends changes.
+- Canvas recounts `question_count` only when the quiz is re-saved, so cass re-saves after sending changes.
 - Updating a question with `quiz_group_id: null` leaves it in its group; only reordering the quiz takes it out.
-- Deleting a group deletes its questions. cass moves the questions the file keeps out of a group first, and deletes groups last.
+- Deleting a group deletes its questions. cass first moves the questions the file keeps out of the group, and deletes groups last.
 - Changing a question's answers on a quiz with submissions replaces their answer IDs.
 
 ## Declaring quizzes in cass.toml
