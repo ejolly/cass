@@ -448,19 +448,12 @@ def mock_client(monkeypatch):
     from cass.apis.canvas.client import CanvasClient
 
     transport = _MockTransport()
-    client = CanvasClient.__new__(CanvasClient)
-    client._base_url = "https://canvas.example.com/api/v1"
-    client._token = "test-token"
-    client.course_id = 1
-    client._time_zone = "America/Los_Angeles"
-    client._http = httpx.Client(
-        base_url="https://canvas.example.com/api/v1",
-        headers={
-            "Authorization": "Bearer test-token",
-            "User-Agent": "cass-cli/test",
-        },
+    client = CanvasClient(
+        "https://canvas.example.com",
+        token="test-token",
+        course_id=1,
         transport=transport,
-        timeout=5.0,
+        time_zone="America/Los_Angeles",
     )
     return client, transport
 
@@ -607,11 +600,11 @@ class TestCanvasClient:
         events = client.list_calendar_events()
         assert len(events) == 1
         assert events[0].title == "Midterm review"
-        url = str(transport.requests[0].url)
-        assert "/calendar_events?" in url
-        assert "context_codes[]=course_1" in url
-        assert "type=event" in url
-        assert "all_events=true" in url
+        request = transport.requests[0]
+        assert request.url.path.endswith("/calendar_events")
+        assert request.url.params.get_list("context_codes[]") == ["course_1"]
+        assert request.url.params["type"] == "event"
+        assert request.url.params["all_events"] == "true"
 
     def test_list_calendar_events_with_date_range(self, mock_client):
         client, transport = mock_client
@@ -740,6 +733,77 @@ class TestCanvasClient:
         transport.add(404, json_data={"errors": []})
         with pytest.raises(httpx.HTTPStatusError):
             client.request("GET", "/nope")
+
+    def test_course_path(self, mock_client):
+        client, _ = mock_client
+        assert client.course_path("/quizzes") == "/courses/1/quizzes"
+        assert client.course_path() == "/courses/1"
+        assert client._course("/x") == client.course_path("/x")
+
+    @pytest.mark.parametrize(
+        "given",
+        ["/api/v1/courses/1/modules", "/courses/1/modules", "courses/1/modules"],
+    )
+    def test_request_normalizes_path_forms(self, mock_client, given):
+        client, transport = mock_client
+        transport.add(json_data=[])
+        client.request("GET", given)
+        assert (
+            str(transport.requests[0].url)
+            == "https://canvas.example.com/api/v1/courses/1/modules"
+        )
+
+    def test_request_sends_repeated_form_keys(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data={})
+        client.request(
+            "PUT",
+            "/courses/1/modules/5/reorder",
+            data=[("order[][id]", 1), ("order[][id]", 2)],
+        )
+        sent = transport.requests[0]
+        assert sent.headers["content-type"] == "application/x-www-form-urlencoded"
+        assert sent.content == b"order%5B%5D%5Bid%5D=1&order%5B%5D%5Bid%5D=2"
+
+    def test_request_passes_extra_kwargs(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data={})
+        client.request("GET", "/courses/1", headers={"X-Test": "1"}, timeout=5.0)
+        assert transport.requests[0].headers["X-Test"] == "1"
+
+    def test_get_all_two_pages(self, mock_client):
+        client, transport = mock_client
+        next_url = (
+            "https://canvas.example.com/api/v1/courses/1/quizzes"
+            "?page=bookmark:abc&per_page=100&state%5B%5D=a&state%5B%5D=b"
+        )
+        transport.add(
+            json_data=[{"id": 1}], headers={"link": f'<{next_url}>; rel="next"'}
+        )
+        transport.add(json_data=[{"id": 2}])
+        result = client.get_all(
+            "/courses/1/quizzes", params=[("state[]", "a"), ("state[]", "b")]
+        )
+        assert result == [{"id": 1}, {"id": 2}]
+        first = transport.requests[0].url.params
+        assert first.get_list("state[]") == ["a", "b"]
+        assert first["per_page"] == "100"
+        assert str(transport.requests[1].url) == next_url
+
+    def test_get_all_keeps_existing_query(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data=[])
+        client.get_all("/courses/1/discussion_topics?only_announcements=true")
+        params = transport.requests[0].url.params
+        assert params["only_announcements"] == "true"
+        assert params.get_list("per_page") == ["100"]
+
+    def test_get_paginated_delegates_to_get_all(self, mock_client, monkeypatch):
+        client, _ = mock_client
+        calls = []
+        monkeypatch.setattr(client, "get_all", lambda path: calls.append(path) or ["x"])
+        assert client._get_paginated("/x") == ["x"]
+        assert calls == ["/x"]
 
     def test_create_quiz_posts_questions_then_resaves(self, mock_client):
         import json
@@ -1070,6 +1134,7 @@ class TestCanvasClient:
     def test_context_manager(self, mock_client):
         client, _transport = mock_client
         with client:
+            assert client._client  # creates the lazy HTTP client
             assert not client._http.is_closed
         assert client._http.is_closed
 

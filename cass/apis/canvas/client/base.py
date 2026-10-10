@@ -10,9 +10,10 @@ __docformat__ = "google"
 import logging
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Self, TypeVar
+from urllib.parse import parse_qsl, urlsplit, urlunsplit
 
 import httpx
 from rich.console import Console
@@ -29,6 +30,7 @@ from ..auth import (
     check_response,
     find_auth,
 )
+from ..raw import api_path, form_content
 
 T = TypeVar("T")
 
@@ -304,41 +306,81 @@ class BaseClient:
     def __exit__(self, *exc: object) -> None:
         self.close()
 
-    def _get_paginated(self, path: str) -> list[dict[str, object]]:
-        """GET with Canvas-style Link header pagination."""
-        results: list[dict[str, object]] = []
-        sep = "&" if "?" in path else "?"
-        url = f"{path}{sep}per_page=100"
+    def get_all(
+        self,
+        path: str,
+        params: Mapping[str, object] | Sequence[tuple[str, object]] | None = None,
+    ) -> list[dict[str, Any]]:
+        """GET every page of a Canvas list endpoint (Link header pagination).
 
-        while url:
-            resp = self._client.get(url)
+        *params* (and ``per_page=100``, unless given) apply to the first
+        request only; each later page is requested from the ``next`` URL
+        Canvas returns, verbatim.
+
+        Args:
+            path: API path in any form ``request`` accepts, optionally with a
+                query string.
+            params: Query parameters as a mapping or a list of pairs (repeated
+                keys such as ``state[]`` need pairs).
+
+        Returns:
+            Items from list pages concatenated; a non-list page is appended
+            as a single item.
+        """
+        # httpx replaces a URL's query when given params, so merge them here.
+        url = urlsplit(api_path(path))
+        first: list[tuple[str, Any]] = list(
+            parse_qsl(url.query, keep_blank_values=True)
+        )
+        if isinstance(params, Mapping):
+            first.extend((str(key), value) for key, value in params.items())
+        elif params is not None:
+            first.extend(params)
+        if not any(key == "per_page" for key, _ in first):
+            first.append(("per_page", 100))
+
+        results: list[dict[str, Any]] = []
+        resp = self._client.get(urlunsplit(url._replace(query="")), params=first)
+        while True:
             resp.raise_for_status()
             data = resp.json()
             if isinstance(data, list):
                 results.extend(data)
             else:
                 results.append(data)
+            match = _LINK_NEXT_RE.search(resp.headers.get("link", ""))
+            if not match:
+                return results
+            resp = self._client.get(match.group(1))
 
-            url = ""
-            link = resp.headers.get("link", "")
-            if m := _LINK_NEXT_RE.search(link):
-                url = m.group(1)
-                base = str(self._client.base_url)
-                url = url.removeprefix(base)
+    def _get_paginated(self, path: str) -> list[dict[str, Any]]:
+        """GET with Canvas-style Link header pagination."""
+        return self.get_all(path)
 
-        return results
+    def course_path(self, path: str = "") -> str:
+        """Course-scoped API path.
 
-    def _course(self, path: str = "") -> str:
-        """Build a course-scoped API path."""
+        For example, ``course_path('/quizzes')`` gives ``/courses/{id}/quizzes``.
+        """
         return f"/courses/{self.course_id}{path}"
+
+    _course = course_path
 
     def request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
         """Send any request with cass's auth and retry handling.
 
-        Use ``self._course(path)`` for course-relative paths. Raises
+        *path* may be ``/api/v1/x``, ``/x`` or ``x``; use ``course_path()``
+        for course-relative paths. ``data`` may be a dict or a list of pairs
+        (repeated keys are kept); other kwargs go to httpx. Raises
         ``httpx.HTTPStatusError`` on a 4xx/5xx response.
         """
-        resp = self._client.request(method, path, **kwargs)
+        if isinstance(kwargs.get("data"), list):
+            kwargs["content"] = form_content(kwargs.pop("data"))
+            kwargs["headers"] = {
+                **(kwargs.get("headers") or {}),
+                "Content-Type": "application/x-www-form-urlencoded",
+            }
+        resp = self._client.request(method, api_path(path), **kwargs)
         resp.raise_for_status()
         return resp
 
