@@ -7,7 +7,7 @@ __docformat__ = "google"
 import typer
 
 from . import _common
-from ._common import canvas_app, console, due
+from ._common import canvas_app, console, due, err_console
 
 
 @canvas_app.command(rich_help_panel="Browse")
@@ -65,7 +65,7 @@ def announcements_update(
     if message:
         kwargs["message"] = message
     if not kwargs:
-        console.print("[yellow]Nothing to update.[/yellow]")
+        err_console.print("[yellow]Nothing to update.[/yellow]")
         return
     with _common.client(dry_run=dry_run) as c:
         a = c.update_announcement(topic_id, **kwargs)

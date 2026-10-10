@@ -7,7 +7,7 @@ __docformat__ = "google"
 import typer
 
 from . import _common
-from ._common import canvas_app, console
+from ._common import canvas_app, console, err_console
 
 
 @canvas_app.command(rich_help_panel="Manage")
@@ -43,7 +43,7 @@ def sync(
     cfg = get_config()
 
     if not (cfg.canvas_modules or cfg.canvas_assignments or cfg.canvas_quizzes):
-        console.print(
+        err_console.print(
             "[yellow]No [[canvas.modules]], [[canvas.assignments]], or "
             "[[canvas.quizzes]] in cass.toml.[/yellow]"
         )
@@ -63,7 +63,7 @@ def sync(
         if wanted_groups:
             group_ids, missing = resolve_group_ids(c, wanted_groups)
             if missing and not create_groups:
-                console.print(
+                err_console.print(
                     "[red]Assignment groups not found on Canvas: "
                     f"{', '.join(missing)}[/red] (pass --create-groups to create them)"
                 )
@@ -176,7 +176,7 @@ def sync(
         _common.print_plan(plan_client)
 
     if dry_run and (creates or updates):
-        console.print(
+        err_console.print(
             "\n  [yellow]Dry run — no changes made. Use --apply to sync.[/yellow]"
         )
     elif not dry_run:

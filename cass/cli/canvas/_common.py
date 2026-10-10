@@ -23,6 +23,7 @@ canvas_app = typer.Typer(
 )
 
 console = Console()
+err_console = Console(stderr=True)
 
 
 def require_canvas() -> None:
@@ -30,8 +31,8 @@ def require_canvas() -> None:
 
     cfg = get_config()
     if not cfg.has_canvas:
-        console.print("[red]This command requires Canvas configuration.[/red]")
-        console.print("Add a \\[canvas] section to cass.toml.")
+        err_console.print("[red]This command requires Canvas configuration.[/red]")
+        err_console.print("Add a \\[canvas] section to cass.toml.")
         raise typer.Exit(code=1)
 
 
@@ -54,7 +55,7 @@ def print_plan(c: CanvasClient, *, err: bool = False) -> None:
     """Print the writes a dry-run client recorded."""
     from ...apis.canvas.dry_run import format_plan
 
-    out = Console(stderr=True) if err else console
+    out = err_console if err else console
     if not c.planned_requests:
         out.print(
             "Dry run: no Canvas writes needed.",
@@ -76,9 +77,9 @@ def print_plan(c: CanvasClient, *, err: bool = False) -> None:
 
 def canvas_guide(heading: str, commands: list[tuple[str, str]]) -> None:
     """Print a section of the canvas command guide."""
-    console.print(f"\n  [bold]{heading}[/bold]")
+    err_console.print(f"\n  [bold]{heading}[/bold]")
     for cmd, desc in commands:
-        console.print(f"    [green]{cmd:<32s}[/green] [dim]{desc}[/dim]")
+        err_console.print(f"    [green]{cmd:<32s}[/green] [dim]{desc}[/dim]")
 
 
 def group_id_for(c: CanvasClient, name: str, *, create: bool) -> int | None:
@@ -89,7 +90,7 @@ def group_id_for(c: CanvasClient, name: str, *, create: bool) -> int | None:
         return c.resolve_assignment_group(name).id
     except RuntimeError:
         if not create:
-            console.print(
+            err_console.print(
                 f"[red]Assignment group not found: {name}[/red] "
                 "(pass --create-groups to create it)"
             )

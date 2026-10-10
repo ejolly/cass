@@ -13,6 +13,7 @@ from ._common import (
     client,
     console,
     due,
+    err_console,
     pub,
     require_canvas,
     size,
@@ -75,13 +76,13 @@ def login(
     browser = Browser.BRAVE if from_brave else Browser.CHROME
     _common.require_canvas()
     cfg = get_config()
-    console.print(
+    err_console.print(
         f"Reading {browser.label}'s Canvas session. macOS may ask for Keychain access."
     )
     try:
         login_from_browser(cfg.root, cfg.canvas_base_url, profile, browser=browser)
     except (CanvasAuthError, OSError) as exc:
-        console.print(str(exc), style="red", markup=False)
+        err_console.print(str(exc), style="red", markup=False)
         raise typer.Exit(code=1) from None
     console.print(
         "Canvas session saved to .canvascreds. "
@@ -89,7 +90,7 @@ def login(
         f"{browser.label} and retry the request once."
     )
     if isinstance(find_auth(cfg.root), TokenAuth):
-        console.print(
+        err_console.print(
             f"{TOKEN_FILENAME} takes priority over this session; "
             "delete it to use the browser session.",
             style="yellow",
@@ -150,7 +151,7 @@ def canvas_callback(ctx: typer.Context) -> None:
         "More",
         [("cass canvas --help", "All canvas commands")],
     )
-    console.print()
+    err_console.print()
 
 
 @canvas_app.command(rich_help_panel="Browse")

@@ -72,6 +72,18 @@ class TestCliSurface:
         ]
         assert users == ["cass/cli/prompts.py"]
 
+    def test_only_allowed_console_instances(self):
+        root = Path(__file__).parents[1]
+        counts = {
+            path.relative_to(root).as_posix(): path.read_text().count("Console(")
+            for path in (root / "cass" / "cli").rglob("*.py")
+        }
+        assert {name: n for name, n in counts.items() if n} == {
+            "cass/cli/__init__.py": 2,
+            "cass/cli/canvas/_common.py": 2,
+            "cass/cli/report.py": 1,
+        }
+
     def test_bare_cli_shows_help(self):
         result = runner.invoke(app, [])
         assert result.exit_code == 0
@@ -107,6 +119,40 @@ class TestCliSurface:
         result = runner.invoke(app, ["--version"])
         assert result.exit_code == 0
         assert result.stdout.strip() == f"cass {version('cassroom')}"
+
+
+class TestStreams:
+    def test_hint_goes_to_stderr_during_quizzes_list(self, monkeypatch):
+        import httpx
+
+        from cass.apis.canvas.client import CanvasClient
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/api/v1/courses/1":
+                return httpx.Response(
+                    200, json={"id": 1, "time_zone": "America/Los_Angeles"}
+                )
+            if request.url.path == "/api/v1/courses/1/quizzes":
+                return httpx.Response(
+                    200, json=[{"id": 3, "title": "Quiz A", "quiz_type": "survey"}]
+                )
+            return httpx.Response(404)
+
+        monkeypatch.setattr("cass.cli.canvas._common.require_canvas", lambda: None)
+        monkeypatch.setattr(
+            "cass.cli.canvas._common.client",
+            lambda dry_run=False: CanvasClient(
+                "https://canvas.example.com",
+                token="t",
+                course_id=1,
+                transport=httpx.MockTransport(handler),
+            ),
+        )
+        result = runner.invoke(app, ["canvas", "quizzes"])
+        assert result.exit_code == 0, result.output
+        assert "Quiz A" in result.stdout
+        assert "time zone" not in result.stdout
+        assert "Course time zone is not in cass.toml" in result.stderr
 
 
 class TestConfigOption:
@@ -147,7 +193,7 @@ class TestStatus:
         monkeypatch.chdir(tmp_path)
         result = runner.invoke(app, ["status"])
         assert result.exit_code == 0
-        assert "No cass.toml found" in result.stdout
+        assert "No cass.toml found" in result.stderr
 
     def test_status_with_db_and_pending(self, project_db):
         canvas_id = _sample_assignment_id(project_db)
@@ -174,9 +220,9 @@ class TestPull:
 
         result = runner.invoke(app, ["pull"])
         assert result.exit_code == 1
-        assert "Pull blocked" in result.stdout
-        assert "cass push" in result.stdout
-        assert "cass revert" in result.stdout
+        assert "Pull blocked" in result.stderr
+        assert "cass push" in result.stderr
+        assert "cass revert" in result.stderr
 
 
 class TestView:
@@ -195,7 +241,7 @@ class TestPush:
     def test_push_no_pending_changes(self, project_db):
         result = runner.invoke(app, ["push"])
         assert result.exit_code == 0
-        assert "No pending Canvas changes to push" in result.stdout
+        assert "No pending Canvas changes to push" in result.stderr
 
     def test_push_preview_decline_aborts(self, project_db, monkeypatch):
         canvas_id = _sample_assignment_id(project_db)
@@ -317,7 +363,7 @@ class TestRevert:
     def test_revert_no_pending_changes(self, project_db):
         result = runner.invoke(app, ["revert"])
         assert result.exit_code == 0
-        assert "No pending changes to revert" in result.stdout
+        assert "No pending changes to revert" in result.stderr
 
     def test_revert_yes_bypasses_confirmation(self, project_db):
         canvas_id = _sample_assignment_id(project_db)
@@ -359,7 +405,7 @@ class TestRestore:
         monkeypatch.setattr("cass.cli.prompts._stdin_is_tty", lambda: True)
         result = runner.invoke(app, ["restore", str(backup)], input="n\n")
 
-        assert "Students: 2, Assignments: 1" in result.stdout
+        assert "Students: 2, Assignments: 1" in result.stderr
 
 
 class TestQuery:
@@ -381,7 +427,7 @@ class TestQuery:
     def test_query_unknown_dataset_errors(self, project_db):
         result = runner.invoke(app, ["query", "unknown"])
         assert result.exit_code == 1
-        assert "Unknown dataset" in result.stdout
+        assert "Unknown dataset" in result.stderr
 
     def test_query_sql_mode_delegates(self, project_db, monkeypatch):
         mock = MagicMock(return_value="count\n")
@@ -397,7 +443,7 @@ class TestQuery:
     def test_query_dataset_and_sql_conflict(self, project_db):
         result = runner.invoke(app, ["query", "students", "--sql", "select 1"])
         assert result.exit_code == 1
-        assert "either a dataset or --sql" in result.stdout
+        assert "either a dataset or --sql" in result.stderr
 
     def test_query_missing_sqlite_utils_is_actionable(self, project_db, monkeypatch):
         monkeypatch.setattr(
@@ -407,7 +453,7 @@ class TestQuery:
 
         result = runner.invoke(app, ["query", "students"])
         assert result.exit_code == 1
-        assert "sqlite-utils" in result.stdout
+        assert "sqlite-utils" in result.stderr
 
     def test_gradebook_query_renders_shared_matrix(self, project_db):
         result = runner.invoke(app, ["query", "gradebook", "--limit", "2"])
@@ -435,8 +481,8 @@ class TestInit:
         result = runner.invoke(app, ["init"], input="secret-token\n\n")
 
         assert result.exit_code == 0
-        assert "Canvas course URL" not in result.stdout
-        assert "Canvas course ID" not in result.stdout
+        assert "Canvas course URL" not in result.stderr
+        assert "Canvas course ID" not in result.stderr
         assert (tmp_path / ".canvastoken").read_text() == "secret-token\n"
         assert (
             '[[canvas.assignments]]\nname = "HW1"'
@@ -458,7 +504,7 @@ class TestInit:
         )
 
         assert result.exit_code == 0
-        assert "GitHub" not in result.stdout
+        assert "GitHub" not in result.stderr
         cfg = load_config()
         assert cfg.canvas_base_url == "https://canvas.example.com"
         assert cfg.canvas_course_id == 99
@@ -495,7 +541,7 @@ class TestInit:
         assert result.exit_code == 0
         assert "[classroom]" not in (tmp_path / "cass.toml").read_text()
         assert "course_id = 7" in (tmp_path / "cass.toml").read_text()
-        assert "Removed obsolete [classroom] section." in result.stdout
+        assert "Removed obsolete [classroom] section." in result.stderr
 
 
 class TestSessionCookieAuth:
@@ -512,8 +558,8 @@ class TestSessionCookieAuth:
         result = runner.invoke(app, ["init"], input="\n")
 
         assert result.exit_code == 0
-        assert "Canvas API token" not in result.stdout
-        assert ".canvascreds" in result.stdout
+        assert "Canvas API token" not in result.stderr
+        assert ".canvascreds" in result.stderr
         assert not (tmp_path / ".canvastoken").exists()
 
     def test_init_gitignores_both_credential_files(self, tmp_path):
@@ -548,7 +594,7 @@ class TestSessionCookieAuth:
         with pytest.raises(SystemExit) as exc:
             run()
         assert exc.value.code == 1
-        assert "Canvas rejected the session cookie" in capsys.readouterr().out
+        assert "Canvas rejected the session cookie" in capsys.readouterr().err
 
 
 class TestCliErrors:
@@ -570,7 +616,7 @@ class TestCliErrors:
         resp = httpx.Response(404, request=req, json={"errors": [{"message": "x"}]})
         exc = httpx.HTTPStatusError("nope", request=req, response=resp)
         assert self._run_with(monkeypatch, exc) == 1
-        out = capsys.readouterr().out
+        out = capsys.readouterr().err
         assert "404" in out
         assert "/modules/1" in out
         assert "Traceback" not in out
@@ -578,7 +624,7 @@ class TestCliErrors:
     def test_run_prints_runtime_error_without_traceback(self, monkeypatch, capsys):
         code = self._run_with(monkeypatch, RuntimeError("Assignment not found: nope"))
         assert code == 1
-        out = capsys.readouterr().out
+        out = capsys.readouterr().err
         assert "Assignment not found: nope" in out
         assert "Traceback" not in out
 
@@ -879,7 +925,7 @@ class TestCanvasQuizzes:
         )
         assert result.exit_code == 0, result.output
         quiz_client.update_quiz.assert_not_called()
-        assert "no changes" in result.stdout.lower()
+        assert "no changes" in result.stderr.lower()
 
     _REPORT = (
         "name,id,sis_id,section,submitted,101: Hoping for?,0.0,score\n"
@@ -1356,7 +1402,8 @@ class TestCanvasCalendar:
     def test_update_with_nothing_to_change(self, calendar_client):
         result = runner.invoke(app, ["canvas", "calendar", "update", "235"])
         assert result.exit_code == 0, result.output
-        assert "Nothing to update" in result.stdout
+        assert "Nothing to update" in result.stderr
+        assert result.stdout == ""
         calendar_client.update_calendar_event.assert_not_called()
 
     def test_delete_with_yes(self, calendar_client):

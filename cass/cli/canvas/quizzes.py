@@ -7,7 +7,7 @@ __docformat__ = "google"
 import typer
 
 from . import _common
-from ._common import console, due, pub, when
+from ._common import console, due, err_console, pub, when
 
 quizzes_app = typer.Typer(
     invoke_without_command=True,
@@ -102,7 +102,7 @@ def quizzes_callback(
                 ["#", "Type", "Points", "Text"], question_rows, title="Questions"
             )
             if from_stats:
-                console.print(_STATS_NOTE)
+                err_console.print(_STATS_NOTE)
 
 
 _STATS_NOTE = (
@@ -131,7 +131,7 @@ def quizzes_export(
         spec = quiz_spec_from_canvas(q, questions, group_name, c.time_zone)
     text = dump_quiz_file(spec, Path(output) if output else None)
     if from_stats:
-        console.print(_STATS_NOTE)
+        err_console.print(_STATS_NOTE)
     if output:
         console.print(f"[green]Wrote[/green] {output}")
     else:
@@ -165,7 +165,7 @@ def quizzes_responses(
     _common.require_canvas()
     with _common.client() as c:
         q = c.resolve_quiz(id_or_name)
-        with console.status(f"Generating the Canvas report for {q.title}…"):
+        with err_console.status(f"Generating the Canvas report for {q.title}…"):
             if wide:
                 text = c.download_quiz_report(q.id, all_versions=all_attempts)
             else:
@@ -237,13 +237,15 @@ def quizzes_create(
 
     _common.require_canvas()
     if bool(from_file) == bool(title):
-        console.print("[red]Give a title or --from FILE, not both.[/red]")
+        err_console.print("[red]Give a title or --from FILE, not both.[/red]")
         raise typer.Exit(code=1)
     if from_file:
         spec = load_quiz_file(Path(from_file))
     else:
         if points is not None and quiz_type != "graded_survey":
-            console.print("[red]--points only applies to --type graded_survey.[/red]")
+            err_console.print(
+                "[red]--points only applies to --type graded_survey.[/red]"
+            )
             raise typer.Exit(code=1)
         spec = QuizSpec(
             title=title or "",
@@ -291,7 +293,7 @@ def quizzes_update(
         group_id = _common.group_id_for(c, spec.group, create=False)
         changes = quiz_settings_diff(spec, q, c.time_zone, group_id=group_id)
         if not changes:
-            console.print(f"[dim]No changes for {q.title}.[/dim]")
+            err_console.print(f"[dim]No changes for {q.title}.[/dim]")
             return
         c.update_quiz(q.id, changes)
     detail = ", ".join(f"{k}: {v!r}" for k, v in changes.items())

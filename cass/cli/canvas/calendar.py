@@ -7,7 +7,7 @@ __docformat__ = "google"
 import typer
 
 from . import _common
-from ._common import console, when
+from ._common import console, err_console, when
 
 calendar_app = typer.Typer(
     invoke_without_command=True,
@@ -128,7 +128,7 @@ def calendar_update(
     if all_day is not None:
         kwargs["all_day"] = all_day
     if not kwargs and start_at is None and end_at is None:
-        console.print("[yellow]Nothing to update.[/yellow]")
+        err_console.print("[yellow]Nothing to update.[/yellow]")
         return
     with _common.client(dry_run=dry_run) as c:
         if start_at is not None:

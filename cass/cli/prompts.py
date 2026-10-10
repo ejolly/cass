@@ -7,9 +7,8 @@ __docformat__ = "google"
 import sys
 
 import typer
-from rich.console import Console
 
-err_console = Console(stderr=True)
+from .canvas._common import err_console
 
 
 def _stdin_is_tty() -> bool:
@@ -40,5 +39,5 @@ def confirm(
             highlight=False,
         )
         raise typer.Exit(code=1)
-    if not typer.confirm(message, default=default):
+    if not typer.confirm(message, default=default, err=True):
         raise typer.Abort()

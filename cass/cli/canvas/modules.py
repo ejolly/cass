@@ -7,7 +7,7 @@ __docformat__ = "google"
 import typer
 
 from . import _common
-from ._common import console, pub
+from ._common import console, err_console, pub
 
 modules_app = typer.Typer(
     invoke_without_command=True,
@@ -94,7 +94,7 @@ def modules_publish(
     """Publish a module (or all modules with --all)."""
     _common.require_canvas()
     if not all_modules and not id_or_name:
-        console.print("[red]Give a module ID or name, or --all.[/red]")
+        err_console.print("[red]Give a module ID or name, or --all.[/red]")
         raise typer.Exit(code=1)
     with _common.client(dry_run=dry_run) as c:
         if all_modules:

@@ -7,7 +7,7 @@ __docformat__ = "google"
 import typer
 
 from . import _common
-from ._common import canvas_app, console, due, size
+from ._common import canvas_app, console, due, err_console, size
 
 
 @canvas_app.command(rich_help_panel="Browse")
@@ -82,7 +82,7 @@ def files_upload(
 
     _common.require_canvas()
     if not os.path.isfile(path):
-        console.print(f"[red]File not found: {path}[/red]")
+        err_console.print(f"[red]File not found: {path}[/red]")
         raise typer.Exit(code=1)
 
     with _common.client(dry_run=dry_run) as c:

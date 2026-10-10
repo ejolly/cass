@@ -21,6 +21,7 @@ app = typer.Typer(invoke_without_command=True, no_args_is_help=False)
 app.add_typer(canvas_app, name="canvas")
 
 console = Console()
+err_console = Console(stderr=True)
 
 
 def version_callback(value: bool) -> None:
@@ -62,8 +63,8 @@ def require_canvas() -> None:
 
     cfg = get_config()
     if not cfg.has_canvas:
-        console.print("[red]This command requires Canvas configuration.[/red]")
-        console.print("Add a \\[canvas] section to cass.toml.")
+        err_console.print("[red]This command requires Canvas configuration.[/red]")
+        err_console.print("Add a \\[canvas] section to cass.toml.")
         raise typer.Exit(code=1)
 
 
@@ -191,7 +192,7 @@ def status() -> None:
 
     cfg_path = config_file_path()
     if cfg_path is None:
-        console.print(
+        err_console.print(
             "[yellow]No cass.toml found.[/yellow] "
             "Run [bold]cass init[/bold] to create one."
         )
@@ -216,8 +217,8 @@ def status() -> None:
 
     db_file = Path(db.db_path())
     if not db_file.exists():
-        console.print("\n[yellow]No local database yet.[/yellow]")
-        console.print("Next: [bold]cass pull[/bold] to fetch data.\n")
+        err_console.print("\n[yellow]No local database yet.[/yellow]")
+        err_console.print("Next: [bold]cass pull[/bold] to fetch data.\n")
         return
 
     conn = db.get_db()
@@ -255,7 +256,7 @@ def status() -> None:
     console.print("\n[bold]Sync[/bold]")
     if total == 0:
         console.print("  [green]All Canvas-managed changes are synchronized.[/green]")
-        console.print(
+        err_console.print(
             "\nNext: [bold]cass query gradebook[/bold], "
             "[bold]cass view[/bold], or [bold]cass pull[/bold]\n"
         )
@@ -263,7 +264,7 @@ def status() -> None:
 
     console.print(f"  [yellow]{total} pending change(s) ready to review.[/yellow]")
     _render_pending_summary(pending, title="Pending Changes")
-    console.print(
+    err_console.print(
         "Next: [bold]cass push[/bold], [bold]cass revert[/bold], "
         "or [bold]cass view[/bold]\n"
     )
@@ -297,36 +298,36 @@ def _saved_credentials_file(project_root: Path) -> str | None:
 def _prompt_canvas_course() -> tuple[str, int]:
     from ..actions.config import parse_canvas_course_url
 
-    console.print("[bold]Canvas setup[/bold]")
-    console.print(
+    err_console.print("[bold]Canvas setup[/bold]")
+    err_console.print(
         "Paste the full course URL from your browser, for example "
         "[bold]https://canvas.ucsd.edu/courses/72335[/bold]."
     )
 
     while True:
-        course_url = typer.prompt("Canvas course URL").strip()
+        course_url = typer.prompt("Canvas course URL", err=True).strip()
         parsed = parse_canvas_course_url(course_url)
         if parsed is not None:
             return parsed
-        console.print(
+        err_console.print(
             "[red]That doesn't look like a Canvas course URL.[/red] "
             "Expected format: [bold]https://canvas.ucsd.edu/courses/72335[/bold]"
         )
 
 
 def _prompt_canvas_token() -> str:
-    console.print("\n[bold]Canvas token[/bold]")
-    console.print(
+    err_console.print("\n[bold]Canvas token[/bold]")
+    err_console.print(
         "Create a token in Canvas under "
         "[bold]Account > Settings > Approved Integrations[/bold]."
     )
-    console.print("cass will save it to [bold].canvastoken[/bold].")
+    err_console.print("cass will save it to [bold].canvastoken[/bold].")
 
     while True:
-        token = typer.prompt("Canvas API token", hide_input=True).strip()
+        token = typer.prompt("Canvas API token", hide_input=True, err=True).strip()
         if token:
             return token
-        console.print("[red]A Canvas API token is required.[/red]")
+        err_console.print("[red]A Canvas API token is required.[/red]")
 
 
 @app.command()
@@ -355,7 +356,7 @@ def init() -> None:
     try:
         raw = read_config_data(toml_path)
     except tomllib.TOMLDecodeError as exc:
-        console.print(f"[red]Invalid cass.toml:[/red] {exc}")
+        err_console.print(f"[red]Invalid cass.toml:[/red] {exc}")
         raise typer.Exit(code=1) from exc
 
     canvas = raw.get("canvas", {})
@@ -371,11 +372,11 @@ def init() -> None:
     needs_canvas = not (canvas_base_url and canvas_course_id)
     saved_credentials = _saved_credentials_file(project_root)
     if cfg_path is None:
-        console.print("[bold]cass setup[/bold]")
-        console.print(f"[dim]Project directory: {project_root}[/dim]\n")
+        err_console.print("[bold]cass setup[/bold]")
+        err_console.print(f"[dim]Project directory: {project_root}[/dim]\n")
     else:
-        console.print("[bold]cass setup check[/bold]")
-        console.print(f"[dim]Project directory: {project_root}[/dim]\n")
+        err_console.print("[bold]cass setup check[/bold]")
+        err_console.print(f"[dim]Project directory: {project_root}[/dim]\n")
 
     changed = False
 
@@ -387,14 +388,14 @@ def init() -> None:
             canvas_course_id=canvas_course_id,
         )
         changed = True
-        console.print(
+        err_console.print(
             f"[green]Saved {toml_path.name}[/green] "
             f"for Canvas course [bold]{canvas_course_id}[/bold]."
         )
     else:
         parsed_course_url = f"{canvas_base_url.rstrip('/')}/courses/{canvas_course_id}"
         if parse_canvas_course_url(parsed_course_url) is not None:
-            console.print(
+            err_console.print(
                 f"[green]Canvas configured[/green] [dim]({parsed_course_url})[/dim]"
             )
 
@@ -410,11 +411,11 @@ def init() -> None:
             changed = True
         canvas_save_token(token)
         reset_config()
-        console.print(f"[green]Saved {token_path.name}[/green]")
+        err_console.print(f"[green]Saved {token_path.name}[/green]")
     elif saved_credentials == token_path.name:
-        console.print(f"[green]Using existing {token_path.name}[/green]")
+        err_console.print(f"[green]Using existing {token_path.name}[/green]")
     else:
-        console.print(
+        err_console.print(
             f"[green]Using session cookie from {saved_credentials}[/green] "
             "[dim](delete it to switch back to an API token)[/dim]"
         )
@@ -426,38 +427,38 @@ def init() -> None:
             try:
                 time_zone = fetch_course_time_zone()
             except (CanvasAuthError, httpx.HTTPError, RuntimeError) as exc:
-                console.print(
+                err_console.print(
                     f"[yellow]Could not read the course time zone: {exc}[/yellow]"
                 )
             else:
                 if time_zone:
                     update_config(toml_path, canvas_time_zone=time_zone)
                     changed = True
-                    console.print(f"[green]Saved time_zone[/green] {time_zone}")
+                    err_console.print(f"[green]Saved time_zone[/green] {time_zone}")
 
     if "classroom" in raw:
         update_config(toml_path)
         changed = True
-        console.print("[dim]Removed obsolete \\[classroom] section.[/dim]")
+        err_console.print("[dim]Removed obsolete \\[classroom] section.[/dim]")
 
     if changed and cfg_path is None:
-        console.print(f"\n[green]Created {toml_path.name}[/green]")
+        err_console.print(f"\n[green]Created {toml_path.name}[/green]")
 
-    console.print("\n[bold]Setup status[/bold]\n")
+    err_console.print("\n[bold]Setup status[/bold]\n")
     checks = check_prerequisites()
     all_ok = True
     for check in checks:
         indent = "  " * check.indent
         icon = "[green]\u2713[/green]" if check.ok else "[red]\u2717[/red]"
-        console.print(f"  {indent}{icon} {check.name}  [dim]{check.detail}[/dim]")
+        err_console.print(f"  {indent}{icon} {check.name}  [dim]{check.detail}[/dim]")
         if not check.ok:
             all_ok = False
 
-    console.print()
+    err_console.print()
     if all_ok:
-        console.print("[green]All checks passed.[/green]")
+        err_console.print("[green]All checks passed.[/green]")
     else:
-        console.print(
+        err_console.print(
             "Some checks failed. Run [bold]cass init[/bold] again after fixing them."
         )
 
@@ -479,26 +480,26 @@ def pull(
 
     cfg = get_config()
     if (reason := db.pull_block_reason()) is not None:
-        console.print(f"[red]{reason}[/red]")
+        err_console.print(f"[red]{reason}[/red]")
         raise typer.Exit(code=1)
 
     try:
         if not any([do_students, do_assignments, do_submissions]):
             pull_mod.pull_all(
                 cfg,
-                on_progress=lambda step, detail: console.print(
+                on_progress=lambda step, detail: err_console.print(
                     f"  [dim]{step}[/dim] {detail}"
                 ),
             )
             return
         if do_students:
-            pull_mod.pull_students(cfg, console)
+            pull_mod.pull_students(cfg, err_console)
         if do_assignments:
-            pull_mod.pull_assignments(cfg, console)
+            pull_mod.pull_assignments(cfg, err_console)
         if do_submissions:
-            pull_mod.pull_submissions(cfg, console)
+            pull_mod.pull_submissions(cfg, err_console)
     except RuntimeError as exc:
-        console.print(f"[red]{exc}[/red]")
+        err_console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from exc
 
 
@@ -518,13 +519,13 @@ def push(
     conn = db.get_db()
     pending = db.get_pending_changes(conn)
     if _pending_count(pending) == 0:
-        console.print("[yellow]No pending Canvas changes to push.[/yellow]")
+        err_console.print("[yellow]No pending Canvas changes to push.[/yellow]")
         return
 
     preview = db.canvas_preview(conn, pending)
     changes = preview.get("changes", [])
     if not changes:
-        console.print("[yellow]No pending Canvas changes to push.[/yellow]")
+        err_console.print("[yellow]No pending Canvas changes to push.[/yellow]")
         return
 
     _render_push_preview(preview)
@@ -550,7 +551,7 @@ def revert(
     conn = db.get_db()
     pending = db.get_pending_changes(conn)
     if _pending_count(pending) == 0:
-        console.print("[yellow]No pending changes to revert.[/yellow]")
+        err_console.print("[yellow]No pending changes to revert.[/yellow]")
         return
 
     _render_pending_summary(pending, title="Revert Preview")
@@ -575,10 +576,10 @@ def query(
     from . import report
 
     if dataset and sql_text:
-        console.print("[red]Provide either a dataset or --sql, not both.[/red]")
+        err_console.print("[red]Provide either a dataset or --sql, not both.[/red]")
         raise typer.Exit(code=1)
     if not dataset and not sql_text:
-        console.print(
+        err_console.print(
             f"[red]Provide a dataset ({', '.join(QUERY_DATASETS)}) or --sql.[/red]"
         )
         raise typer.Exit(code=1)
@@ -589,7 +590,7 @@ def query(
             return
 
         if dataset not in QUERY_DATASETS:
-            console.print(
+            err_console.print(
                 f"[red]Unknown dataset '{dataset}'. "
                 f"Choose from: {', '.join(QUERY_DATASETS)}[/red]"
             )
@@ -619,7 +620,7 @@ def query(
             return
 
         if where or order:
-            console.print(
+            err_console.print(
                 "[red]The gradebook dataset only supports --limit in CLI mode.[/red]"
             )
             raise typer.Exit(code=1)
@@ -630,7 +631,7 @@ def query(
             rows = rows[:limit]
         report.render_list(headers, rows, title="Gradebook")
     except RuntimeError as exc:
-        console.print(f"[red]{exc}[/red]")
+        err_console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from exc
 
 
@@ -644,7 +645,7 @@ def delete(
 
     db_file = Path(db.db_path())
     if not db_file.exists():
-        console.print("[dim]No database to delete.[/dim]")
+        err_console.print("[dim]No database to delete.[/dim]")
         return
 
     if not yes:
@@ -687,11 +688,11 @@ def backup(
 
     if list_backups:
         if not backups_dir.exists():
-            console.print("[dim]No backups directory.[/dim]")
+            err_console.print("[dim]No backups directory.[/dim]")
             return
         files = sorted(backups_dir.glob("cass_*.db"))
         if not files:
-            console.print("[dim]No backups found.[/dim]")
+            err_console.print("[dim]No backups found.[/dim]")
             return
         for file in files:
             size_kb = file.stat().st_size / 1024
@@ -704,7 +705,7 @@ def backup(
 
     db_file = Path(db.db_path())
     if not db_file.exists():
-        console.print(
+        err_console.print(
             "[yellow]No database to back up. Run [bold]cass pull[/bold] first.[/yellow]"
         )
         raise typer.Exit(code=1)
@@ -736,10 +737,10 @@ def restore(
 
     src = Path(file)
     if not src.exists():
-        console.print(f"[red]File not found: {file}[/red]")
+        err_console.print(f"[red]File not found: {file}[/red]")
         raise typer.Exit(code=1)
     if src.suffix != ".db":
-        console.print("[red]Expected a .db file.[/red]")
+        err_console.print("[red]Expected a .db file.[/red]")
         raise typer.Exit(code=1)
 
     try:
@@ -755,13 +756,13 @@ def restore(
             except Exception:
                 counts[table] = 0
     except Exception as exc:
-        console.print(f"[red]Invalid database file: {exc}[/red]")
+        err_console.print(f"[red]Invalid database file: {exc}[/red]")
         raise typer.Exit(code=1) from exc
 
     src_kb = src.stat().st_size / 1024
-    console.print(f"  Backup: [bold]{src.name}[/bold] ({src_kb:.0f} KB)")
-    console.print(f"  Schema version: {version}")
-    console.print(
+    err_console.print(f"  Backup: [bold]{src.name}[/bold] ({src_kb:.0f} KB)")
+    err_console.print(f"  Schema version: {version}")
+    err_console.print(
         f"  Students: {counts['canvas_students']}, "
         f"Assignments: {counts['canvas_assignments']}"
     )
@@ -770,9 +771,9 @@ def restore(
     db_file = Path(target)
     if db_file.exists():
         cur_kb = db_file.stat().st_size / 1024
-        console.print(f"  Current DB: {db_file.name} ({cur_kb:.0f} KB)")
+        err_console.print(f"  Current DB: {db_file.name} ({cur_kb:.0f} KB)")
     else:
-        console.print("  Current DB: [dim]none[/dim]")
+        err_console.print("  Current DB: [dim]none[/dim]")
 
     confirm("\nReplace current database with this backup?", yes=yes, default=False)
 
@@ -812,15 +813,15 @@ def run() -> None:
     try:
         app()
     except CanvasAuthError as exc:
-        console.print(f"[red]{exc}[/red]")
+        err_console.print(f"[red]{exc}[/red]")
         raise SystemExit(1) from None
     except httpx.HTTPStatusError as exc:
         resp = exc.response
-        console.print(
+        err_console.print(
             f"[red]Canvas returned {resp.status_code} for "
             f"{exc.request.method} {exc.request.url.path}[/red]"
         )
         raise SystemExit(1) from None
     except RuntimeError as exc:
-        console.print(f"[red]{exc}[/red]")
+        err_console.print(f"[red]{exc}[/red]")
         raise SystemExit(1) from None
