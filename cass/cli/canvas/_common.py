@@ -56,13 +56,22 @@ def print_plan(c: CanvasClient, *, err: bool = False) -> None:
 
     out = Console(stderr=True) if err else console
     if not c.planned_requests:
-        out.print("Dry run: no Canvas writes needed.", markup=False, highlight=False)
+        out.print(
+            "Dry run: no Canvas writes needed.",
+            markup=False,
+            highlight=False,
+            soft_wrap=True,
+        )
         return
     out.print(
-        "Dry run: no changes sent. Planned requests:", markup=False, highlight=False
+        "Dry run: no changes sent. Planned requests:",
+        markup=False,
+        highlight=False,
+        soft_wrap=True,
     )
+    # soft_wrap keeps each planned write on one line, however long.
     for line in format_plan(c.planned_requests):
-        out.print(f"  {line}", markup=False, highlight=False)
+        out.print(f"  {line}", markup=False, highlight=False, soft_wrap=True)
 
 
 def canvas_guide(heading: str, commands: list[tuple[str, str]]) -> None:
@@ -86,7 +95,11 @@ def group_id_for(c: CanvasClient, name: str, *, create: bool) -> int | None:
             )
             raise typer.Exit(code=1) from None
     group = c.create_assignment_group(name)
-    console.print(f"[green]Created group:[/green] {group.name} (id={group.id})")
+    if c.dry_run:
+        # The plan already lists the POST; the returned id is a placeholder.
+        console.print(f"Would create group: {name}", markup=False, highlight=False)
+    else:
+        console.print(f"[green]Created group:[/green] {group.name} (id={group.id})")
     return group.id
 
 

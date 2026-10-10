@@ -32,7 +32,7 @@ cass canvas announce "Title" "Body"   # update-announcement / delete-announcemen
 cass canvas sync [--apply]       # reconcile [[canvas.*]] declarations in cass.toml
 cass canvas login --from-chrome  # browser-session auth, see Canvas authentication
 cass canvas api GET /courses/{course}/modules --all     # raw API request
-cass canvas api PUT /courses/{course}/modules/5 --data module[name]=Week1
+cass canvas api PUT /courses/{course}/modules/5 --data 'module[name]=Week1'
 ```
 
 `cass canvas api` prints the response body as JSON. `{course}` expands to the configured course ID; `--param KEY=VALUE` adds query parameters and `--json-body` sends a JSON body. To call the API from Python, see the [Python API guide](python-api.md).

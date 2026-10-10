@@ -185,6 +185,24 @@ class RetryTransport(httpx.BaseTransport):
 _LINK_NEXT_RE = re.compile(r'<([^>]+)>;\s*rel="next"')
 
 
+def _merge_query(
+    path: str,
+    params: Mapping[str, object] | Sequence[tuple[str, object]] | None,
+) -> tuple[str, list[tuple[str, Any]]]:
+    """Split *path* into (path without query, query pairs including *params*).
+
+    httpx replaces a URL's query when given params, so a query string in
+    *path* has to be merged into the params by hand.
+    """
+    url = urlsplit(api_path(path))
+    pairs: list[tuple[str, Any]] = list(parse_qsl(url.query, keep_blank_values=True))
+    if isinstance(params, Mapping):
+        pairs.extend((str(key), value) for key, value in params.items())
+    elif params is not None:
+        pairs.extend(params)
+    return urlunsplit(url._replace(query="")), pairs
+
+
 class BaseClient:
     """Typed Canvas LMS API client with course_id baked in.
 
@@ -349,20 +367,12 @@ class BaseClient:
             Items from list pages concatenated; a non-list page is appended
             as a single item.
         """
-        # httpx replaces a URL's query when given params, so merge them here.
-        url = urlsplit(api_path(path))
-        first: list[tuple[str, Any]] = list(
-            parse_qsl(url.query, keep_blank_values=True)
-        )
-        if isinstance(params, Mapping):
-            first.extend((str(key), value) for key, value in params.items())
-        elif params is not None:
-            first.extend(params)
+        path_only, first = _merge_query(path, params)
         if not any(key == "per_page" for key, _ in first):
             first.append(("per_page", 100))
 
         results: list[dict[str, Any]] = []
-        resp = self._client.get(urlunsplit(url._replace(query="")), params=first)
+        resp = self._client.get(path_only, params=first)
         while True:
             data = resp.json()
             if isinstance(data, list):
@@ -408,8 +418,8 @@ class BaseClient:
                 **(kwargs.get("headers") or {}),
                 "Content-Type": "application/x-www-form-urlencoded",
             }
-        resp = self._client.request(method, api_path(path), **kwargs)
-        return resp
+        path, kwargs["params"] = _merge_query(path, kwargs.get("params"))
+        return self._client.request(method, path, **kwargs)
 
     def _post_upload(
         self, url: str, *, data: dict[str, Any], filename: str, file: IO[bytes]

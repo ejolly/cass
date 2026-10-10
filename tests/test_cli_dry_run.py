@@ -256,3 +256,62 @@ def test_every_write_command_is_in_the_matrix():
     }
     assert write_paths
     assert write_paths <= {path for path, _ in DRY_RUN_COMMANDS}
+
+
+def test_dry_run_create_groups_does_not_claim_creation(course):
+    root, _, _, _ = course
+    (root / "quizzes" / "grouped.toml").write_text(
+        QUIZ_TOML.replace("attempts = 2", 'attempts = 2\ngroup = "New"')
+    )
+    result = runner.invoke(
+        app,
+        [
+            *("canvas", "quizzes", "create", "--from", "quizzes/grouped.toml"),
+            *("--create-groups", "--dry-run"),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Created group" not in result.stdout
+    assert "Would create group: New" in result.stdout
+    assert re.search(
+        r"^\s*POST /courses/1/assignment_groups", result.stdout, re.MULTILINE
+    )
+
+
+class _FakeClient:
+    def __init__(self, planned_requests):
+        self.planned_requests = planned_requests
+
+
+@pytest.mark.parametrize("err", [False, True])
+def test_print_plan_empty(capsys, err):
+    from cass.cli.canvas._common import print_plan
+
+    print_plan(_FakeClient([]), err=err)  # ty: ignore[invalid-argument-type]
+
+    captured = capsys.readouterr()
+    stream = captured.err if err else captured.out
+    assert "no Canvas writes needed" in stream
+    assert (captured.out if err else captured.err) == ""
+
+
+@pytest.mark.parametrize("err", [False, True])
+def test_print_plan_keeps_each_write_on_one_line(capsys, monkeypatch, err):
+    from cass.apis.canvas.dry_run import PlannedRequest, format_plan
+    from cass.cli.canvas import _common
+
+    monkeypatch.setenv("COLUMNS", "80")
+    monkeypatch.setattr(_common, "console", _common.Console())
+    long_title = "x" * 150
+    plan = [
+        PlannedRequest("POST", "/courses/1/modules", {"module": {"name": long_title}})
+    ]
+    expected = f"  {format_plan(plan)[0]}"
+    assert len(expected) > 80
+
+    _common.print_plan(_FakeClient(plan), err=err)  # ty: ignore[invalid-argument-type]
+
+    captured = capsys.readouterr()
+    stream = captured.err if err else captured.out
+    assert expected in stream.splitlines()

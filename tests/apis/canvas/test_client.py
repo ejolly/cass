@@ -1270,3 +1270,13 @@ class TestCanvasClient:
         )
         with pytest.raises(RuntimeError, match="Canvas GraphQL error"):
             client.post_assignment_grades(200)
+
+
+class TestRequestQuery:
+    def test_query_in_path_is_kept_when_params_given(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data={})
+        client.request("GET", "/x?a=1", params=[("b", "2")])
+        params = transport.requests[0].url.params
+        assert params["a"] == "1"
+        assert params["b"] == "2"
