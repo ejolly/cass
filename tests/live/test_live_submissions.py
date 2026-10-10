@@ -169,10 +169,11 @@ def test_enrolled_after_dry_run_on_real_course(
     )
     for line in format_plan(planned):
         assert pattern.match(line), line
-        assert "submission[excuse]" in line
+        assert line.endswith("  excuse=true"), line
     # Zero planned requests is fine: nobody may have enrolled recently.
     rows = re.findall(r"^\s*(excuse|skip)\b", out, re.MULTILINE)
     assert len([r for r in rows if r == "excuse"]) == len(planned)
-    if ts is not None:
-        assert f"({ts})" not in out
-        assert all(not r.path.endswith(f"/submissions/{ts}") for r in planned)
+    if ts is None:
+        pytest.skip("the real course has no Test Student to check against")
+    assert f"({ts})" not in out
+    assert all(not r.path.endswith(f"/submissions/{ts}") for r in planned)
