@@ -16,10 +16,12 @@ from rich.table import Table
 from .. import __version__
 from ..db import QUERY_DATASETS, TABLE_QUERY_DATASETS
 from .canvas import canvas_app
+from .skill import skill_app
 from .sqlite_utils import render_query, render_rows
 
 app = typer.Typer(invoke_without_command=True, no_args_is_help=False)
 app.add_typer(canvas_app, name="canvas")
+app.add_typer(skill_app, name="skill")
 
 console = Console()
 err_console = Console(stderr=True)

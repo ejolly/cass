@@ -125,6 +125,7 @@ class TestCliSurface:
             "restore",
             "view",
             "canvas",
+            "skill",
         ):
             assert command in result.stdout
 
