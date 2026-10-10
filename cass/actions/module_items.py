@@ -1,4 +1,4 @@
-"""Module item rules: command-line arguments and content lookup."""
+"""Module item rules: command-line arguments, content lookup and planning."""
 
 from __future__ import annotations
 
@@ -19,9 +19,11 @@ if TYPE_CHECKING:
         CanvasAssignmentResponse,
         CanvasFile,
         CanvasFolder,
+        CanvasModuleItem,
         CanvasPage,
         CanvasQuiz,
     )
+    from .config import CanvasModuleSpec
 
 # Which reference flag each item type takes; --title and --indent are always allowed.
 _CONTENT_TYPES = ("Assignment", "Quiz", "File")
@@ -235,3 +237,344 @@ def resolve_content(spec: ModuleItemSpec, index: ContentIndex) -> ContentRef:
     if item_type == "SubHeader":
         return ContentRef(item_type, None, title=spec.title)
     raise ValueError(f"unknown item type {spec.type!r}")
+
+
+# --- planning -----------------------------------------------------------------
+
+ITEM_FIELDS = ("title", "indent", "published")
+
+
+@dataclass
+class FileUploadPlan:
+    """A local file to upload before its module item is created or kept."""
+
+    source: Path
+    path: str  # below the course files root, e.g. "readings/w1.pdf"
+    existing: CanvasFile | None  # the file it overwrites; None for a new file
+    published: bool | None  # the declared value
+    local_size: int = 0  # bytes in *source*
+
+
+@dataclass
+class ItemChange:
+    """What sync does to one module item."""
+
+    action: str  # "create" | "update" | "move" | "keep" | "remove" | "extra"
+    spec: ModuleItemSpec | None  # None for remove / extra
+    live: CanvasModuleItem | None  # None for create
+    ref: ContentRef | None  # None for remove / extra
+    changed: list[str] = field(default_factory=list)  # in ITEM_FIELDS order
+    moved: bool = False  # an update or extra that also changes place
+    upload: FileUploadPlan | None = None
+
+
+@dataclass
+class ModuleItemPlan:
+    """Planned item changes for one module.
+
+    ``items`` lists declared items in file order, then extras in their
+    current order, then removes.
+    """
+
+    items: list[ItemChange]
+    order_changed: bool
+
+    @property
+    def has_changes(self) -> bool:
+        """True when applying the plan would send any request."""
+        return self.order_changed or any(
+            change.upload is not None or change.action not in ("keep", "extra")
+            for change in self.items
+        )
+
+
+def _spec_reference(spec: ModuleItemSpec) -> str:
+    """The key that names a declared item in error messages."""
+    if spec.file:
+        return spec.file
+    if spec.url:
+        return spec.url
+    return spec.title
+
+
+def _resolve_all(
+    declared: list[ModuleItemSpec], index: ContentIndex, module_name: str
+) -> list[ContentRef]:
+    """Resolve every declared item, reporting all lookup problems at once.
+
+    Raises:
+        RuntimeError: Listing every item that could not be resolved.
+    """
+    refs: list[ContentRef] = []
+    problems: list[str] = []
+    for number, spec in enumerate(declared, start=1):
+        try:
+            refs.append(resolve_content(spec, index))
+        except ValueError as exc:
+            item_type = canonical_item_type(spec.type) or spec.type
+            problems.append(
+                f"item {number} ({item_type} {_spec_reference(spec)!r}): {exc}"
+            )
+    if problems:
+        raise RuntimeError(
+            f"Module {module_name!r}: cannot plan items:\n  " + "\n  ".join(problems)
+        )
+    return refs
+
+
+def _declared_identity(ref: ContentRef) -> tuple[str, object] | None:
+    """What a declared item matches live items by; None when it cannot match."""
+    if ref.item_type == "Page":
+        return ("Page", ref.page_url)
+    if ref.item_type == "ExternalUrl":
+        return ("ExternalUrl", ref.external_url)
+    if ref.item_type == "SubHeader":
+        return ("SubHeader", None)  # SubHeaders pair by their order
+    if ref.content_id is None:
+        return None  # a File that will be uploaded new
+    return (ref.item_type, ref.content_id)
+
+
+def _live_identity(item: CanvasModuleItem) -> tuple[str, object]:
+    """What a live item matches declared items by (see `_declared_identity`)."""
+    if item.type == "Page":
+        return ("Page", item.page_url)
+    if item.type == "ExternalUrl":
+        return ("ExternalUrl", item.external_url)
+    if item.type == "SubHeader":
+        return ("SubHeader", None)
+    return (item.type, item.content_id)
+
+
+def _pair_items(
+    refs: list[ContentRef], live_items: list[CanvasModuleItem]
+) -> list[CanvasModuleItem | None]:
+    """Find the live item each declared item matches, or None.
+
+    Declared and live items with the same identity pair up in their own
+    order: the first declared with the first live, and so on.
+    """
+    unpaired_live: dict[tuple[str, object], list[CanvasModuleItem]] = {}
+    for item in live_items:
+        unpaired_live.setdefault(_live_identity(item), []).append(item)
+
+    pairs: list[CanvasModuleItem | None] = []
+    for ref in refs:
+        identity = _declared_identity(ref)
+        candidates = unpaired_live.get(identity, []) if identity else []
+        pairs.append(candidates.pop(0) if candidates else None)
+    return pairs
+
+
+def _changed_fields(
+    spec: ModuleItemSpec,
+    ref: ContentRef,
+    live: CanvasModuleItem,
+    upload: FileUploadPlan | None,
+) -> list[str]:
+    """The ITEM_FIELDS that differ between a declared item and its live match."""
+    changed: list[str] = []
+    if ref.title and ref.title != live.title:
+        changed.append("title")
+    if spec.indent != live.indent:
+        changed.append("indent")
+    if spec.published is not None:
+        if ref.item_type == "File":
+            # A File's "published" is its lock state; an upload sets it anyway.
+            file_is_published = ref.file is not None and not ref.file.locked
+            if upload is None and spec.published != file_is_published:
+                changed.append("published")
+        elif spec.published != live.published:
+            changed.append("published")
+    return changed
+
+
+def _upload_for(
+    spec: ModuleItemSpec, ref: ContentRef, index: ContentIndex
+) -> FileUploadPlan | None:
+    """Plan an upload when a File's source is new or differs in size."""
+    if ref.item_type != "File" or spec.source is None:
+        return None
+    local_size = index.local_sizes.get(spec.source, 0)
+    if ref.file is not None and ref.file.size == local_size:
+        return None
+    return FileUploadPlan(
+        source=spec.source,
+        path=ref.file_path,
+        existing=ref.file,
+        published=spec.published,
+        local_size=local_size,
+    )
+
+
+def _out_of_place(
+    current: list[int], target: list[int], declared_ids: set[int]
+) -> set[int]:
+    """Live item ids that must move so *current* becomes *target*.
+
+    Both lists hold the same ids. The items that can stay where they are form
+    a longest common subsequence (LCS) of the two lists: the longest run of
+    ids that appear in the same relative order in both. Every other item must
+    move. When several subsequences are equally long, the one with the most
+    declared items wins, so extras (which belong at the end anyway) are the
+    ones reported as moved.
+
+    ``best[i][j]`` scores the best subsequence of ``current[i:]`` and
+    ``target[j:]`` as (length, declared items in it); tuples compare
+    element by element, so length decides first.
+    """
+    rows, cols = len(current), len(target)
+    best = [[(0, 0)] * (cols + 1) for _ in range(rows + 1)]
+    for i in range(rows - 1, -1, -1):
+        for j in range(cols - 1, -1, -1):
+            if current[i] == target[j]:
+                length, declared = best[i + 1][j + 1]
+                best[i][j] = (length + 1, declared + (current[i] in declared_ids))
+            else:
+                best[i][j] = max(best[i + 1][j], best[i][j + 1])
+
+    in_place: set[int] = set()
+    i = j = 0
+    while i < rows and j < cols:
+        if current[i] == target[j]:
+            in_place.add(current[i])
+            i += 1
+            j += 1
+        elif best[i + 1][j] >= best[i][j + 1]:
+            i += 1
+        else:
+            j += 1
+    return set(current) - in_place
+
+
+def plan_module_items(
+    declared: list[ModuleItemSpec],
+    live_items: list[CanvasModuleItem],
+    index: ContentIndex,
+    *,
+    prune: bool,
+    module_name: str = "",
+) -> ModuleItemPlan:
+    """Compare declared module items with the live ones. No I/O.
+
+    Args:
+        declared: Items in the order the config file lists them.
+        live_items: Items in the order Canvas lists them (their ``position``
+            field is not trusted).
+        index: Course content and local source sizes.
+        prune: Remove undeclared items instead of keeping them as extras.
+        module_name: Names the module in error messages.
+
+    Raises:
+        RuntimeError: Listing every declared item whose content is missing or
+            ambiguous.
+    """
+    refs = _resolve_all(declared, index, module_name)
+    pairs = _pair_items(refs, live_items)
+
+    changes: list[ItemChange] = []
+    for spec, ref, live in zip(declared, refs, pairs, strict=True):
+        upload = _upload_for(spec, ref, index)
+        if live is None:
+            changes.append(ItemChange("create", spec, None, ref, upload=upload))
+            continue
+        changed = _changed_fields(spec, ref, live, upload)
+        action = "update" if changed else "keep"
+        changes.append(ItemChange(action, spec, live, ref, changed, upload=upload))
+
+    paired_ids = {live.id for live in pairs if live is not None}
+    unpaired = [item for item in live_items if item.id not in paired_ids]
+    leftover_action = "remove" if prune else "extra"
+    leftovers = [ItemChange(leftover_action, None, item, None) for item in unpaired]
+
+    extras = [c for c in leftovers if c.action == "extra"]
+    removes = [c for c in leftovers if c.action == "remove"]
+    removed_ids = {c.live.id for c in removes if c.live is not None}
+    current = [item.id for item in live_items if item.id not in removed_ids]
+    target = [live.id for live in pairs if live is not None] + [
+        c.live.id for c in extras if c.live is not None
+    ]
+    must_move = _out_of_place(current, target, paired_ids)
+
+    for change in changes + extras:
+        if change.live is None or change.live.id not in must_move:
+            continue
+        if change.action == "keep":
+            change.action = "move"
+        else:
+            change.moved = True
+
+    return ModuleItemPlan(
+        items=changes + extras + removes, order_changed=bool(must_move)
+    )
+
+
+def plan_module_spec_items(
+    module: CanvasModuleSpec,
+    live_items: list[CanvasModuleItem],
+    index: ContentIndex,
+    *,
+    prune: bool,
+) -> ModuleItemPlan | None:
+    """Plan *module*'s items, or return None when it has no ``items`` key.
+
+    A module without ``items`` is never item-reconciled.
+    """
+    if module.items is None:
+        return None
+    return plan_module_items(
+        module.items, live_items, index, prune=prune, module_name=module.name
+    )
+
+
+def item_label(change: ItemChange) -> str:
+    """Name an item for a plan row.
+
+    Declared items use the desired title (a File its path); undeclared live
+    items use their current type and title.
+    """
+    if change.ref is not None:
+        if change.ref.item_type == "File":
+            return f"File {change.ref.file_path}"
+        return f"{change.ref.item_type} {change.ref.title!r}"
+    if change.live is not None:
+        return f"{change.live.type} {change.live.title!r}"
+    return "item"
+
+
+def _row_detail(change: ItemChange) -> str:
+    if change.action == "update":
+        moved = ", moved" if change.moved else ""
+        return f" ({', '.join(change.changed)}{moved})"
+    if change.action == "extra":
+        if change.moved:
+            return " (moved to end)"
+        return " (not declared; --prune removes it)"
+    return ""
+
+
+def item_plan_rows(
+    module_name: str, plan: ModuleItemPlan
+) -> list[tuple[str, str, str]]:
+    """Table rows ``(action, kind, description)`` for a module's item plan.
+
+    One row per upload and per non-keep item, then a count of kept items.
+    """
+    rows: list[tuple[str, str, str]] = []
+    kept = 0
+    for change in plan.items:
+        upload = change.upload
+        if upload is not None:
+            if upload.existing is None:
+                sizes = "new"
+            else:
+                sizes = f"{upload.existing.size} → {upload.local_size} bytes"
+            rows.append(("upload", "file", f"{module_name}: {upload.path} ({sizes})"))
+        if change.action == "keep":
+            kept += 1
+            continue
+        label = f"{module_name}: {item_label(change)}{_row_detail(change)}"
+        rows.append((change.action, "item", label))
+    if kept:
+        rows.append(("keep", "items", f"{module_name}: {kept} kept"))
+    return rows
