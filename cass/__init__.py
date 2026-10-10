@@ -79,6 +79,12 @@ makes a tab visible: a write that accepts `--dry-run`.
 | `cass canvas quizzes delete` | Delete a quiz |
 | `cass canvas quizzes responses` | Download every student's answers |
 
+### Submissions (`cass canvas submissions`)
+
+| Command | Description |
+|---------|-------------|
+| `cass canvas submissions list` | Show each student's submission state, lateness and score |
+
 ### Files
 
 | Command | Description |

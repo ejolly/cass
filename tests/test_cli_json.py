@@ -157,6 +157,7 @@ def test_assignments_show_json(json_client: MagicMock) -> None:
     "args",
     [
         ["people", "list", "--json", "--csv", "x.csv"],
+        ["submissions", "list", "HW1", "--json", "--csv", "x.csv"],
         ["quizzes", "list", "--json", "--save", "x.md"],
         ["quizzes", "show", "3", "--json", "--csv", "x.csv"],
     ],

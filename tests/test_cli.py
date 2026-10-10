@@ -74,6 +74,7 @@ class TestCliSurface:
             "modules",
             "assignments",
             "quizzes",
+            "submissions",
             "calendar",
             "files",
             "announcements",
