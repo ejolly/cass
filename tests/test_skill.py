@@ -56,7 +56,7 @@ def _find_option(command: click.Command, name: str) -> click.Parameter | None:
 def check_invocation(invocation: str, root: click.Command) -> list[str]:
     """Return the problems found walking ``invocation`` down the command tree."""
     try:
-        words = shlex.split(invocation)
+        words = shlex.split(invocation, comments=True)
     except ValueError as exc:
         return [f"{invocation!r}: cannot parse ({exc})"]
 

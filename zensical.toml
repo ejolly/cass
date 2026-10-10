@@ -23,6 +23,7 @@ nav = [
     { "Python API" = "guide/python-api.md" },
     { "Configuration" = "guide/configuration.md" },
     { "Quizzes" = "guide/quizzes.md" },
+    { "Agent skill" = "guide/agents.md" },
     { "Canvas authentication" = "guide/canvas-auth.md" },
   ] },
   { "Reference" = [

@@ -7,6 +7,7 @@ CLI grading toolkit for Canvas LMS. SQLite storage, Typer CLI, NiceGUI browser v
 CLI (`cass/cli/`) and viewer (`cass/viewer/`) are thin interfaces over a shared functional core.
 **Never** put business logic, data transforms, queries, or API calls in CLI or viewer code.
 Always use existing models (`db/schema.py`, `apis/*/schema.py`), operations (`db/`, `apis/`, `actions/`), and catalog metadata (`db/catalog.py`). No ad-hoc dicts, raw SQL in interfaces, or one-off data wrangling — if it doesn't exist in core, add it there first.
+CLI changes update `cass/skill/` in the same commit; `tests/test_skill.py` checks command names.
 
 ```
 CLI / Viewer  →  actions/  →  db/     →  SQLite

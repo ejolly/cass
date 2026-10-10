@@ -19,4 +19,5 @@ cass push                  # send edited grades to Canvas
 - [Install](getting-started/install.md) and [set up](getting-started/setup.md) a course directory.
 - Learn the [daily workflow](getting-started/workflow.md): pull, edit, push, revert, back up.
 - Use the [viewer](guide/viewer.md) or the [CLI](guide/cli.md).
+- Let a coding agent drive cass with the [agent skill](guide/agents.md).
 - Browse the [CLI reference](reference/cli.md) and the [API reference](reference/api/actions.md).
