@@ -1467,6 +1467,12 @@ class TestFileWrites:
         assert b"on_duplicate" not in request.content
         assert f.locked is True
 
+    def test_update_file_sends_locked_false(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data={"id": 9, "display_name": "b.pdf", "locked": False})
+        client.update_file(9, locked=False)
+        assert b"locked=false" in transport.requests[0].content
+
     def test_update_file_without_fields_raises(self, mock_client):
         client, transport = mock_client
         with pytest.raises(RuntimeError, match="at least one field"):
@@ -1528,3 +1534,4 @@ class TestFileWrites:
         client.upload_file(str(path))
         assert len(transport.requests) == 1
         assert b"parent_folder_path=%2F" in transport.requests[0].content
+        assert b"on_duplicate=overwrite" in transport.requests[0].content

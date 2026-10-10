@@ -85,6 +85,7 @@ def test_file_lifecycle(practice: CanvasClient, tmp_path: Path):
         assert practice.resolve_file(str(file_id)).locked is False
 
         _run("delete", str(file_id), "--yes")
+        assert all(f.id != file_id for f in practice.list_files(week2.id))
         _run("folders", "delete", top, "--force", "--yes")
         assert practice.find_folder(top) is None
     finally:

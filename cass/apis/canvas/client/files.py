@@ -209,7 +209,7 @@ class FilesMixin(BaseClient):
         *,
         folder: str = "",
         name: str | None = None,
-        on_duplicate: Literal["rename", "overwrite"] = "rename",
+        on_duplicate: Literal["rename", "overwrite"] = "overwrite",
         locked: bool = False,
     ) -> CanvasFile:
         """Upload a file to the course.
@@ -224,8 +224,8 @@ class FilesMixin(BaseClient):
             folder: Destination folder path relative to the course files root
                 (e.g. ``slides``); created if missing. ``""`` is the root.
             name: Name in Canvas; defaults to the local file name.
-            on_duplicate: ``"rename"`` keeps both files, ``"overwrite"``
-                replaces the existing file of that name.
+            on_duplicate: ``"overwrite"`` (default) replaces the existing file
+                of that name in place; ``"rename"`` keeps both files.
             locked: Lock the file after uploading.
 
         Returns:

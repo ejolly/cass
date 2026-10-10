@@ -54,6 +54,7 @@ def project_db(project_dir, monkeypatch):
     shutil.copy2(_TESTDB, copy)
     sdb = sqlite_utils.Database(str(copy))
     monkeypatch.setattr("cass.db.core._db", sdb)
+    monkeypatch.setattr("cass.db.core._db_path", None)
     return sdb
 
 
@@ -344,6 +345,7 @@ class TestPush:
         sdb = sqlite_utils.Database(str(project_dir / "cass.db"))
         db.init_schema(sdb)
         monkeypatch.setattr("cass.db.core._db", sdb)
+        monkeypatch.setattr("cass.db.core._db_path", None)
         sdb["canvas_assignments"].insert(
             {"canvas_id": 7, "name": "HW1", "points_possible": 10, "published": 1}
         )
@@ -427,6 +429,7 @@ class TestPush:
         sdb = sqlite_utils.Database(str(project_dir / "cass.db"))
         db.init_schema(sdb)
         monkeypatch.setattr("cass.db.core._db", sdb)
+        monkeypatch.setattr("cass.db.core._db_path", None)
         sdb["canvas_assignments"].insert(
             {"canvas_id": 7, "name": "HW1", "points_possible": 10, "published": 1}
         )
@@ -1462,18 +1465,19 @@ class TestCanvasTabsAndFiles:
         fake.update_tab.return_value = CanvasTab(
             id="context_external_tool_5826", label="Media Gallery", hidden=True
         )
-        fake.list_folders.return_value = [
-            CanvasFolder(id=1, name="course files", full_name="course files")
-        ]
-        fake.list_files.return_value = [
-            CanvasFile(id=18962999, display_name="notes.txt", size=20, folder_id=1)
-        ]
         readings = CanvasFolder(
             id=3,
             name="readings",
             full_name="course files/readings",
             parent_folder_id=1,
         )
+        fake.list_folders.return_value = [
+            CanvasFolder(id=1, name="course files", full_name="course files"),
+            readings,
+        ]
+        fake.list_files.return_value = [
+            CanvasFile(id=18962999, display_name="notes.txt", size=20, folder_id=1)
+        ]
         fake.update_file.return_value = CanvasFile(id=15, display_name="notes.txt")
         fake.resolve_folder.return_value = readings
         fake.create_folder.return_value = readings
@@ -1537,7 +1541,7 @@ class TestCanvasTabsAndFiles:
         )
         assert result.exit_code == 0, result.output
         fake_client.delete_folder.assert_called_once_with(3, force=True)
-        assert "Deleted folder:" in result.stdout
+        assert "Deleted folder: readings" in result.stdout
 
     def test_folders_delete_root_refused(self, fake_client):
         from cass.apis.canvas.schema import CanvasFolder
@@ -1636,7 +1640,95 @@ class TestCanvasTabsAndFiles:
         result = runner.invoke(app, ["canvas", "files", "upload", "notes.txt"])
 
         assert result.exit_code == 0, result.output
-        assert "Skipped: w1.txt (id=7)" in result.stdout
+        assert (
+            "Skipped: w1.txt (id=7) is already in the files root with the same size"
+            in result.stdout
+        )
+
+    def test_upload_skip_message_names_folder(self, fake_client, monkeypatch, tmp_path):
+        from cass.actions.files import FileUpload
+        from cass.apis.canvas.schema import CanvasFile
+
+        (tmp_path / "notes.txt").write_text("hi")
+        monkeypatch.chdir(tmp_path)
+        skipped = FileUpload(CanvasFile(id=7, display_name="w1.txt"), skipped=True)
+        monkeypatch.setattr(
+            "cass.actions.files.upload_course_file", MagicMock(return_value=skipped)
+        )
+
+        result = runner.invoke(
+            app,
+            [*("canvas", "files", "upload", "notes.txt"), *("--folder", "/a//b/")],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "Skipped: w1.txt (id=7) is already in a/b with the same size" in (
+            result.stdout
+        )
+
+    def test_upload_dry_run_skip_prints_skipped_not_plan(
+        self, fake_client, monkeypatch, tmp_path
+    ):
+        from cass.actions.files import FileUpload
+        from cass.apis.canvas.schema import CanvasFile
+
+        (tmp_path / "notes.txt").write_text("hi")
+        monkeypatch.chdir(tmp_path)
+        skipped = FileUpload(CanvasFile(id=7, display_name="w1.txt"), skipped=True)
+        monkeypatch.setattr(
+            "cass.actions.files.upload_course_file", MagicMock(return_value=skipped)
+        )
+        plan = MagicMock()
+        monkeypatch.setattr("cass.cli.canvas._common.print_plan", plan)
+
+        result = runner.invoke(
+            app, ["canvas", "files", "upload", "notes.txt", "--dry-run"]
+        )
+
+        assert result.exit_code == 0, result.output
+        assert (
+            "Skipped: w1.txt (id=7) is already in the files root with the same size"
+            in result.stdout
+        )
+        plan.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("flags", "line"),
+        [
+            ([], "Uploaded: w1.txt (id=9)"),
+            (["--unpublished"], "Uploaded: w1.txt (id=9), unpublished"),
+        ],
+    )
+    def test_upload_message(self, fake_client, monkeypatch, tmp_path, flags, line):
+        from cass.actions.files import FileUpload
+        from cass.apis.canvas.schema import CanvasFile
+
+        (tmp_path / "notes.txt").write_text("hi")
+        monkeypatch.chdir(tmp_path)
+        done = FileUpload(CanvasFile(id=9, display_name="w1.txt"), skipped=False)
+        monkeypatch.setattr(
+            "cass.actions.files.upload_course_file", MagicMock(return_value=done)
+        )
+
+        result = runner.invoke(app, ["canvas", "files", "upload", "notes.txt", *flags])
+
+        assert result.exit_code == 0, result.output
+        assert line in result.stdout.splitlines()
+
+    def test_upload_defaults_to_overwrite(self, fake_client, monkeypatch, tmp_path):
+        from cass.actions.files import FileUpload, OnDuplicate
+        from cass.apis.canvas.schema import CanvasFile
+
+        (tmp_path / "notes.txt").write_text("hi")
+        monkeypatch.chdir(tmp_path)
+        done = FileUpload(CanvasFile(id=9, display_name="w1.txt"), skipped=False)
+        action = MagicMock(return_value=done)
+        monkeypatch.setattr("cass.actions.files.upload_course_file", action)
+
+        result = runner.invoke(app, ["canvas", "files", "upload", "notes.txt"])
+
+        assert result.exit_code == 0, result.output
+        assert action.call_args.kwargs["on_duplicate"] is OnDuplicate.OVERWRITE
 
     def test_upload_bad_on_duplicate_is_usage_error(
         self, fake_client, monkeypatch, tmp_path

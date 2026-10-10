@@ -93,3 +93,9 @@ def test_folder_subtree():
 
     assert [f.id for f in folders] == [2, 3]
     assert [f.id for f in kept] == [11]
+
+
+def test_default_policy_overwrites(client, local_file):
+    upload_course_file(client, local_file)
+
+    assert client.upload_file.call_args.kwargs["on_duplicate"] == "overwrite"

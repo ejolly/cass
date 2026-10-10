@@ -123,9 +123,12 @@ def files_upload(
         typer.Option(
             "--on-duplicate",
             case_sensitive=False,
-            help="If the name exists: rename, overwrite, or skip (same name and size)",
+            help=(
+                "If the name exists: overwrite (default, replaces the file in "
+                "place), rename (keep both), or skip (same name and size)"
+            ),
         ),
-    ] = OnDuplicate.RENAME,
+    ] = OnDuplicate.OVERWRITE,
     unpublished: bool = typer.Option(
         False, "--unpublished", help="Lock the file so students cannot see it"
     ),
@@ -152,12 +155,19 @@ def files_upload(
         )
     f = result.file
     if result.skipped:
-        console.print(f"[yellow]Skipped:[/yellow] {f.display_name} (id={f.id})")
+        from ...apis.canvas.client.files import normalize_folder_path
+
+        where = normalize_folder_path(folder) or "the files root"
+        console.print(
+            f"[yellow]Skipped:[/yellow] {f.display_name} (id={f.id}) "
+            f"is already in {where} with the same size"
+        )
         return
     if dry_run:
         _common.print_plan(c)
         return
-    console.print(f"[green]Uploaded:[/green] {f.display_name} (id={f.id})")
+    suffix = ", unpublished" if unpublished else ""
+    console.print(f"[green]Uploaded:[/green] {f.display_name} (id={f.id}){suffix}")
 
 
 @files_app.command(name="delete")
@@ -200,6 +210,8 @@ def files_mv(
     dry_run: bool = _common.dry_run_option(),
 ) -> None:
     """Move a file to another folder."""
+    from ...apis.canvas.client.files import normalize_folder_path
+
     _common.require_canvas()
     with _common.client(dry_run=dry_run) as c:
         f = c.resolve_file(id_or_name)
@@ -212,10 +224,8 @@ def files_mv(
     if dry_run:
         _common.print_plan(c)
         return
-    console.print(
-        f"[green]Moved:[/green] {f.display_name} → "
-        f"{folder.strip('/') or 'the files root'}"
-    )
+    where = normalize_folder_path(folder) or "the files root"
+    console.print(f"[green]Moved:[/green] {f.display_name} → {where}")
 
 
 @files_app.command(name="rename")
@@ -308,13 +318,17 @@ def folders_create(
     dry_run: bool = _common.dry_run_option(),
 ) -> None:
     """Create a folder."""
+    from ...apis.canvas.client.files import normalize_folder_path
+
     _common.require_canvas()
     with _common.client(dry_run=dry_run) as c:
         folder = c.create_folder(path)
     if dry_run:
         _common.print_plan(c)
         return
-    console.print(f"[green]Created folder:[/green] {path.strip('/')} (id={folder.id})")
+    console.print(
+        f"[green]Created folder:[/green] {normalize_folder_path(path)} (id={folder.id})"
+    )
 
 
 @folders_app.command(name="delete")
@@ -327,6 +341,7 @@ def folders_delete(
     dry_run: bool = _common.dry_run_option(),
 ) -> None:
     """Delete a folder."""
+    from ...apis.canvas.client.files import folder_paths
     from ..prompts import confirm
 
     _common.require_canvas()
@@ -334,8 +349,7 @@ def folders_delete(
         folder = c.resolve_folder(id_or_path)
         if folder.parent_folder_id is None:
             raise RuntimeError("Cannot delete the course files root folder")
-        # Canvas full names start with the root folder's name ("course files/...")
-        path = folder.full_name.partition("/")[2]
+        path = folder_paths(c.list_folders())[folder.id]
         confirm(f"Delete folder '{path}'?", yes=yes, dry_run=dry_run)
         c.delete_folder(folder.id, force=force)
     if dry_run:

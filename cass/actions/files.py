@@ -7,7 +7,7 @@ __docformat__ = "google"
 import os
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from ..apis.canvas.client import CanvasClient
@@ -43,7 +43,7 @@ def upload_course_file(
     *,
     folder: str = "",
     name: str | None = None,
-    on_duplicate: OnDuplicate = OnDuplicate.RENAME,
+    on_duplicate: OnDuplicate = OnDuplicate.OVERWRITE,
     unpublished: bool = False,
 ) -> FileUpload:
     """Upload a local file, applying the duplicate policy.
@@ -64,7 +64,9 @@ def upload_course_file(
         The Canvas file and whether the upload was skipped.
     """
     target_name = name or os.path.basename(local_path)
-    policy = on_duplicate.value
+    policy: Literal["rename", "overwrite"] = (
+        "rename" if on_duplicate is OnDuplicate.RENAME else "overwrite"
+    )
     if on_duplicate is OnDuplicate.SKIP:
         policy = "rename"
         found = client.find_folder(folder)
@@ -82,7 +84,7 @@ def upload_course_file(
         local_path,
         folder=folder,
         name=name,
-        on_duplicate=policy,  # ty: ignore[invalid-argument-type]
+        on_duplicate=policy,
         locked=unpublished,
     )
     return FileUpload(uploaded, skipped=False)

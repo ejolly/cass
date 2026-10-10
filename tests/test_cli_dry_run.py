@@ -185,6 +185,7 @@ def course(tmp_path, monkeypatch):
     sdb = sqlite_utils.Database(str(tmp_path / "cass.db"))
     db.init_schema(sdb)
     monkeypatch.setattr("cass.db.core._db", sdb)
+    monkeypatch.setattr("cass.db.core._db_path", None)
 
     sent: list[httpx.Request] = []
     routes = dict(GET_ROUTES)
