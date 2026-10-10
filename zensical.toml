@@ -20,6 +20,7 @@ nav = [
   { "Guide" = [
     { "Viewer" = "guide/viewer.md" },
     { "CLI" = "guide/cli.md" },
+    { "Python API" = "guide/python-api.md" },
     { "Configuration" = "guide/configuration.md" },
     { "Quizzes" = "guide/quizzes.md" },
     { "Canvas authentication" = "guide/canvas-auth.md" },

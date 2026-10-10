@@ -31,7 +31,24 @@ cass canvas upload file.pdf      # upload a file (delete-file removes one)
 cass canvas announce "Title" "Body"   # update-announcement / delete-announcement
 cass canvas sync [--apply]       # reconcile [[canvas.*]] declarations in cass.toml
 cass canvas login --from-chrome  # browser-session auth, see Canvas authentication
+cass canvas api GET /courses/{course}/modules --all     # raw API request
+cass canvas api PUT /courses/{course}/modules/5 --data module[name]=Week1
 ```
+
+`cass canvas api` prints the response body as JSON. `{course}` expands to the configured course ID; `--param KEY=VALUE` adds query parameters and `--json-body` sends a JSON body. To call the API from Python, see the [Python API guide](python-api.md).
+
+## Previewing changes
+
+Every command that writes to Canvas takes `--dry-run`. It prints the requests the command would send and sends none; GETs still run.
+
+```bash
+cass canvas modules create "Week 9" --dry-run
+cass push --dry-run                 # preview pending local changes
+cass canvas sync                    # dry run by default
+cass canvas sync --apply            # make the changes
+```
+
+Reconcile commands such as `sync` preview by default and change Canvas only with `--apply`. Commands that ask for confirmation take `--yes`; without a terminal they exit with code 1 rather than wait for input.
 
 ## Data
 
