@@ -33,7 +33,7 @@ makes a tab visible: a write that accepts `--dry-run`.
 | Command | Description |
 |---------|-------------|
 | `cass canvas` | Course overview with resource counts |
-| `cass canvas people list` | Show course roster with roles and emails |
+| `cass canvas people list` | Show course roster with roles, emails and enrollment dates |
 | `cass canvas sync` | Sync `cass.toml` declarations to Canvas |
 | `cass canvas login` | Save a browser session for Canvas authentication |
 | `cass canvas api` | Send a raw Canvas API request |
@@ -121,7 +121,7 @@ commands and one object on `show` commands that display an item, and on
 go to stderr. Errors exit 1, usage errors exit 2. `--debug` is a global option
 placed before the subcommand (`cass --debug canvas quizzes list`); or set
 `CASS_DEBUG=1`. Either shows the full traceback.
-"""
+"""  # noqa: E501
 
 import importlib.metadata
 
