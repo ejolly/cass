@@ -148,7 +148,7 @@ class TestStreams:
                 transport=httpx.MockTransport(handler),
             ),
         )
-        result = runner.invoke(app, ["canvas", "quizzes"])
+        result = runner.invoke(app, ["canvas", "quizzes", "list"])
         assert result.exit_code == 0, result.output
         assert "Quiz A" in result.stdout
         assert "time zone" not in result.stdout
@@ -822,6 +822,66 @@ class TestReportHelpers:
         assert "0 rows" in capsys.readouterr().out
 
 
+GROUPS = [
+    ("people",),
+    ("modules",),
+    ("assignments",),
+    ("assignments", "groups"),
+    ("quizzes",),
+    ("calendar",),
+    ("files",),
+    ("announcements",),
+    ("tabs",),
+]
+
+
+class TestGroups:
+    @pytest.fixture
+    def empty_client(self, monkeypatch):
+        fake = MagicMock()
+        fake.__enter__.return_value = fake
+        fake.time_zone = "America/Los_Angeles"
+        for method in (
+            "list_users",
+            "list_modules",
+            "list_assignments",
+            "list_assignment_groups",
+            "list_quizzes",
+            "list_calendar_events",
+            "list_folders",
+            "list_files",
+            "list_announcements",
+            "list_tabs",
+        ):
+            getattr(fake, method).return_value = []
+        monkeypatch.setattr("cass.cli.canvas._common.require_canvas", lambda: None)
+        monkeypatch.setattr("cass.cli.canvas._common.client", lambda **_: fake)
+        return fake
+
+    @pytest.mark.parametrize("group", GROUPS)
+    def test_bare_group_and_list_both_exit_0(self, empty_client, group):
+        for args in (["canvas", *group], ["canvas", *group, "list"]):
+            result = runner.invoke(app, args)
+            assert result.exit_code == 0, (args, result.output)
+
+    @pytest.mark.parametrize(
+        "args",
+        [
+            ["canvas", "people", "--csv", "x.csv"],
+            ["canvas", "quizzes", "--save", "x.md"],
+            ["canvas", "calendar", "--from", "2026-10-01"],
+        ],
+    )
+    def test_bare_group_takes_no_options(self, empty_client, args):
+        assert runner.invoke(app, args).exit_code == 2
+
+    def test_list_options_on_list(self, empty_client, tmp_path):
+        out = tmp_path / "p.csv"
+        result = runner.invoke(app, ["canvas", "people", "list", "--csv", str(out)])
+        assert result.exit_code == 0, result.output
+        assert out.exists()
+
+
 class TestCanvasModules:
     @pytest.fixture
     def modules_client(self, monkeypatch):
@@ -850,6 +910,17 @@ class TestCanvasModules:
         assert result.exit_code == 1
         assert "Give a module ID or name, or --all" in result.output
         modules_client.publish.assert_not_called()
+
+    def test_show_resolves_by_name(self, modules_client):
+        from cass.apis.canvas.schema import CanvasModuleItem
+
+        modules_client.list_module_items.return_value = [
+            CanvasModuleItem(id=4, title="Reading", type="Page")
+        ]
+        result = runner.invoke(app, ["canvas", "modules", "show", "Week 1"])
+        assert result.exit_code == 0, result.output
+        modules_client.resolve_module.assert_called_once_with("Week 1")
+        assert "Reading" in result.stdout
 
     def test_add_item_defaults_title_to_content(self, modules_client):
         result = runner.invoke(
@@ -933,8 +1004,8 @@ class TestCanvasQuizzes:
         assert result.exit_code == 0, result.output
         assert "2026-09-25" in result.stdout
 
-    def test_id_shows_settings_and_questions(self, quiz_client):
-        result = runner.invoke(app, ["canvas", "quizzes", "--id", "20"])
+    def test_show_settings_and_questions(self, quiz_client):
+        result = runner.invoke(app, ["canvas", "quizzes", "show", "20"])
         assert result.exit_code == 0, result.output
         assert "Participation" in result.stdout
         assert "2026-09-25 14:15" in result.stdout
@@ -942,12 +1013,19 @@ class TestCanvasQuizzes:
         assert "<b>" not in result.stdout
         assert "weights" not in result.stdout
 
-    def test_id_notes_statistics_fallback(self, quiz_client):
+    def test_show_notes_statistics_fallback(self, quiz_client):
         questions, _ = quiz_client.list_quiz_questions.return_value
         quiz_client.list_quiz_questions.return_value = (questions, True)
-        result = runner.invoke(app, ["canvas", "quizzes", "--id", "20"])
+        result = runner.invoke(app, ["canvas", "quizzes", "show", "20"])
         assert result.exit_code == 0, result.output
-        assert "answer weights are unavailable" in result.output
+        assert "answer weights are unavailable" in result.stderr
+
+    def test_show_resolves_by_title(self, quiz_client):
+        result = runner.invoke(
+            app, ["canvas", "quizzes", "show", "09-25 Participation Survey"]
+        )
+        assert result.exit_code == 0, result.output
+        quiz_client.resolve_quiz.assert_called_once_with("09-25 Participation Survey")
 
     def test_export_to_stdout(self, quiz_client):
         result = runner.invoke(app, ["canvas", "quizzes", "export", "20"])
@@ -1367,6 +1445,17 @@ class TestCanvasAssignments:
         monkeypatch.setattr("cass.cli.canvas._common.client", lambda **_: fake)
         return fake
 
+    def test_show_resolves_by_name(self, fake_client):
+        from cass.apis.canvas.schema import CanvasAssignmentResponse
+
+        fake_client.resolve_assignment.return_value = CanvasAssignmentResponse(
+            id=7, name="HW1"
+        )
+        result = runner.invoke(app, ["canvas", "assignments", "show", "HW1"])
+        assert result.exit_code == 0, result.output
+        fake_client.resolve_assignment.assert_called_once_with("HW1")
+        assert "HW1" in result.stdout
+
     def test_create_passes_description(self, fake_client):
         result = runner.invoke(
             app,
@@ -1512,7 +1601,16 @@ class TestCanvasCalendar:
 
     def test_list_passes_date_range(self, calendar_client):
         result = runner.invoke(
-            app, ["canvas", "calendar", "--from", "2026-10-01", "--to", "2026-10-31"]
+            app,
+            [
+                "canvas",
+                "calendar",
+                "list",
+                "--from",
+                "2026-10-01",
+                "--to",
+                "2026-10-31",
+            ],
         )
         assert result.exit_code == 0, result.output
         calendar_client.list_calendar_events.assert_called_once_with(

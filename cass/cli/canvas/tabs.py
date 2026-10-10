@@ -1,4 +1,4 @@
-"""``cass canvas tabs`` / ``show-tab`` / ``hide-tab``."""
+"""``cass canvas tabs list`` / ``show-tab`` / ``hide-tab``."""
 
 from __future__ import annotations
 
@@ -9,9 +9,22 @@ import typer
 from . import _common
 from ._common import canvas_app, console
 
+tabs_app = typer.Typer(
+    invoke_without_command=True,
+    no_args_is_help=False,
+    help="Navigation tabs — list.",
+)
 
-@canvas_app.command(rich_help_panel="Browse")
-def tabs(
+
+@tabs_app.callback()
+def tabs_callback(ctx: typer.Context) -> None:
+    """Navigation tabs; bare ``tabs`` runs ``tabs list``."""
+    if ctx.invoked_subcommand is None:
+        tabs_list(csv_out="", save="")
+
+
+@tabs_app.command(name="list")
+def tabs_list(
     csv_out: str = typer.Option("", "--csv", help="Export as CSV file"),
     save: str = typer.Option("", "--save", help="Save output as markdown file"),
 ) -> None:

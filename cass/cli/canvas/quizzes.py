@@ -12,84 +12,100 @@ from ._common import console, due, err_console, pub, when
 quizzes_app = typer.Typer(
     invoke_without_command=True,
     no_args_is_help=False,
-    help="Quizzes — list, create, publish, delete.",
+    help="Quizzes — list, show, export, create, update, delete.",
 )
 
 
 @quizzes_app.callback()
-def quizzes_callback(
-    ctx: typer.Context,
-    quiz_id: str = typer.Option(
-        "", "--id", help="Quiz ID or title for settings and questions"
-    ),
+def quizzes_callback(ctx: typer.Context) -> None:
+    """Quizzes; bare ``quizzes`` runs ``quizzes list``."""
+    if ctx.invoked_subcommand is None:
+        quizzes_list(csv_out="", save="")
+
+
+@quizzes_app.command(name="list")
+def quizzes_list(
     csv_out: str = typer.Option("", "--csv", help="Export as CSV file"),
     save: str = typer.Option("", "--save", help="Save output as markdown file"),
 ) -> None:
-    """List quizzes, or show settings and questions for one quiz."""
-    if ctx.invoked_subcommand is not None:
-        return
-    _common.require_canvas()
+    """List quizzes."""
+    from .. import report
 
+    _common.require_canvas()
+    with _common.client() as c:
+        tz = c.time_zone
+        quizzes = c.list_quizzes()
+
+    headers = ["ID", "Title", "Type", "Questions", "Points", "Due", "Published"]
+    rows = [
+        [
+            str(q.id),
+            q.title,
+            q.quiz_type,
+            str(q.question_count),
+            str(q.points_possible or ""),
+            due(q.due_at, tz),
+            pub(q.published),
+        ]
+        for q in quizzes
+    ]
+
+    if csv_out:
+        report.write_csv_file(csv_out, headers=headers, rows=rows)
+    elif save:
+        report.save_markdown(save, "Quizzes", headers, rows)
+    else:
+        report.render_list(headers, rows, title="Quizzes")
+
+
+@quizzes_app.command(name="show")
+def quizzes_show(
+    id_or_name: str = typer.Argument(..., help="Quiz ID or title"),
+    csv_out: str = typer.Option("", "--csv", help="Export as CSV file"),
+    save: str = typer.Option("", "--save", help="Save output as markdown file"),
+) -> None:
+    """Show settings and questions for one quiz."""
     from ...actions.quizzes import strip_html
     from .. import report
 
-    question_rows: list[list[str]] = []
-    from_stats = False
+    _common.require_canvas()
     with _common.client() as c:
         tz = c.time_zone
-        if quiz_id:
-            q = c.resolve_quiz(quiz_id)
-            questions, from_stats = c.list_quiz_questions(q.id)
-            groups = {g.id: g.name for g in c.list_assignment_groups()}
-            attempts = (
-                "unlimited" if q.allowed_attempts == -1 else str(q.allowed_attempts)
-            )
-            headers = ["Field", "Value"]
-            rows = [
-                ["ID", str(q.id)],
-                ["Title", q.title],
-                ["Type", q.quiz_type],
-                ["Group", groups.get(q.assignment_group_id or 0, "")],
-                ["Points", str(q.points_possible or "")],
-                ["Questions", str(q.question_count)],
-                ["Unlock", when(q.unlock_at, tz)],
-                ["Due", when(q.due_at, tz)],
-                ["Lock", when(q.lock_at, tz)],
-                ["Attempts", attempts],
-                ["Time Limit", f"{q.time_limit} min" if q.time_limit else ""],
-                ["Hide Results", q.hide_results or ""],
-                ["Scoring", q.scoring_policy],
-                ["Shuffle Answers", pub(q.shuffle_answers)],
-                ["One at a Time", pub(q.one_question_at_a_time)],
-                ["Published", pub(q.published)],
-                ["URL", q.html_url],
-            ]
-            title = f"Quiz: {q.title}"
-            question_rows = [
-                [
-                    str(qq.position or index),
-                    qq.question_type,
-                    str(qq.points_possible or 0.0),
-                    strip_html(qq.question_text),
-                ]
-                for index, qq in enumerate(questions, 1)
-            ]
-        else:
-            quizzes = c.list_quizzes()
-            headers = ["ID", "Title", "Type", "Questions", "Points", "Due", "Published"]
-            rows = [
-                [
-                    str(q.id),
-                    q.title,
-                    q.quiz_type,
-                    str(q.question_count),
-                    str(q.points_possible or ""),
-                    due(q.due_at, tz),
-                    pub(q.published),
-                ]
-                for q in quizzes
-            ]
-            title = "Quizzes"
+        q = c.resolve_quiz(id_or_name)
+        questions, from_stats = c.list_quiz_questions(q.id)
+        groups = {g.id: g.name for g in c.list_assignment_groups()}
+
+    attempts = "unlimited" if q.allowed_attempts == -1 else str(q.allowed_attempts)
+    headers = ["Field", "Value"]
+    rows = [
+        ["ID", str(q.id)],
+        ["Title", q.title],
+        ["Type", q.quiz_type],
+        ["Group", groups.get(q.assignment_group_id or 0, "")],
+        ["Points", str(q.points_possible or "")],
+        ["Questions", str(q.question_count)],
+        ["Unlock", when(q.unlock_at, tz)],
+        ["Due", when(q.due_at, tz)],
+        ["Lock", when(q.lock_at, tz)],
+        ["Attempts", attempts],
+        ["Time Limit", f"{q.time_limit} min" if q.time_limit else ""],
+        ["Hide Results", q.hide_results or ""],
+        ["Scoring", q.scoring_policy],
+        ["Shuffle Answers", pub(q.shuffle_answers)],
+        ["One at a Time", pub(q.one_question_at_a_time)],
+        ["Published", pub(q.published)],
+        ["URL", q.html_url],
+    ]
+    title = f"Quiz: {q.title}"
+    question_rows = [
+        [
+            str(qq.position or index),
+            qq.question_type,
+            str(qq.points_possible or 0.0),
+            strip_html(qq.question_text),
+        ]
+        for index, qq in enumerate(questions, 1)
+    ]
 
     if csv_out:
         report.write_csv_file(csv_out, headers=headers, rows=rows)
@@ -97,12 +113,11 @@ def quizzes_callback(
         report.save_markdown(save, title, headers, rows)
     else:
         report.render_list(headers, rows, title=title)
-        if quiz_id:
-            report.render_list(
-                ["#", "Type", "Points", "Text"], question_rows, title="Questions"
-            )
-            if from_stats:
-                err_console.print(_STATS_NOTE)
+        report.render_list(
+            ["#", "Type", "Points", "Text"], question_rows, title="Questions"
+        )
+        if from_stats:
+            err_console.print(_STATS_NOTE)
 
 
 _STATS_NOTE = (

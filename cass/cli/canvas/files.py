@@ -1,4 +1,4 @@
-"""``cass canvas files`` / ``upload`` / ``delete-file``."""
+"""``cass canvas files list`` / ``upload`` / ``delete-file``."""
 
 from __future__ import annotations
 
@@ -9,9 +9,22 @@ import typer
 from . import _common
 from ._common import canvas_app, console, due, err_console, size
 
+files_app = typer.Typer(
+    invoke_without_command=True,
+    no_args_is_help=False,
+    help="Course files — list.",
+)
 
-@canvas_app.command(rich_help_panel="Browse")
-def files(
+
+@files_app.callback()
+def files_callback(ctx: typer.Context) -> None:
+    """Course files; bare ``files`` runs ``files list``."""
+    if ctx.invoked_subcommand is None:
+        files_list(csv_out="", save="")
+
+
+@files_app.command(name="list")
+def files_list(
     csv_out: str = typer.Option("", "--csv", help="Export as CSV file"),
     save: str = typer.Option("", "--save", help="Save output as markdown file"),
 ) -> None:

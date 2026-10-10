@@ -17,8 +17,14 @@ calendar_app = typer.Typer(
 
 
 @calendar_app.callback()
-def calendar_callback(
-    ctx: typer.Context,
+def calendar_callback(ctx: typer.Context) -> None:
+    """Course calendar; bare ``calendar`` runs ``calendar list``."""
+    if ctx.invoked_subcommand is None:
+        calendar_list(start_date="", end_date="", csv_out="", save="")
+
+
+@calendar_app.command(name="list")
+def calendar_list(
     start_date: str = typer.Option(
         "", "--from", help="Only events on or after this date (YYYY-MM-DD)"
     ),
@@ -29,8 +35,6 @@ def calendar_callback(
     save: str = typer.Option("", "--save", help="Save output as markdown file"),
 ) -> None:
     """List course calendar events (all events unless a date range is given)."""
-    if ctx.invoked_subcommand is not None:
-        return
     _common.require_canvas()
 
     from .. import report

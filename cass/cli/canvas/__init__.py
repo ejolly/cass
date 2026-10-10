@@ -154,48 +154,20 @@ def canvas_callback(ctx: typer.Context) -> None:
     err_console.print()
 
 
-@canvas_app.command(rich_help_panel="Browse")
-def people(
-    csv_out: str = typer.Option("", "--csv", help="Export as CSV file"),
-    save: str = typer.Option("", "--save", help="Save output as markdown file"),
-) -> None:
-    """Show course roster with roles and emails."""
-    from .. import report
-
-    _common.require_canvas()
-    with _common.client() as c:
-        users = c.list_users()
-
-    headers = ["Name", "Role", "Email", "SIS ID", "Canvas ID"]
-    rows: list[list[str]] = []
-    for u in sorted(users, key=lambda u: u.sortable_name or u.name):
-        role = ""
-        if u.enrollments:
-            role = u.enrollments[0].role
-        rows.append(
-            [
-                u.name,
-                role,
-                u.email,
-                u.sis_user_id or "",
-                str(u.id),
-            ]
-        )
-
-    if csv_out:
-        report.write_csv_file(csv_out, headers=headers, rows=rows)
-    elif save:
-        report.save_markdown(save, "People", headers, rows)
-    else:
-        report.render_list(headers, rows, title="People")
-
-
 # Imported last, in this order, so commands keep their place in the help panels.
 # isort: off
-from . import files  # noqa: E402, F401
-from . import announcements  # noqa: E402, F401
-from . import tabs  # noqa: E402, F401
+from . import people  # noqa: E402
+from . import files  # noqa: E402
+from . import announcements  # noqa: E402
+from . import tabs  # noqa: E402
 from . import sync  # noqa: E402, F401
 from . import api  # noqa: E402, F401
 
 # isort: on
+
+canvas_app.add_typer(people.people_app, name="people", rich_help_panel="Browse")
+canvas_app.add_typer(files.files_app, name="files", rich_help_panel="Browse")
+canvas_app.add_typer(
+    announcements.announcements_app, name="announcements", rich_help_panel="Browse"
+)
+canvas_app.add_typer(tabs.tabs_app, name="tabs", rich_help_panel="Browse")

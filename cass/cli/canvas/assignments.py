@@ -1,4 +1,4 @@
-"""``cass canvas assignments`` — assignments and assignment groups."""
+"""``cass canvas assignments`` — list, show, and assignment groups."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from ._common import console, due, pub, when
 assignments_app = typer.Typer(
     invoke_without_command=True,
     no_args_is_help=False,
-    help="Assignments — list, create, publish, delete.",
+    help="Assignments — list, show, create, publish, delete.",
 )
 
 
@@ -25,54 +25,74 @@ assignments_app.add_typer(groups_app, name="groups")
 
 
 @assignments_app.callback()
-def assignments_callback(
-    ctx: typer.Context,
-    assignment_id: str = typer.Option(
-        "", "--id", help="Assignment ID or name for details"
-    ),
+def assignments_callback(ctx: typer.Context) -> None:
+    """Assignments; bare ``assignments`` runs ``assignments list``."""
+    if ctx.invoked_subcommand is None:
+        assignments_list(csv_out="", save="")
+
+
+@assignments_app.command(name="list")
+def assignments_list(
     csv_out: str = typer.Option("", "--csv", help="Export as CSV file"),
     save: str = typer.Option("", "--save", help="Save output as markdown file"),
 ) -> None:
-    """List assignments, or show details for a specific assignment."""
-    if ctx.invoked_subcommand is not None:
-        return
-    _common.require_canvas()
-
+    """List assignments."""
     from .. import report
 
+    _common.require_canvas()
     with _common.client() as c:
         tz = c.time_zone
-        if assignment_id:
-            a = c.resolve_assignment(assignment_id)
-            headers = ["Field", "Value"]
-            rows = [
-                ["ID", str(a.id)],
-                ["Name", a.name],
-                ["Points", str(a.points_possible or 0.0)],
-                ["Due", when(a.due_at, tz)],
-                ["Published", pub(a.published)],
-                ["Submission Types", ", ".join(a.submission_types)],
-                ["Grading Type", a.grading_type],
-                ["Group ID", str(a.assignment_group_id)],
-                ["URL", a.html_url],
-            ]
-            title = f"Assignment: {a.name}"
-        else:
-            assignments = c.list_assignments()
-            groups = {g.id: g.name for g in c.list_assignment_groups()}
-            headers = ["ID", "Name", "Points", "Due", "Published", "Group"]
-            rows = [
-                [
-                    str(a.id),
-                    a.name,
-                    str(a.points_possible or 0.0),
-                    due(a.due_at, tz),
-                    pub(a.published),
-                    groups.get(a.assignment_group_id, ""),
-                ]
-                for a in assignments
-            ]
-            title = "Assignments"
+        assignments = c.list_assignments()
+        groups = {g.id: g.name for g in c.list_assignment_groups()}
+
+    headers = ["ID", "Name", "Points", "Due", "Published", "Group"]
+    rows = [
+        [
+            str(a.id),
+            a.name,
+            str(a.points_possible or 0.0),
+            due(a.due_at, tz),
+            pub(a.published),
+            groups.get(a.assignment_group_id, ""),
+        ]
+        for a in assignments
+    ]
+
+    if csv_out:
+        report.write_csv_file(csv_out, headers=headers, rows=rows)
+    elif save:
+        report.save_markdown(save, "Assignments", headers, rows)
+    else:
+        report.render_list(headers, rows, title="Assignments")
+
+
+@assignments_app.command(name="show")
+def assignments_show(
+    id_or_name: str = typer.Argument(..., help="Assignment ID or name"),
+    csv_out: str = typer.Option("", "--csv", help="Export as CSV file"),
+    save: str = typer.Option("", "--save", help="Save output as markdown file"),
+) -> None:
+    """Show details for one assignment."""
+    from .. import report
+
+    _common.require_canvas()
+    with _common.client() as c:
+        tz = c.time_zone
+        a = c.resolve_assignment(id_or_name)
+
+    headers = ["Field", "Value"]
+    rows = [
+        ["ID", str(a.id)],
+        ["Name", a.name],
+        ["Points", str(a.points_possible or 0.0)],
+        ["Due", when(a.due_at, tz)],
+        ["Published", pub(a.published)],
+        ["Submission Types", ", ".join(a.submission_types)],
+        ["Grading Type", a.grading_type],
+        ["Group ID", str(a.assignment_group_id)],
+        ["URL", a.html_url],
+    ]
+    title = f"Assignment: {a.name}"
 
     if csv_out:
         report.write_csv_file(csv_out, headers=headers, rows=rows)
@@ -83,18 +103,21 @@ def assignments_callback(
 
 
 @groups_app.callback()
-def groups_callback(
-    ctx: typer.Context,
+def groups_callback(ctx: typer.Context) -> None:
+    """Assignment groups; bare ``groups`` runs ``groups list``."""
+    if ctx.invoked_subcommand is None:
+        groups_list(csv_out="", save="")
+
+
+@groups_app.command(name="list")
+def groups_list(
     csv_out: str = typer.Option("", "--csv", help="Export as CSV file"),
     save: str = typer.Option("", "--save", help="Save output as markdown file"),
 ) -> None:
     """Show assignment groups with weights."""
-    if ctx.invoked_subcommand is not None:
-        return
-    _common.require_canvas()
-
     from .. import report
 
+    _common.require_canvas()
     with _common.client() as c:
         groups = c.list_assignment_groups()
 

@@ -1,4 +1,4 @@
-"""``cass canvas announcements`` — list, announce, update, delete."""
+"""``cass canvas announcements list`` plus announce / update / delete."""
 
 from __future__ import annotations
 
@@ -9,9 +9,22 @@ import typer
 from . import _common
 from ._common import canvas_app, console, due, err_console
 
+announcements_app = typer.Typer(
+    invoke_without_command=True,
+    no_args_is_help=False,
+    help="Announcements — list.",
+)
 
-@canvas_app.command(rich_help_panel="Browse")
-def announcements(
+
+@announcements_app.callback()
+def announcements_callback(ctx: typer.Context) -> None:
+    """Course announcements; bare ``announcements`` runs ``announcements list``."""
+    if ctx.invoked_subcommand is None:
+        announcements_list(csv_out="", save="")
+
+
+@announcements_app.command(name="list")
+def announcements_list(
     csv_out: str = typer.Option("", "--csv", help="Export as CSV file"),
     save: str = typer.Option("", "--save", help="Save output as markdown file"),
 ) -> None:

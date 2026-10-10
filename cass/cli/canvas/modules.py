@@ -1,4 +1,4 @@
-"""``cass canvas modules`` — list, create, publish, delete, add-item."""
+"""``cass canvas modules`` — list, show, create, publish, delete, add-item."""
 
 from __future__ import annotations
 
@@ -12,54 +12,75 @@ from ._common import console, err_console, pub
 modules_app = typer.Typer(
     invoke_without_command=True,
     no_args_is_help=False,
-    help="Course modules — list, create, publish, delete.",
+    help="Course modules — list, show, create, publish, delete.",
 )
 
 
 @modules_app.callback()
-def modules_callback(
-    ctx: typer.Context,
-    module_id: str = typer.Option("", "--id", help="Module ID or name to show items"),
+def modules_callback(ctx: typer.Context) -> None:
+    """Course modules; bare ``modules`` runs ``modules list``."""
+    if ctx.invoked_subcommand is None:
+        modules_list(csv_out="", save="")
+
+
+@modules_app.command(name="list")
+def modules_list(
     csv_out: str = typer.Option("", "--csv", help="Export as CSV file"),
     save: str = typer.Option("", "--save", help="Save output as markdown file"),
 ) -> None:
-    """List modules, or show items in a specific module."""
-    if ctx.invoked_subcommand is not None:
-        return
-    _common.require_canvas()
-
+    """List modules."""
     from .. import report
 
+    _common.require_canvas()
     with _common.client() as c:
-        if module_id:
-            mod = c.resolve_module(module_id)
-            items = c.list_module_items(mod.id)
-            headers = ["ID", "Title", "Type", "Content ID", "Published"]
-            rows = [
-                [
-                    str(it.id),
-                    it.title,
-                    it.type,
-                    str(it.content_id or ""),
-                    pub(it.published),
-                ]
-                for it in items
-            ]
-            title = f"Module: {mod.name}"
-        else:
-            modules = c.list_modules()
-            headers = ["ID", "Position", "Name", "Published", "Items"]
-            rows = [
-                [
-                    str(m.id),
-                    str(m.position),
-                    m.name,
-                    pub(m.published),
-                    str(m.items_count),
-                ]
-                for m in modules
-            ]
-            title = "Modules"
+        modules = c.list_modules()
+
+    headers = ["ID", "Position", "Name", "Published", "Items"]
+    rows = [
+        [
+            str(m.id),
+            str(m.position),
+            m.name,
+            pub(m.published),
+            str(m.items_count),
+        ]
+        for m in modules
+    ]
+
+    if csv_out:
+        report.write_csv_file(csv_out, headers=headers, rows=rows)
+    elif save:
+        report.save_markdown(save, "Modules", headers, rows)
+    else:
+        report.render_list(headers, rows, title="Modules")
+
+
+@modules_app.command(name="show")
+def modules_show(
+    id_or_name: str = typer.Argument(..., help="Module ID or name"),
+    csv_out: str = typer.Option("", "--csv", help="Export as CSV file"),
+    save: str = typer.Option("", "--save", help="Save output as markdown file"),
+) -> None:
+    """Show the items in a module."""
+    from .. import report
+
+    _common.require_canvas()
+    with _common.client() as c:
+        mod = c.resolve_module(id_or_name)
+        items = c.list_module_items(mod.id)
+
+    headers = ["ID", "Title", "Type", "Content ID", "Published"]
+    rows = [
+        [
+            str(it.id),
+            it.title,
+            it.type,
+            str(it.content_id or ""),
+            pub(it.published),
+        ]
+        for it in items
+    ]
+    title = f"Module: {mod.name}"
 
     if csv_out:
         report.write_csv_file(csv_out, headers=headers, rows=rows)
