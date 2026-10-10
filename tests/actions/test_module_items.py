@@ -16,6 +16,7 @@ from cass.actions.config import CanvasModuleSpec, ModuleItemSpec
 from cass.actions.module_items import (
     ContentIndex,
     ModuleItemApplyError,
+    ModuleItemLookupError,
     apply_module_item_plan,
     apply_sync_items,
     fetch_content_index,
@@ -1113,7 +1114,7 @@ def test_plan_sync_items_collects_errors_from_every_module():
         ),
     ]
 
-    with pytest.raises(RuntimeError) as caught:
+    with pytest.raises(ModuleItemLookupError) as caught:
         plan_sync_items(
             client,
             modules,
@@ -1153,3 +1154,27 @@ def test_apply_sync_items_applies_each_module():
     client.create_module_item.assert_called_once()
     assert client.create_module_item.call_args.args == (5,)
     client.delete_module_item.assert_not_called()
+
+
+def test_apply_sync_items_failure_in_first_module_stops_before_second():
+    client = sync_client({5: [], 6: []})
+    client.create_module_item.side_effect = RuntimeError("boom")
+    modules = [
+        CanvasModuleSpec(name="Week 1", items=[HW1]),
+        CanvasModuleSpec(name="Week 2", items=[HW1]),
+    ]
+    plan = plan_sync_items(
+        client,
+        modules,
+        {"Week 1": 5, "Week 2": 6},
+        created_assignments=[],
+        created_quizzes=[],
+        prune=False,
+    )
+    assert plan is not None
+
+    with pytest.raises(ModuleItemApplyError, match="boom"):
+        apply_sync_items(client, plan)
+
+    client.create_module_item.assert_called_once()
+    assert client.create_module_item.call_args.args == (5,)

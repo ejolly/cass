@@ -4,10 +4,15 @@ from __future__ import annotations
 
 __docformat__ = "google"
 
+from typing import TYPE_CHECKING
+
 import typer
 
 from . import _common
 from ._common import canvas_app, console, err_console
+
+if TYPE_CHECKING:
+    from ...apis.canvas.schema import CanvasAssignmentResponse, CanvasQuiz
 
 ACTION_COLORS = {
     "create": "green",
@@ -52,10 +57,15 @@ def sync(
     reconciled: every such module is planned before any item is written.
     Undeclared items are reported as extra; --prune removes them.
     """
+    from rich.markup import escape
     from rich.table import Table
 
     from ...actions.config import get_config
-    from ...actions.module_items import apply_sync_items, plan_sync_items
+    from ...actions.module_items import (
+        ModuleItemLookupError,
+        apply_sync_items,
+        plan_sync_items,
+    )
     from ...actions.quizzes import load_quiz_file, sync_quizzes
     from ...apis.canvas.sync import push_assignments, resolve_group_ids
     from ...apis.canvas.times import parse_when, same_instant
@@ -79,8 +89,8 @@ def sync(
         tz = c.time_zone
         actions: list[tuple[str, str, str]] = []  # (action, type, name)
         module_ids: dict[str, int] = {}
-        created_assignments = []
-        created_quizzes = []
+        created_assignments: list[CanvasAssignmentResponse] = []
+        created_quizzes: list[CanvasQuiz] = []
 
         # --- Assignment groups ---
         group_ids: dict[str, int] = {}
@@ -186,12 +196,17 @@ def sync(
                 created_quizzes=created_quizzes,
                 prune=prune,
             )
-            if items_plan is not None:
-                actions.extend(items_plan.rows)
-                apply_sync_items(c, items_plan)
-        except RuntimeError as exc:
-            err_console.print(f"Error: {exc}", style="red", markup=False)
-            raise typer.Exit(code=1) from exc
+        except ModuleItemLookupError as exc:
+            if dry_run:
+                raise
+            raise ModuleItemLookupError(
+                f"{exc}\nModules, assignments and quizzes above were already "
+                "applied; no module item changes were sent."
+            ) from exc
+        if items_plan is not None:
+            actions.extend(items_plan.rows)
+            # A ModuleItemApplyError lists the steps it applied; let it propagate.
+            apply_sync_items(c, items_plan)
 
         plan_client = c
 
@@ -207,7 +222,10 @@ def sync(
 
     for action, rtype, name in actions:
         color = ACTION_COLORS.get(action, "")
-        table.add_row(f"[{color}]{action}[/{color}]", rtype, name)
+        # Names come from Canvas and cass.toml; escape them so "[...]" prints.
+        table.add_row(
+            f"[{color}]{escape(action)}[/{color}]", escape(rtype), escape(name)
+        )
 
     console.print()
     console.print(table)

@@ -15,6 +15,7 @@ import pytest
 from typer.testing import CliRunner
 
 from cass.actions.config import reset_config, set_config_path
+from cass.actions.module_items import ModuleItemApplyError, ModuleItemLookupError
 from cass.apis.canvas.client import CanvasClient
 from cass.cli import app
 
@@ -83,6 +84,7 @@ class FakeCourse:
 
     requests: list[httpx.Request] = field(default_factory=list)
     clients: list[CanvasClient] = field(default_factory=list)
+    fail_writes: set[str] = field(default_factory=set)  # paths that answer 400
 
     def writes(self) -> list[httpx.Request]:
         return [r for r in self.requests if r.method != "GET"]
@@ -124,6 +126,8 @@ def sync_course(tmp_path, monkeypatch) -> FakeCourse:
         path = request.url.path.removeprefix(API)
         if request.method == "GET":
             return httpx.Response(200, json=routes.get(path, []))
+        if path in course.fail_writes:
+            return httpx.Response(400, json={"message": "rejected"})
         if request.method == "POST" and path == "/courses/1/files":
             return httpx.Response(
                 200, json={"upload_url": "https://upload.invalid", "upload_params": {}}
@@ -279,21 +283,72 @@ def test_dry_run_item_for_assignment_created_by_same_sync(sync_course):
     assert hw2[0]["type"] == "Assignment"
 
 
+LOOKUP_ERROR_TOML = (
+    WEEK_1_ITEMS
+    + '\n[[canvas.modules]]\nname = "Week 2"\npublished = false\n'
+    + '\n[[canvas.modules.items]]\ntype = "Assignment"\ntitle = "HW9"\n'
+)
+APPLIED_NOTE = "already applied; no module item changes were sent"
+
+
+def item_or_file_writes(course: FakeCourse) -> list[tuple[str, str]]:
+    return [
+        (r.method, r.url.path)
+        for r in course.writes()
+        if re.search(r"/modules/[^/]+/items|/files", r.url.path)
+    ]
+
+
 def test_lookup_error_sends_no_item_writes(sync_course):
-    write_toml(
-        WEEK_1_ITEMS
-        + '\n[[canvas.modules]]\nname = "Week 2"\npublished = true\n'
-        + '\n[[canvas.modules.items]]\ntype = "Assignment"\ntitle = "HW9"\n'
-    )
+    write_toml(LOOKUP_ERROR_TOML)
 
     result = runner.invoke(app, ["canvas", "sync", "--apply"])
 
     assert result.exit_code == 1, result.output
-    assert "Week 2" in result.stderr
-    assert "item" in result.stderr
-    item_or_file_writes = [
-        (r.method, r.url.path)
-        for r in sync_course.writes()
-        if re.search(r"/modules/[^/]+/items|/files", r.url.path)
-    ]
-    assert item_or_file_writes == []
+    assert isinstance(result.exception, ModuleItemLookupError)
+    message = str(result.exception)
+    assert "Week 2" in message
+    assert "HW9" in message
+    assert APPLIED_NOTE in message
+    # Week 2's unpublish went out before planning failed; no item writes did.
+    sent = [(r.method, r.url.path) for r in sync_course.writes()]
+    assert ("PUT", f"{API}/courses/1/modules/6") in sent
+    assert item_or_file_writes(sync_course) == []
+
+
+def test_dry_run_lookup_error_has_no_applied_note(sync_course):
+    write_toml(LOOKUP_ERROR_TOML)
+
+    result = runner.invoke(app, ["canvas", "sync"])
+
+    assert result.exit_code == 1, result.output
+    assert isinstance(result.exception, ModuleItemLookupError)
+    assert "HW9" in str(result.exception)
+    assert APPLIED_NOTE not in str(result.exception)
+    assert sync_course.writes() == []
+
+
+def test_apply_error_propagates_unchanged(sync_course):
+    write_toml(WEEK_1_ITEMS)
+    sync_course.fail_writes.add("/courses/1/modules/5/items")
+
+    result = runner.invoke(app, ["canvas", "sync", "--apply"])
+
+    assert result.exit_code == 1, result.output
+    assert isinstance(result.exception, ModuleItemApplyError)
+    message = str(result.exception)
+    assert "upload readings/w1.pdf" in message
+    assert APPLIED_NOTE not in message
+
+
+def test_markup_in_item_titles_prints_literally(sync_course):
+    write_toml(
+        '\n[[canvas.modules]]\nname = "Week 1"\npublished = true\n'
+        '\n[[canvas.modules.items]]\ntype = "SubHeader"\n'
+        'title = "[bold]x[/bold] [/b]"\n'
+    )
+
+    result = runner.invoke(app, ["canvas", "sync"])
+
+    assert result.exit_code == 0, result.output
+    assert "SubHeader '[bold]x[/bold] [/b]'" in result.stdout

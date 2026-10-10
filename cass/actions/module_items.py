@@ -583,6 +583,10 @@ def item_plan_rows(
 # --- applying -----------------------------------------------------------------
 
 
+class ModuleItemLookupError(RuntimeError):
+    """Declared module items could not be planned; no item request was sent."""
+
+
 class ModuleItemApplyError(RuntimeError):
     """A request failed while applying a module item plan.
 
@@ -857,12 +861,14 @@ def plan_sync_items(
         ``items``.
 
     Raises:
-        RuntimeError: Listing the lookup problems of every module at once.
+        ModuleItemLookupError: Listing the lookup problems of every module
+            at once.
     """
     declared = [module for module in modules if module.items is not None]
     if not declared:
         return None
 
+    # `or []` only narrows the type: `declared` holds modules with items.
     sources = [
         item.source
         for module in declared
@@ -881,7 +887,7 @@ def plan_sync_items(
         module_id = module_ids[module.name]
         try:
             plan = plan_module_items(
-                module.items or [],
+                module.items or [],  # narrows the type; never None here
                 client.list_module_items(module_id),
                 index,
                 prune=prune,
@@ -892,7 +898,7 @@ def plan_sync_items(
             continue
         planned.append(ModuleSyncPlan(module.name, module_id, plan))
     if problems:
-        raise RuntimeError("\n".join(problems))
+        raise ModuleItemLookupError("\n".join(problems))
 
     rows = [
         row for module in planned for row in item_plan_rows(module.name, module.plan)
