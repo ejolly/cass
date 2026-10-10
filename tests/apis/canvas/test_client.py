@@ -862,6 +862,16 @@ class TestCanvasClient:
         assert client._get_paginated("/x") == ["x"]
         assert calls == ["/x"]
 
+    def test_resolve_quiz_id_numeric_sends_nothing(self, mock_client):
+        client, transport = mock_client
+        assert client.resolve_quiz_id("20") == 20
+        assert transport.requests == []
+
+    def test_resolve_quiz_id_by_title(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data=[{"id": 20, "title": "Survey"}])
+        assert client.resolve_quiz_id("survey") == 20
+
     def test_start_quiz_preview(self, mock_client):
         client, transport = mock_client
         transport.add(json_data={"quiz_submissions": [{"id": 77, "user_id": 1}]})
@@ -874,18 +884,12 @@ class TestCanvasClient:
         assert request.url.path == "/api/v1/courses/1/quizzes/20/submissions"
         assert request.url.params["preview"] == "true"
 
-    def test_start_quiz_preview_reuses_open_preview_on_409(self, mock_client):
+    def test_start_quiz_preview_empty_envelope_raises(self, mock_client):
         client, transport = mock_client
-        transport.add(409, json_data={"message": "already open"})
-        transport.add(json_data={"quiz_submissions": [{"id": 78, "user_id": 1}]})
+        transport.add(json_data={"quiz_submissions": []})
 
-        sub = client.start_quiz_preview(20)
-
-        assert sub.id == 78
-        assert transport.requests[1].method == "GET"
-        assert transport.requests[1].url.path == (
-            "/api/v1/courses/1/quizzes/20/submission"
-        )
+        with pytest.raises(RuntimeError, match="no preview submission for quiz 20"):
+            client.start_quiz_preview(20)
 
     def test_list_submission_questions(self, mock_client):
         client, transport = mock_client

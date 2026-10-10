@@ -19,7 +19,6 @@ from ....actions.quizzes import (
     question_form_fields,
     quiz_form_fields,
 )
-from ..errors import CanvasAPIError
 from ..schema import (
     CanvasQuiz,
     CanvasQuizAnswer,
@@ -397,24 +396,23 @@ class QuizzesMixin(BaseClient):
         return [sub for page in pages for sub in page.quiz_submissions]
 
     def start_quiz_preview(self, quiz_id: int) -> CanvasQuizSubmission:
-        """Start a teacher preview attempt, or return the one already open.
-
-        Canvas answers 409 while a preview is open; then the open preview is
-        fetched with a second request.
+        """Start a teacher preview attempt on a quiz.
 
         Returns:
             The preview's quiz submission.
+
+        Raises:
+            RuntimeError: Canvas returned no quiz submission.
         """
-        try:
-            resp = self._client.post(
-                self._course(f"/quizzes/{quiz_id}/submissions"),
-                params={"preview": "true"},
-            )
-        except CanvasAPIError as error:
-            if error.status_code != 409:
-                raise
-            resp = self._client.get(self._course(f"/quizzes/{quiz_id}/submission"))
+        resp = self._client.post(
+            self._course(f"/quizzes/{quiz_id}/submissions"),
+            params={"preview": "true"},
+        )
         page = msgspec.convert(resp.json(), _QuizSubmissionsPage, strict=False)
+        if not page.quiz_submissions:
+            raise RuntimeError(
+                f"Canvas returned no preview submission for quiz {quiz_id}."
+            )
         return page.quiz_submissions[0]
 
     def list_submission_questions(self, submission_id: int) -> list[CanvasQuizQuestion]:
@@ -422,6 +420,16 @@ class QuizzesMixin(BaseClient):
         resp = self._client.get(f"/quiz_submissions/{submission_id}/questions")
         page = msgspec.convert(resp.json(), _SubmissionQuestionsPage, strict=False)
         return page.quiz_submission_questions
+
+    def resolve_quiz_id(self, id_or_name: str) -> int:
+        """A quiz's ID from a numeric ID (no request) or a title.
+
+        Raises:
+            RuntimeError: If no quiz has that title.
+        """
+        if id_or_name.isdigit():
+            return int(id_or_name)
+        return self.resolve_quiz(id_or_name).id
 
     def resolve_quiz(self, id_or_name: str) -> CanvasQuiz:
         """Resolve a quiz by numeric ID or title (case-insensitive).

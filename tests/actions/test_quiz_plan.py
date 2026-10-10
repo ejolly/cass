@@ -342,6 +342,40 @@ def test_duplicate_live_group_names_raise():
         plan_quiz_questions(spec, state, prune=False)
 
 
+def test_leaving_a_group_forces_quiz_reorder():
+    # 12 moves from group A to group B; the top-level layout [A, B] is unchanged.
+    state = _state(
+        [
+            _live(12, 1, group_id=5),
+            _live(13, 2, group_id=5),
+            _live(14, 1, group_id=6),
+        ],
+        [_group(5, "A", 1), _group(6, "B", 2)],
+    )
+    spec = _spec(
+        [
+            QuestionSpec(text="<p>13</p>", id=13, group="A"),
+            QuestionSpec(text="<p>12</p>", id=12, group="B"),
+            QuestionSpec(text="<p>14</p>", id=14, group="B"),
+        ],
+        [GroupSpec("A", points_per_item=0.0), GroupSpec("B", points_per_item=0.0)],
+    )
+    plan = plan_quiz_questions(spec, state, prune=False)
+    assert plan.questions[1].changed == ["group"]
+    assert plan.order == [("group", "A"), ("group", "B")]
+    assert plan.order_changed is True
+
+
+def test_question_leaving_pruned_group_is_top_level_in_order():
+    spec = _spec(
+        [QuestionSpec(text="<p>11</p>", id=11), QuestionSpec(text="<p>12</p>", id=12)]
+    )
+    plan = plan_quiz_questions(spec, _paired_state(), prune=True)
+    assert plan.questions[1].changed == ["group"]
+    assert plan.order == [("question", 0), ("question", 1)]
+    assert plan.order_changed is True
+
+
 def test_settings_only_file_marks_everything_extra():
     state = _state([_live(11, 1), _live(12, 2)])
     plan = plan_quiz_questions(_spec([]), state, prune=False)
@@ -491,6 +525,11 @@ def _apply_client(fail_path: str | None = None):
             return httpx.Response(
                 200, json={"quiz_groups": [{"id": 50, "name": "Pair"}]}
             )
+        if request.method == "PUT" and "/groups/" in path:
+            group_id = int(path.rsplit("/", 1)[1])
+            return httpx.Response(
+                200, json={"quiz_groups": [{"id": group_id, "name": "Other"}]}
+            )
         if request.method == "POST" and path.endswith("/questions"):
             return httpx.Response(200, json={"id": 900})
         if request.method == "PUT" and "/questions/" in path:
@@ -597,6 +636,92 @@ def test_apply_all_keep_sends_nothing(tmp_path):
     plan = plan_quiz_questions(load_quiz_file(path), state, prune=False)
     client, requests = _apply_client()
     assert apply_question_plan(client, 20, plan) == []
+    assert requests == []
+
+
+def test_apply_moves_questions_out_before_deleting_groups():
+    """Q12 leaves "Pair", which is pruned; "Other" is updated and reordered.
+
+    Canvas ignores ``quiz_group_id: null`` and deletes a group's questions
+    with the group, so the quiz reorder must take Q12 out before the delete.
+    """
+    state = _state(
+        [
+            _live(11, 1),
+            _live(12, 1, group_id=5),
+            _live(13, 2, group_id=5),
+            _live(14, 1, group_id=6),
+            _live(15, 2, group_id=6),
+        ],
+        [_group(5, "Pair", 2), _group(6, "Other", 3)],
+    )
+    spec = _spec(
+        [
+            QuestionSpec(text="<p>11</p>", id=11),
+            QuestionSpec(text="<p>12</p>", id=12),
+            QuestionSpec(text="<p>15</p>", id=15, group="Other"),
+            QuestionSpec(text="<p>14</p>", id=14, group="Other"),
+        ],
+        [GroupSpec("Other", pick_count=2, points_per_item=1.5)],
+    )
+    plan = plan_quiz_questions(spec, state, prune=True)
+    assert [g.action for g in plan.groups] == ["update", "delete"]
+
+    client, requests = _apply_client()
+    applied = apply_question_plan(client, 20, plan)
+
+    assert [(r.method, r.url.path) for r in requests] == [
+        ("PUT", f"{BASE}/questions/12"),
+        ("DELETE", f"{BASE}/questions/13"),
+        ("PUT", f"{BASE}/groups/6"),
+        ("POST", f"{BASE}/reorder"),
+        ("POST", f"{BASE}/groups/6/reorder"),
+        ("DELETE", f"{BASE}/groups/5"),
+        ("PUT", BASE),
+    ]
+    assert applied == [
+        "update question 12 (group)",
+        "delete question 13",
+        "update group 'Other'",
+        "reorder quiz",
+        "reorder group 'Other'",
+        "delete group 'Pair'",
+        "re-save quiz",
+    ]
+    assert ("DELETE", f"{BASE}/questions/12") not in [
+        (r.method, r.url.path) for r in requests
+    ]
+    assert json.loads(requests[2].content) == {
+        "quiz_groups": [{"pick_count": 2, "question_points": 1.5}]
+    }
+    reorder = parse_qsl(requests[3].content.decode())
+    assert reorder == [
+        ("order[][id]", "11"),
+        ("order[][type]", "question"),
+        ("order[][id]", "12"),
+        ("order[][type]", "question"),
+        ("order[][id]", "6"),
+        ("order[][type]", "group"),
+    ]
+    group_reorder = parse_qsl(requests[4].content.decode())
+    assert [v for k, v in group_reorder if k in ("order[]", "order[][id]")] == [
+        "15",
+        "14",
+    ]
+
+
+def test_apply_missing_group_id_raises():
+    plan = plan_quiz_questions(
+        _spec(
+            [QuestionSpec(text="<p>11</p>", id=11, group="Pair")], [GroupSpec("Pair")]
+        ),
+        _state([_live(11, 1)]),
+        prune=False,
+    )
+    plan.groups.clear()  # "Pair" is never created, so it has no Canvas id
+    client, requests = _apply_client()
+    with pytest.raises(QuestionApplyError, match="'Pair' has no Canvas id"):
+        apply_question_plan(client, 20, plan)
     assert requests == []
 
 

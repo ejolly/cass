@@ -138,7 +138,9 @@ def test_question_editing_round_trip(
         # lag (the spec's open risk): report it rather than toggling publish.
         assert count == 4, f"question_count is {count}, expected 4 (stale count?)"
 
-        # Edit 2: ungroup First, drop Added with --prune.
+        # Edit 2: ungroup First, drop Added with --prune. Canvas deletes a
+        # group's questions with the group, so the quiz reorder must take First
+        # out of Pair before Pair is deleted.
         exported = _export(quiz_id, tmp_path / "exported2.toml")
         by_name = {q.name: q for q in exported.questions}
         edit2 = dataclasses.replace(
@@ -161,7 +163,7 @@ def test_question_editing_round_trip(
         count = practice.get_quiz(quiz_id).question_count
         assert count == 4, f"question_count is {count}, expected 4 (stale count?)"
 
-        # Preview twice: the second run hits the 409 "preview already open" path.
+        # Preview twice: the second run starts or reuses a preview without error.
         for run in (1, 2):
             preview = runner.invoke(
                 app, ["canvas", "quizzes", "preview", str(quiz_id), "--json"]

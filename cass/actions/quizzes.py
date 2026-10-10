@@ -21,6 +21,8 @@ from ..apis.canvas.times import format_when, parse_when, same_instant
 from .config import format_toml_value
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from ..apis.canvas.client import CanvasClient
     from ..apis.canvas.schema import CanvasQuiz, CanvasQuizGroup, CanvasQuizQuestion
 
@@ -446,6 +448,37 @@ def ordered_questions(
     return ordered
 
 
+def group_name_of(
+    question: CanvasQuizQuestion, groups: Sequence[CanvasQuizGroup]
+) -> str:
+    """Name of the group holding *question*, or "" when it has none."""
+    if question.quiz_group_id is None:
+        return ""
+    for group in groups:
+        if group.id == question.quiz_group_id:
+            return group.name
+    return ""
+
+
+def groups_by_name(
+    groups: Sequence[CanvasQuizGroup], quiz_title: str
+) -> dict[str, CanvasQuizGroup]:
+    """Live question groups keyed by name.
+
+    Raises:
+        RuntimeError: Two groups share a name.
+    """
+    by_name: dict[str, CanvasQuizGroup] = {}
+    for group in groups:
+        if group.name in by_name:
+            raise RuntimeError(
+                f"Quiz {quiz_title!r} has two question groups named "
+                f"{group.name!r}; rename one in Canvas first."
+            )
+        by_name[group.name] = group
+    return by_name
+
+
 @dataclass
 class QuizState:
     """A quiz as it is on Canvas: settings, questions in quiz order, groups."""
@@ -484,7 +517,9 @@ def fetch_quiz_state(
             "course), which lack names and answer weights; questions cannot be "
             "edited."
         )
-    group_ids = sorted({q.quiz_group_id for q in questions if q.quiz_group_id})
+    group_ids = sorted(
+        {q.quiz_group_id for q in questions if q.quiz_group_id is not None}
+    )
     groups = [client.get_question_group(quiz_id, gid) for gid in group_ids]
     groups.sort(key=lambda g: (g.position or 0, g.id))
     student_attempts = 0
@@ -511,20 +546,23 @@ def quiz_spec_from_canvas(
     group_name: str,
     tz: str,
     *,
-    groups: list[CanvasQuizGroup] = (),  # ty: ignore[invalid-parameter-default]
+    groups: Sequence[CanvasQuizGroup] = (),
 ) -> QuizSpec:
     """Build a spec from a live quiz, with times in the course zone.
 
     Questions come out in quiz order, carrying their Canvas ids and group names.
+
+    Raises:
+        RuntimeError: Two groups share a name.
     """
     groups = list(groups)
-    group_names = {g.id: g.name for g in groups}
+    groups_by_name(groups, quiz.title)
     question_specs: list[QuestionSpec] = []
     for q in ordered_questions(questions, groups):
         question_specs.append(
             QuestionSpec(
                 id=q.id,
-                group=group_names.get(q.quiz_group_id or 0, ""),
+                group=group_name_of(q, groups),
                 text=q.question_text,
                 type=q.question_type,
                 name=""

@@ -4,10 +4,15 @@ from __future__ import annotations
 
 __docformat__ = "google"
 
+from typing import TYPE_CHECKING
+
 import typer
 
 from . import _common
 from ._common import console, due, err_console, pub, when
+
+if TYPE_CHECKING:
+    from ...apis.canvas.schema import CanvasQuizQuestion
 
 quizzes_app = typer.Typer(
     invoke_without_command=True,
@@ -149,7 +154,7 @@ def quizzes_questions(
     as_json: bool = _common.json_option(),
 ) -> None:
     """List a quiz's questions in quiz order, with IDs and question groups."""
-    from ...actions.quizzes import fetch_quiz_state, question_type_alias, strip_html
+    from ...actions.quizzes import fetch_quiz_state, group_name_of
     from .. import report
 
     _common.require_canvas()
@@ -160,16 +165,8 @@ def quizzes_questions(
     if as_json:
         _common.emit_json_lines(state.questions)
     else:
-        group_names = {g.id: g.name for g in state.groups}
         rows = [
-            [
-                str(qq.id),
-                group_names.get(qq.quiz_group_id or 0, ""),
-                question_type_alias(qq.question_type),
-                qq.question_name,
-                str(qq.points_possible or 0.0),
-                strip_html(qq.question_text)[:_TEXT_WIDTH],
-            ]
+            [str(qq.id), group_name_of(qq, state.groups), *_question_cells(qq)]
             for qq in state.questions
         ]
         report.render_list(
@@ -179,6 +176,18 @@ def quizzes_questions(
         )
     if state.from_statistics:
         err_console.print(_STATS_NOTE)
+
+
+def _question_cells(question: CanvasQuizQuestion) -> list[str]:
+    """Type, name, points and cut plain text: one question's table cells."""
+    from ...actions.quizzes import question_type_alias, strip_html
+
+    return [
+        question_type_alias(question.question_type),
+        question.question_name,
+        str(question.points_possible or 0.0),
+        strip_html(question.question_text)[:_TEXT_WIDTH],
+    ]
 
 
 @quizzes_app.command(name="preview")
@@ -191,7 +200,6 @@ def quizzes_preview(
     Question groups and shuffling make each attempt differ. The preview
     submission stays on Canvas.
     """
-    from ...actions.quizzes import question_type_alias, strip_html
     from .. import report
 
     _common.require_canvas()
@@ -204,13 +212,7 @@ def quizzes_preview(
         _common.emit_json_lines(questions)
     else:
         rows = [
-            [
-                str(number),
-                question_type_alias(qq.question_type),
-                qq.question_name,
-                str(qq.points_possible or 0.0),
-                strip_html(qq.question_text)[:_TEXT_WIDTH],
-            ]
+            [str(number), *_question_cells(qq)]
             for number, qq in enumerate(questions, 1)
         ]
         report.render_list(
@@ -239,10 +241,11 @@ def quizzes_export(
 
     _common.require_canvas()
     with _common.client() as c:
-        q = c.resolve_quiz(id_or_name)
-        state = fetch_quiz_state(c, q.id, allow_statistics=True)
+        state = fetch_quiz_state(
+            c, c.resolve_quiz_id(id_or_name), allow_statistics=True
+        )
         assignment_groups = {g.id: g.name for g in c.list_assignment_groups()}
-        group_name = assignment_groups.get(q.assignment_group_id or 0, "")
+        group_name = assignment_groups.get(state.quiz.assignment_group_id or 0, "")
         spec = quiz_spec_from_canvas(
             state.quiz,
             state.questions,

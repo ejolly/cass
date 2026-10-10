@@ -386,11 +386,37 @@ def test_questions_table_in_quiz_order(canvas):
     assert result.exit_code == 0, result.output
     out = result.stdout
     assert "Questions: Survey" in out
-    assert out.index("11") < out.index("12") < out.index("13")
+    row_ids = re.findall(r"^(\d+) │", out, re.MULTILINE)
+    assert row_ids == ["11", "12", "13"]
     assert "Pair" in out
     assert "<p>" not in out
     assert "Intro " + "x" * 54 in out  # 60 characters
     assert "x" * 55 not in out
+
+
+def test_export_writes_groups_and_ids(canvas, tmp_path):
+    canvas.routes[f"{QUIZ_PATH}/groups/5"] = {
+        "id": 5,
+        "name": "Pair",
+        "pick_count": 1,
+        "question_points": 2,
+        "position": 2,
+    }
+
+    result = runner.invoke(app, ["canvas", "quizzes", "export", "20", "-o", "q.toml"])
+
+    assert result.exit_code == 0, result.output
+    from cass.actions.quizzes import GroupSpec, load_quiz_file
+
+    spec = load_quiz_file(tmp_path / "q.toml")
+    assert spec.groups == [GroupSpec("Pair", 1, 2.0)]
+    assert [(q.id, q.group) for q in spec.questions] == [
+        (11, ""),
+        (12, "Pair"),
+        (13, "Pair"),
+    ]
+    quiz_gets = [r for r in canvas.sent if r.url.path == f"{API}{QUIZ_PATH}"]
+    assert len(quiz_gets) == 1
 
 
 def test_questions_json_lines(canvas):

@@ -24,6 +24,8 @@ from .quizzes import (
     file_layout,
     group_form_fields,
     group_members,
+    group_name_of,
+    groups_by_name,
     is_default_question_name,
     question_form_fields,
     strip_html,
@@ -212,23 +214,6 @@ def _group_changes(
     return [name for name in GROUP_FIELDS if differs[name]]
 
 
-def _live_groups_by_name(state: QuizState) -> dict[str, CanvasQuizGroup]:
-    """Live groups keyed by name.
-
-    Raises:
-        RuntimeError: Two live groups share a name.
-    """
-    by_name: dict[str, CanvasQuizGroup] = {}
-    for group in state.groups:
-        if group.name in by_name:
-            raise RuntimeError(
-                f"Quiz {state.quiz.title!r} has two question groups named "
-                f"{group.name!r}; rename one in Canvas first."
-            )
-        by_name[group.name] = group
-    return by_name
-
-
 # --- Planning ---
 
 
@@ -248,11 +233,11 @@ def plan_quiz_questions(
             name.
     """
     quiz_type = state.quiz.quiz_type
-    live_groups = _live_groups_by_name(state)
+    live_groups = groups_by_name(state.groups, state.quiz.title)
     group_name_by_id = {g.id: g.name for g in state.groups}
 
     def current_group(question: CanvasQuizQuestion) -> str:
-        return group_name_by_id.get(question.quiz_group_id or 0, "")
+        return group_name_of(question, state.groups)
 
     # Questions: file questions first, then live leftovers in quiz order
     pairs = _match_questions(spec, state)
@@ -345,7 +330,13 @@ def _order_changed(
     groups: list[GroupChange],
     state: QuizState,
 ) -> bool:
-    """True when the desired top-level layout differs from Canvas's."""
+    """True when the layout differs from Canvas's or a question changes group.
+
+    Canvas ignores ``quiz_group_id: null`` on update; only the quiz-level
+    reorder takes a question out of a group, so any group change forces it.
+    """
+    if any("group" in change.changed for change in questions):
+        return True
     group_by_name = {g.name: g for g in groups}
     desired: list[tuple[str, int | None]] = []
     for kind, entry in order:
@@ -520,7 +511,9 @@ def question_update_fields(
     Args:
         change: An update change; its spec holds the desired values.
         quiz_type: Canvas quiz type, which decides default points.
-        group_id: Canvas id of the desired group, or None to leave any group.
+        group_id: Canvas id of the desired group, or None for no group.
+            Canvas ignores None (null); the quiz-level reorder in
+            ``apply_question_plan`` takes the question out of its group.
     """
     assert change.spec is not None
     form = question_form_fields(change.spec, quiz_type)
@@ -548,9 +541,17 @@ def apply_question_plan(
 ) -> list[str]:
     """Send *plan* to Canvas in a fixed order and re-save the quiz.
 
-    Order: create groups; add, update and delete questions; update and delete
-    groups; reorder the quiz; reorder groups; re-save (only if anything was
-    sent).
+    Order:
+
+    1. Create groups.
+    2. Add, update and delete questions.
+    3. Update groups.
+    4. Reorder the quiz. This also takes questions out of groups, since
+       Canvas ignores ``quiz_group_id: null`` on update.
+    5. Reorder groups.
+    6. Delete groups. Canvas deletes a group's questions with the group, so
+       the questions the file keeps must already be out of it.
+    7. Re-save the quiz (only if anything was sent).
 
     Returns:
         A description of each step applied.
@@ -573,7 +574,7 @@ def apply_question_plan(
 def _apply_steps(
     client: CanvasClient, quiz_id: int, plan: QuestionPlan, applied: list[str]
 ) -> None:
-    """Steps 1-5 of ``apply_question_plan``; records each finished step."""
+    """Steps 1-6 of ``apply_question_plan``; records each finished step."""
     # 1. New groups (start the name -> id map from groups already on Canvas)
     group_ids = {
         g.name: g.live.id
@@ -599,14 +600,14 @@ def _apply_steps(
                 change.spec,
                 position=index + 1,
                 quiz_type=plan.quiz_type,
-                quiz_group_id=group_ids.get(change.group),
+                quiz_group_id=_group_id(group_ids, change.group),
             )
             question_ids[index] = created.id
             applied.append(f"create question {index + 1}")
         elif change.action == "update":
             assert change.live is not None
             fields = question_update_fields(
-                change, plan.quiz_type, group_ids.get(change.group)
+                change, plan.quiz_type, _group_id(group_ids, change.group)
             )
             client.update_quiz_question(quiz_id, change.live.id, fields)
             applied.append(
@@ -617,7 +618,7 @@ def _apply_steps(
             client.delete_quiz_question(quiz_id, change.live.id)
             applied.append(f"delete question {change.live.id}")
 
-    # 3. Group settings, then group deletes
+    # 3. Group settings
     for group in plan.groups:
         if group.action == "update":
             assert group.spec is not None
@@ -627,13 +628,8 @@ def _apply_steps(
             fields = {name: form[name] for name in canvas_names}
             client.update_question_group(quiz_id, group.live.id, fields)
             applied.append(f"update group {group.name!r}")
-    for group in plan.groups:
-        if group.action == "delete":
-            assert group.live is not None
-            client.delete_question_group(quiz_id, group.live.id)
-            applied.append(f"delete group {group.name!r}")
 
-    # 4. Top-level order
+    # 4. Top-level order (also takes questions out of groups)
     if plan.order_changed:
         items: list[tuple[str, int]] = []
         for kind, entry in plan.order:
@@ -651,3 +647,23 @@ def _apply_steps(
         members = [question_ids[i] for i in plan.group_members[name]]
         client.reorder_question_group(quiz_id, group_ids[name], members)
         applied.append(f"reorder group {name!r}")
+
+    # 6. Group deletes, last: Canvas deletes a group's questions with it
+    for group in plan.groups:
+        if group.action == "delete":
+            assert group.live is not None
+            client.delete_question_group(quiz_id, group.live.id)
+            applied.append(f"delete group {group.name!r}")
+
+
+def _group_id(group_ids: dict[str, int], name: str) -> int | None:
+    """Canvas id of group *name*; None for no group.
+
+    Raises:
+        RuntimeError: The group has no Canvas id.
+    """
+    if not name:
+        return None
+    if name not in group_ids:
+        raise RuntimeError(f"Question group {name!r} has no Canvas id.")
+    return group_ids[name]

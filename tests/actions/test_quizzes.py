@@ -517,6 +517,13 @@ class TestQuizState:
         assert loaded.questions == spec.questions
         assert loaded.groups == spec.groups
 
+    def test_export_duplicate_group_names_raise(self):
+        quiz, group, questions = _ordered_quiz()
+        twin = CanvasQuizGroup(id=6, quiz_id=group.quiz_id, name=group.name)
+        questions[3].quiz_group_id = 6
+        with pytest.raises(RuntimeError, match="two question groups named 'Pair'"):
+            quiz_spec_from_canvas(quiz, questions, "", LA, groups=[group, twin])
+
     def test_export_blanks_default_names(self):
         quiz = CanvasQuiz(id=1, title="Q", quiz_type="assignment")
         questions = [

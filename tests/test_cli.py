@@ -1069,6 +1069,7 @@ class TestCanvasQuizzes:
         fake.time_zone = "America/Los_Angeles"
         fake.list_quizzes.return_value = [quiz]
         fake.resolve_quiz.return_value = quiz
+        fake.resolve_quiz_id.return_value = quiz.id
         fake.get_quiz.return_value = quiz
         fake.list_quiz_questions.return_value = (questions, False)
         fake.list_assignment_groups.return_value = [group]
