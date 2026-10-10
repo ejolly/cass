@@ -14,10 +14,14 @@ from cass.actions.quizzes import (
     GroupSpec,
     QuestionSpec,
     QuizSpec,
+    QuizState,
+    canvas_layout,
     dump_quiz_file,
+    fetch_quiz_state,
     file_layout,
     group_members,
     load_quiz_file,
+    ordered_questions,
     question_form_fields,
     quiz_form_fields,
     quiz_settings_diff,
@@ -25,7 +29,14 @@ from cass.actions.quizzes import (
     strip_html,
     sync_quizzes,
 )
-from cass.apis.canvas.schema import CanvasQuiz, CanvasQuizAnswer, CanvasQuizQuestion
+from cass.apis.canvas.schema import (
+    CanvasQuiz,
+    CanvasQuizAnswer,
+    CanvasQuizGroup,
+    CanvasQuizQuestion,
+    CanvasQuizSubmission,
+    CanvasStudentResponse,
+)
 
 LA = "America/Los_Angeles"
 
@@ -451,3 +462,107 @@ class TestSyncQuizzes:
 def test_strip_html():
     assert strip_html("<p>What &amp; why?</p>\n<ul><li>a</li></ul>") == "What & why? a"
     assert strip_html("<p>What are you <b>hoping</b>?</p>") == "What are you hoping?"
+
+
+def _ordered_quiz():
+    """Q11 (pos 1), group 5 "Pair" (pos 2) holding Q13/Q12, Q14 (pos 3)."""
+    quiz = CanvasQuiz(id=20, title="T", quiz_type="assignment")
+    group = CanvasQuizGroup(
+        id=5, quiz_id=20, name="Pair", pick_count=1, question_points=2.0, position=2
+    )
+
+    def question(qid, position, group_id=None, name="Question"):
+        return CanvasQuizQuestion(
+            id=qid,
+            question_name=name,
+            question_text=f"<p>{qid}</p>",
+            question_type="essay_question",
+            points_possible=1.0,
+            position=position,
+            quiz_group_id=group_id,
+        )
+
+    questions = [
+        question(11, 1),
+        question(13, 2, 5),
+        question(12, 1, 5),
+        question(14, 3),
+    ]
+    return quiz, group, questions
+
+
+class TestQuizState:
+    def test_canvas_layout_puts_group_at_its_position(self):
+        _, group, questions = _ordered_quiz()
+        assert canvas_layout(questions, [group]) == [
+            ("question", 11),
+            ("group", 5),
+            ("question", 14),
+        ]
+        assert [q.id for q in ordered_questions(questions, [group])] == [11, 12, 13, 14]
+
+    def test_export_writes_ids_groups_in_order(self):
+        quiz, group, questions = _ordered_quiz()
+        spec = quiz_spec_from_canvas(quiz, questions, "", LA, groups=[group])
+        assert [q.id for q in spec.questions] == [11, 12, 13, 14]
+        assert [q.group for q in spec.questions] == ["", "Pair", "Pair", ""]
+        assert spec.groups == [GroupSpec("Pair", 1, 2.0)]
+
+    def test_export_load_round_trip(self, tmp_path):
+        quiz, group, questions = _ordered_quiz()
+        spec = quiz_spec_from_canvas(quiz, questions, "", LA, groups=[group])
+        path = tmp_path / "q.toml"
+        dump_quiz_file(spec, path)
+        loaded = load_quiz_file(path)
+        assert loaded.questions == spec.questions
+        assert loaded.groups == spec.groups
+
+    def test_export_blanks_default_names(self):
+        quiz = CanvasQuiz(id=1, title="Q", quiz_type="assignment")
+        questions = [
+            CanvasQuizQuestion(id=i, question_name=name, position=i)
+            for i, name in enumerate(["Question", "Question 7", "Intro"], 1)
+        ]
+        spec = quiz_spec_from_canvas(quiz, questions, "", LA)
+        assert [q.name for q in spec.questions] == ["", "", "Intro"]
+
+    def _client(self, fallback=False):
+        quiz, group, questions = _ordered_quiz()
+        client = MagicMock()
+        client.get_quiz.return_value = quiz
+        client.list_quiz_questions.return_value = (questions, fallback)
+        client.get_question_group.return_value = group
+        return client
+
+    def test_fetch_quiz_state_reads_each_group_once(self):
+        client = self._client()
+        state = fetch_quiz_state(client, 20)
+        client.get_question_group.assert_called_once_with(20, 5)
+        assert isinstance(state, QuizState)
+        assert [q.id for q in state.questions] == [11, 12, 13, 14]
+        assert [g.id for g in state.groups] == [5]
+
+    def test_fetch_quiz_state_statistics_fallback_raises(self):
+        client = self._client(fallback=True)
+        with pytest.raises(RuntimeError, match="statistics"):
+            fetch_quiz_state(client, 20)
+        assert fetch_quiz_state(client, 20, allow_statistics=True).from_statistics
+
+    def test_fetch_quiz_state_counts_finished_student_attempts(self):
+        client = self._client()
+        client.list_quiz_submissions.return_value = [
+            CanvasQuizSubmission(id=1, user_id=1, workflow_state="complete"),
+            CanvasQuizSubmission(id=2, user_id=2, workflow_state="pending_review"),
+            CanvasQuizSubmission(id=3, user_id=3, workflow_state="untaken"),
+            CanvasQuizSubmission(id=4, user_id=9, workflow_state="complete"),
+        ]
+        client.list_students.return_value = [
+            CanvasStudentResponse(id=i, name=f"S{i}") for i in (1, 2, 3)
+        ]
+        state = fetch_quiz_state(client, 20, include_submissions=True)
+        assert state.student_attempts == 2
+
+        plain = self._client()
+        fetch_quiz_state(plain, 20)
+        plain.list_quiz_submissions.assert_not_called()
+        plain.list_students.assert_not_called()

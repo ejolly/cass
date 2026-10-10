@@ -150,17 +150,27 @@ def quizzes_export(
     """Export a quiz as a quiz file (settings and questions)."""
     from pathlib import Path
 
-    from ...actions.quizzes import dump_quiz_file, quiz_spec_from_canvas
+    from ...actions.quizzes import (
+        dump_quiz_file,
+        fetch_quiz_state,
+        quiz_spec_from_canvas,
+    )
 
     _common.require_canvas()
     with _common.client() as c:
         q = c.resolve_quiz(id_or_name)
-        questions, from_stats = c.list_quiz_questions(q.id)
-        groups = {g.id: g.name for g in c.list_assignment_groups()}
-        group_name = groups.get(q.assignment_group_id or 0, "")
-        spec = quiz_spec_from_canvas(q, questions, group_name, c.time_zone)
+        state = fetch_quiz_state(c, q.id, allow_statistics=True)
+        assignment_groups = {g.id: g.name for g in c.list_assignment_groups()}
+        group_name = assignment_groups.get(q.assignment_group_id or 0, "")
+        spec = quiz_spec_from_canvas(
+            state.quiz,
+            state.questions,
+            group_name,
+            c.time_zone,
+            groups=state.groups,
+        )
     text = dump_quiz_file(spec, Path(output) if output else None)
-    if from_stats:
+    if state.from_statistics:
         err_console.print(_STATS_NOTE)
     if output:
         console.print(f"[green]Wrote[/green] {output}")

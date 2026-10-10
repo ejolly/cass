@@ -22,7 +22,7 @@ from .config import format_toml_value
 
 if TYPE_CHECKING:
     from ..apis.canvas.client import CanvasClient
-    from ..apis.canvas.schema import CanvasQuiz, CanvasQuizQuestion
+    from ..apis.canvas.schema import CanvasQuiz, CanvasQuizGroup, CanvasQuizQuestion
 
 QUIZ_TYPES = ("practice_quiz", "assignment", "graded_survey", "survey")
 SURVEY_TYPES = ("survey", "graded_survey")
@@ -406,27 +406,141 @@ def dump_quiz_file(spec: QuizSpec, path: Path | None) -> str:
 # --- Canvas mapping ---
 
 
+def canvas_layout(
+    questions: list[CanvasQuizQuestion], groups: list[CanvasQuizGroup]
+) -> list[tuple[str, int]]:
+    """Top-level quiz entries in Canvas order.
+
+    Ungrouped questions and groups share one position sequence; grouped
+    questions' positions are within their group. Ties sort questions first,
+    then by id.
+    """
+    entries: list[tuple[int, int, int, str]] = [
+        (q.position or 0, 0, q.id, "question")
+        for q in questions
+        if q.quiz_group_id is None
+    ]
+    entries += [(g.position or 0, 1, g.id, "group") for g in groups]
+    return [(kind, entry_id) for _, _, entry_id, kind in sorted(entries)]
+
+
+def ordered_questions(
+    questions: list[CanvasQuizQuestion], groups: list[CanvasQuizGroup]
+) -> list[CanvasQuizQuestion]:
+    """All questions in quiz order, each group expanded in place."""
+    by_id = {q.id: q for q in questions}
+    ordered: list[CanvasQuizQuestion] = []
+    for kind, entry_id in canvas_layout(questions, groups):
+        if kind == "question":
+            ordered.append(by_id[entry_id])
+            continue
+        members = [q for q in questions if q.quiz_group_id == entry_id]
+        ordered += sorted(members, key=lambda q: (q.position or 0, q.id))
+    return ordered
+
+
+@dataclass
+class QuizState:
+    """A quiz as it is on Canvas: settings, questions in quiz order, groups."""
+
+    quiz: CanvasQuiz
+    questions: list[CanvasQuizQuestion]
+    groups: list[CanvasQuizGroup]
+    from_statistics: bool = False
+    student_attempts: int = 0
+
+
+def fetch_quiz_state(
+    client: CanvasClient,
+    quiz_id: int,
+    *,
+    allow_statistics: bool = False,
+    include_submissions: bool = False,
+) -> QuizState:
+    """Read a quiz, its questions in quiz order, and its question groups.
+
+    Args:
+        client: Canvas client.
+        quiz_id: Canvas quiz ID.
+        allow_statistics: Accept questions rebuilt from quiz statistics
+            (concluded courses); otherwise that raises.
+        include_submissions: Also count finished student attempts.
+
+    Raises:
+        RuntimeError: Questions came from statistics and that is not allowed.
+    """
+    quiz = client.get_quiz(quiz_id)
+    questions, from_statistics = client.list_quiz_questions(quiz_id)
+    if from_statistics and not allow_statistics:
+        raise RuntimeError(
+            f"Quiz {quiz.title}: questions came from quiz statistics (concluded "
+            "course), which lack names and answer weights; questions cannot be "
+            "edited."
+        )
+    group_ids = sorted({q.quiz_group_id for q in questions if q.quiz_group_id})
+    groups = [client.get_question_group(quiz_id, gid) for gid in group_ids]
+    groups.sort(key=lambda g: (g.position or 0, g.id))
+    student_attempts = 0
+    if include_submissions:
+        student_ids = {s.id for s in client.list_students()}
+        student_attempts = sum(
+            1
+            for sub in client.list_quiz_submissions(quiz_id)
+            if sub.workflow_state in ("complete", "pending_review")
+            and sub.user_id in student_ids
+        )
+    return QuizState(
+        quiz=quiz,
+        questions=ordered_questions(questions, groups),
+        groups=groups,
+        from_statistics=from_statistics,
+        student_attempts=student_attempts,
+    )
+
+
 def quiz_spec_from_canvas(
     quiz: CanvasQuiz,
     questions: list[CanvasQuizQuestion],
     group_name: str,
     tz: str,
+    *,
+    groups: list[CanvasQuizGroup] = (),  # ty: ignore[invalid-parameter-default]
 ) -> QuizSpec:
-    """Build a spec from a live quiz, with times in the course zone."""
+    """Build a spec from a live quiz, with times in the course zone.
+
+    Questions come out in quiz order, carrying their Canvas ids and group names.
+    """
+    groups = list(groups)
+    group_names = {g.id: g.name for g in groups}
     question_specs: list[QuestionSpec] = []
-    for position, q in enumerate(sorted(questions, key=lambda q: q.position or 0), 1):
-        default_name = q.question_name in ("", f"Question {position}")
+    for q in ordered_questions(questions, groups):
         question_specs.append(
             QuestionSpec(
+                id=q.id,
+                group=group_names.get(q.quiz_group_id or 0, ""),
                 text=q.question_text,
                 type=q.question_type,
-                name="" if default_name else q.question_name,
+                name=""
+                if is_default_question_name(q.question_name)
+                else q.question_name,
                 points=q.points_possible if q.points_possible is not None else 0.0,
                 answers=[
                     AnswerSpec(text=a.text, correct=a.weight > 0) for a in q.answers
                 ],
             )
         )
+    group_specs = [
+        GroupSpec(
+            name=g.name,
+            pick_count=g.pick_count,
+            points_per_item=(
+                g.question_points
+                if g.question_points is not None
+                else default_question_points(quiz.quiz_type)
+            ),
+        )
+        for g in groups
+    ]
     return QuizSpec(
         title=quiz.title,
         quiz_type=quiz.quiz_type,
@@ -443,6 +557,7 @@ def quiz_spec_from_canvas(
         shuffle_answers=quiz.shuffle_answers,
         one_question_at_a_time=quiz.one_question_at_a_time,
         published=quiz.published,
+        groups=group_specs,
         questions=question_specs,
     )
 
