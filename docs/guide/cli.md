@@ -16,11 +16,17 @@ cass revert       # discard pending local changes
 
 ## Canvas management
 
-Every Canvas resource group has the same shape: `list` shows all items (the bare group runs `list`), `show ID_OR_NAME` shows one item (except `tabs show`, which makes a tab visible), and the write verbs follow. Commands that act on one resource take its ID or its name; if a name matches several items, the command fails and lists the matching IDs. Calendar events take IDs only.
+Every Canvas resource group has the same shape: `list` shows all items (the bare group runs `list`; a bare `submissions` prints help), `show ID_OR_NAME` shows one item (except `tabs show`, which makes a tab visible), and the write verbs follow. Commands that act on one resource take its ID or its name; if a name matches several items, the command fails and lists the matching IDs. Calendar events take IDs only.
 
 ```bash
 cass canvas                      # course overview
 cass canvas people list          # roster with roles and emails
+cass canvas people list --state completed                # also active, invited, inactive
+cass canvas people list --enrolled-after 2026-10-01 --json
+cass canvas submissions list HW1 --student 123
+cass canvas submissions excuse HW1 --student 123 [--apply]
+cass canvas submissions excuse --enrolled-after 2026-10-01 [--apply]
+cass canvas submissions clear-late HW1 --student 123 --apply
 cass canvas files list           # course files as a tree
 cass canvas announcements list
 cass canvas tabs list            # navigation tabs; tabs show / tabs hide change visibility
@@ -51,6 +57,17 @@ cass canvas api PUT /courses/{course}/modules/5 --data 'module[name]=Week1'
 Folder paths are relative to the course files root (no `course files/` prefix). `files upload --folder` and `files mv` create missing folders. `--unpublished` locks new uploads so students cannot see them. `files upload --on-duplicate` defaults to `overwrite`, which replaces a same-named file: Canvas stores the upload as a new file with a new ID and re-points module items and course links to it. `rename` keeps both files. `skip` skips the upload when a file with the same name and size is already there, and overwrites when only the name matches. `files mv` and `files rename` accept `--on-duplicate rename|overwrite`; without it, a name clash fails in Canvas. `files list --folder` takes a folder ID or path. `files folders delete --force` deletes non-empty folders.
 
 `cass canvas api` prints the response body as JSON. `{course}` expands to the configured course ID; `--param KEY=VALUE` adds query parameters and `--json-body` sends a JSON body. To call the API from Python, see the [Python API guide](python-api.md).
+
+### Late enrollments
+
+`people list` shows each person's enrolled-at date: the earliest `created_at` among their enrollments, deleted ones included. `--enrolled-after DATE` keeps people first enrolled after DATE; a bare date means midnight in the course time zone. `--state` picks enrollment states (default: active and invited).
+
+`submissions excuse` and `submissions clear-late` take exactly one of `--student ID` (repeatable, needs an ASSIGNMENT) or `--enrolled-after DATE`. Both are dry runs unless you pass `--apply`.
+
+- With `--enrolled-after`, only `StudentEnrollment` students in `active` or `invited` state count (never the Test Student), and a submission is picked when its assignment was due before that student enrolled, using the student's own due date. Assignments without a due date and unpublished assignments are never touched; an unpublished ASSIGNMENT exits 1.
+- With `--student` and an explicit ASSIGNMENT, the change is made even when the assignment is unpublished or has no due date, with a warning.
+- `excuse` skips graded submissions unless you pass `--include-graded`, because excusing clears the grade. A score is protected unless it is Canvas's missing-submission policy score (marked missing, with no grader), so a teacher's partial credit on a missing submission is kept. Submitted but ungraded work is excused, since it has no score to protect.
+- `clear-late` skips excused submissions and sets Canvas's late status to `none`, so later late resubmissions are not marked late. On a group assignment it applies to the whole group.
 
 ## Output and errors
 
