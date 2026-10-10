@@ -87,17 +87,19 @@ Questions in one group must be next to each other. The group takes the place of 
 
 `update --questions` refuses quizzes in concluded courses. Canvas serves their questions only through quiz statistics, which lack names and answer weights. `questions` and `export` still work there, with a warning.
 
-If students have finished attempts, cass warns first, because Canvas keeps earlier attempts on the old version of each question. Plan lines for questions whose answers change are marked, because editing answers replaces their answer IDs.
+If students have finished attempts, cass warns first, because Canvas keeps earlier attempts on the old version of each question. Plan lines for questions whose answers change are marked, because a new or reworded answer gets a new answer ID, which can unlink earlier responses.
 
 `questions` lists a quiz's questions in order, with IDs and groups. `preview` starts a teacher preview and lists the questions in the order a student would see them. Groups and shuffling make each attempt differ. The preview submission stays on Canvas.
 
 ### Canvas quirks
 
-- Positions sent when creating questions are ignored. `create --from` reorders the new quiz only when the file declares groups; `update --questions` reorders whenever the order or a question's group changes.
+- The questions API reports every question's `position` as null, so cass reads the quiz order from the order Canvas lists questions in and from each group's position.
+- Positions sent when creating questions are ignored. `update --questions --apply` reorders the quiz whenever it changes anything, which keeps positions exact. A quiz edited in Canvas after deleting questions may read slightly out of order until the next apply. `create --from` reorders the new quiz only when the file declares groups.
+- Canvas fills any field a question update leaves out from a copy saved when the question was created, so a partial update would undo earlier edits. cass sends the whole question on every update.
 - Canvas recounts `question_count` only when the quiz is re-saved, so cass re-saves after sending changes.
 - Updating a question with `quiz_group_id: null` leaves it in its group; only reordering the quiz takes it out.
 - Deleting a group deletes its questions. cass first moves the questions the file keeps out of the group, and deletes groups last.
-- Changing a question's answers on a quiz with submissions replaces their answer IDs.
+- An answer sent without an ID gets a new one. cass reuses the ID of a live answer with the same text, so only new or reworded answers get new IDs.
 
 ## Declaring quizzes in cass.toml
 
