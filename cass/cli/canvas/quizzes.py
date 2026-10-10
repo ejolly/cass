@@ -400,12 +400,13 @@ def _update_with_questions(
 
         warning = question_plan_warning(plan)
         if warning:
-            err_console.print(warning, markup=False)
+            err_console.print(warning, markup=False, highlight=False, soft_wrap=True)
+        lines = format_question_plan(plan)
         if changes:
             detail = ", ".join(f"{k}: {v!r}" for k, v in changes.items())
-            console.print(f"update  settings  ({detail})", markup=False)
-        for line in format_question_plan(plan):
-            console.print(line, markup=False)
+            lines.insert(0, f"{'update':<7}settings  ({detail})")
+        for line in lines:
+            console.print(line, markup=False, highlight=False, soft_wrap=True)
 
         if changes:
             c.update_quiz(q.id, changes)
@@ -414,6 +415,9 @@ def _update_with_questions(
         _common.print_plan(c)
         if c.planned_requests:
             err_console.print("Dry run — use --apply to send these changes.")
+        return
+    if not changes and not plan.has_changes:
+        err_console.print(f"[dim]No changes for {q.title}.[/dim]")
         return
     console.print(f"[green]Updated:[/green] {q.title} ({plan_summary(plan)})")
 

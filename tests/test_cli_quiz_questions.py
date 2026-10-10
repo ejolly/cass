@@ -175,13 +175,14 @@ def test_questions_explicit_dry_run_sends_nothing(canvas, quiz_file):
 
 
 def test_questions_apply_sends_changes(canvas, quiz_file):
-    quiz_file(("Intro", "Intro edited"), ('"Survey"', '"Survey"\n# x'))
+    quiz_file(("Intro", "Intro edited"))
 
     result = _update("--questions", "--apply")
 
     assert result.exit_code == 0, result.output
     lines = canvas.write_lines()
     assert f"PUT {API}{QUIZ_PATH}/questions/11" in lines
+    # No settings changed, so the last PUT is the quiz re-save.
     assert lines[-1] == f"PUT {API}{QUIZ_PATH}"
     assert "Updated: Survey" in result.stdout
 
@@ -192,7 +193,7 @@ def test_questions_apply_sends_settings_changes(canvas, quiz_file):
     result = _update("--questions", "--apply")
 
     assert result.exit_code == 0, result.output
-    assert "update  settings" in result.stdout
+    assert "update settings" in result.stdout
     assert canvas.write_lines()[0] == f"PUT {API}{QUIZ_PATH}"
 
 
@@ -311,3 +312,50 @@ def test_questions_statistics_fallback_sends_nothing(canvas, quiz_file):
     assert result.exit_code == 1, result.output
     assert "statistics" in str(result.exception)
     assert canvas.writes == []
+
+
+def test_apply_with_nothing_to_change_says_so(canvas, quiz_file):
+    quiz_file()
+
+    result = _update("--questions", "--apply")
+
+    assert result.exit_code == 0, result.output
+    assert "No changes for Survey" in result.stderr
+    assert "Updated:" not in result.stdout
+    assert canvas.writes == []
+
+
+def test_student_attempt_warns_in_dry_run(canvas, quiz_file):
+    canvas.routes["/courses/1/users"] = [{"id": 1, "name": "Student"}]
+    canvas.routes[f"{QUIZ_PATH}/submissions"] = {
+        "quiz_submissions": [{"id": 1, "user_id": 1, "workflow_state": "complete"}]
+    }
+    _answers_changed(quiz_file)
+
+    result = _update("--questions")
+
+    assert result.exit_code == 0, result.output
+    assert "Warning:" in result.stderr
+    assert canvas.writes == []
+
+
+def test_long_plan_lines_do_not_wrap(canvas, quiz_file, monkeypatch):
+    from cass.cli.canvas import _common, quizzes
+
+    canvas.routes["/courses/1/users"] = [{"id": 1, "name": "Student"}]
+    canvas.routes[f"{QUIZ_PATH}/submissions"] = {
+        "quiz_submissions": [{"id": 1, "user_id": 1, "workflow_state": "complete"}]
+    }
+    _answers_changed(quiz_file)
+    monkeypatch.setenv("COLUMNS", "80")
+    for module in (_common, quizzes):
+        monkeypatch.setattr(module, "console", _common.Console())
+
+    result = _update("--questions")
+
+    assert result.exit_code == 0, result.output
+    marker = "(answers replaced: existing responses may lose their answer link)"
+    update_lines = [x for x in result.stdout.splitlines() if "update question" in x]
+    assert len(update_lines) == 1
+    assert marker in update_lines[0]
+    assert len(update_lines[0]) > 80
