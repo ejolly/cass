@@ -140,6 +140,87 @@ _STATS_NOTE = (
 )
 
 
+_TEXT_WIDTH = 60
+
+
+@quizzes_app.command(name="questions")
+def quizzes_questions(
+    id_or_name: str = typer.Argument(..., help="Quiz ID or title"),
+    as_json: bool = _common.json_option(),
+) -> None:
+    """List a quiz's questions in quiz order, with IDs and question groups."""
+    from ...actions.quizzes import fetch_quiz_state, question_type_alias, strip_html
+    from .. import report
+
+    _common.require_canvas()
+    with _common.client() as c:
+        q = c.resolve_quiz(id_or_name)
+        state = fetch_quiz_state(c, q.id, allow_statistics=True)
+
+    if as_json:
+        _common.emit_json_lines(state.questions)
+    else:
+        group_names = {g.id: g.name for g in state.groups}
+        rows = [
+            [
+                str(qq.id),
+                group_names.get(qq.quiz_group_id or 0, ""),
+                question_type_alias(qq.question_type),
+                qq.question_name,
+                str(qq.points_possible or 0.0),
+                strip_html(qq.question_text)[:_TEXT_WIDTH],
+            ]
+            for qq in state.questions
+        ]
+        report.render_list(
+            ["ID", "Group", "Type", "Name", "Points", "Text"],
+            rows,
+            title=f"Questions: {q.title}",
+        )
+    if state.from_statistics:
+        err_console.print(_STATS_NOTE)
+
+
+@quizzes_app.command(name="preview")
+def quizzes_preview(
+    id_or_name: str = typer.Argument(..., help="Quiz ID or title"),
+    as_json: bool = _common.json_option(),
+) -> None:
+    """Start a teacher preview and show the questions in the order a student sees them.
+
+    Question groups and shuffling make each attempt differ. The preview
+    submission stays on Canvas.
+    """
+    from ...actions.quizzes import question_type_alias, strip_html
+    from .. import report
+
+    _common.require_canvas()
+    with _common.client() as c:
+        q = c.resolve_quiz(id_or_name)
+        submission = c.start_quiz_preview(q.id)
+        questions = c.list_submission_questions(submission.id)
+
+    if as_json:
+        _common.emit_json_lines(questions)
+    else:
+        rows = [
+            [
+                str(number),
+                question_type_alias(qq.question_type),
+                qq.question_name,
+                str(qq.points_possible or 0.0),
+                strip_html(qq.question_text)[:_TEXT_WIDTH],
+            ]
+            for number, qq in enumerate(questions, 1)
+        ]
+        report.render_list(
+            ["#", "Type", "Name", "Points", "Text"], rows, title=f"Preview: {q.title}"
+        )
+    err_console.print(
+        "One attempt's draw: groups and shuffling make each attempt differ."
+    )
+
+
 @quizzes_app.command(name="export")
 def quizzes_export(
     id_or_name: str = typer.Argument(..., help="Quiz ID or title"),

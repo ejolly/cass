@@ -19,6 +19,7 @@ from ....actions.quizzes import (
     question_form_fields,
     quiz_form_fields,
 )
+from ..errors import CanvasAPIError
 from ..schema import (
     CanvasQuiz,
     CanvasQuizAnswer,
@@ -395,6 +396,33 @@ class QuizzesMixin(BaseClient):
         pages = msgspec.convert(data, list[_QuizSubmissionsPage], strict=False)
         return [sub for page in pages for sub in page.quiz_submissions]
 
+    def start_quiz_preview(self, quiz_id: int) -> CanvasQuizSubmission:
+        """Start a teacher preview attempt, or return the one already open.
+
+        Canvas answers 409 while a preview is open; then the open preview is
+        fetched with a second request.
+
+        Returns:
+            The preview's quiz submission.
+        """
+        try:
+            resp = self._client.post(
+                self._course(f"/quizzes/{quiz_id}/submissions"),
+                params={"preview": "true"},
+            )
+        except CanvasAPIError as error:
+            if error.status_code != 409:
+                raise
+            resp = self._client.get(self._course(f"/quizzes/{quiz_id}/submission"))
+        page = msgspec.convert(resp.json(), _QuizSubmissionsPage, strict=False)
+        return page.quiz_submissions[0]
+
+    def list_submission_questions(self, submission_id: int) -> list[CanvasQuizQuestion]:
+        """List the questions of one quiz submission in the order it was drawn."""
+        resp = self._client.get(f"/quiz_submissions/{submission_id}/questions")
+        page = msgspec.convert(resp.json(), _SubmissionQuestionsPage, strict=False)
+        return page.quiz_submission_questions
+
     def resolve_quiz(self, id_or_name: str) -> CanvasQuiz:
         """Resolve a quiz by numeric ID or title (case-insensitive).
 
@@ -415,6 +443,12 @@ class _QuizSubmissionsPage(msgspec.Struct):
     """``/quizzes/:id/submissions`` wraps each page in an envelope."""
 
     quiz_submissions: list[CanvasQuizSubmission] = []
+
+
+class _SubmissionQuestionsPage(msgspec.Struct):
+    """``/quiz_submissions/:id/questions`` wraps the list in an envelope."""
+
+    quiz_submission_questions: list[CanvasQuizQuestion] = []
 
 
 def _reorder_pairs(items: list[tuple[str, int]]) -> list[tuple[str, object]]:

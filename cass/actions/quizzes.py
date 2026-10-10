@@ -40,6 +40,13 @@ QUESTION_TYPE_ALIASES = {
     "text_only": "text_only_question",
 }
 _CANVAS_TO_ALIAS = {v: k for k, v in QUESTION_TYPE_ALIASES.items()}
+
+
+def question_type_alias(canvas_type: str) -> str:
+    """Short quiz-file name for a Canvas question type, or the type unchanged."""
+    return _CANVAS_TO_ALIAS.get(canvas_type, canvas_type)
+
+
 ANSWER_TYPES = (
     "multiple_choice_question",
     "multiple_answers_question",

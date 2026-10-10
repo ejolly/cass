@@ -4,6 +4,7 @@ from __future__ import annotations
 
 __docformat__ = "google"
 
+import json
 import re
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
@@ -100,6 +101,8 @@ def canvas(tmp_path, monkeypatch) -> FakeCanvas:
             if isinstance(body, httpx.Response):
                 return body
             return httpx.Response(200, json=body)
+        if request.method == "POST" and path in fake.routes:
+            return httpx.Response(200, json=fake.routes[path])
         if request.method == "POST" and path.endswith("/questions"):
             return httpx.Response(200, json={"id": 900})
         if request.method == "PUT" and "/questions/" in path:
@@ -359,3 +362,72 @@ def test_long_plan_lines_do_not_wrap(canvas, quiz_file, monkeypatch):
     assert len(update_lines) == 1
     assert marker in update_lines[0]
     assert len(update_lines[0]) > 80
+
+
+def _questions_cmd(canvas, *flags: str):
+    # The shared group fixture has no position; place it after question 11.
+    canvas.routes[f"{QUIZ_PATH}/groups/5"] = {
+        "id": 5,
+        "name": "Pair",
+        "pick_count": 1,
+        "position": 2,
+    }
+    return runner.invoke(app, ["canvas", "quizzes", "questions", "20", *flags])
+
+
+def test_questions_table_in_quiz_order(canvas):
+    canvas.routes[f"{QUIZ_PATH}/questions"] = [
+        _question(11, 1, "Intro " + "x" * 80),
+        *QUESTIONS[1:],
+    ]
+
+    result = _questions_cmd(canvas)
+
+    assert result.exit_code == 0, result.output
+    out = result.stdout
+    assert "Questions: Survey" in out
+    assert out.index("11") < out.index("12") < out.index("13")
+    assert "Pair" in out
+    assert "<p>" not in out
+    assert "Intro " + "x" * 54 in out  # 60 characters
+    assert "x" * 55 not in out
+
+
+def test_questions_json_lines(canvas):
+    result = _questions_cmd(canvas, "--json")
+
+    assert result.exit_code == 0, result.output
+    rows = [json.loads(line) for line in result.stdout.splitlines()]
+    assert [r["id"] for r in rows] == [11, 12, 13]
+    assert "<p>" in rows[0]["question_text"]
+
+
+def _preview_routes(canvas) -> None:
+    canvas.routes[f"{QUIZ_PATH}/submissions"] = {
+        "quiz_submissions": [{"id": 77, "user_id": 1}]
+    }
+    canvas.routes["/quiz_submissions/77/questions"] = {
+        "quiz_submission_questions": [QUESTIONS[2], QUESTIONS[0]]
+    }
+
+
+def test_preview_prints_drawn_questions(canvas):
+    _preview_routes(canvas)
+
+    result = runner.invoke(app, ["canvas", "quizzes", "preview", "20"])
+
+    assert result.exit_code == 0, result.output
+    assert "Preview: Survey" in result.stdout
+    assert result.stdout.index("Third") < result.stdout.index("Intro")
+    assert "differ" in result.stderr
+
+
+def test_preview_json_in_order(canvas):
+    _preview_routes(canvas)
+
+    result = runner.invoke(app, ["canvas", "quizzes", "preview", "20", "--json"])
+
+    assert result.exit_code == 0, result.output
+    rows = [json.loads(line) for line in result.stdout.splitlines()]
+    assert [r["id"] for r in rows] == [13, 11]
+    assert "differ" in result.stderr

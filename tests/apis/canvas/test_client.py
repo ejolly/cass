@@ -862,6 +862,40 @@ class TestCanvasClient:
         assert client._get_paginated("/x") == ["x"]
         assert calls == ["/x"]
 
+    def test_start_quiz_preview(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data={"quiz_submissions": [{"id": 77, "user_id": 1}]})
+
+        sub = client.start_quiz_preview(20)
+
+        assert sub.id == 77
+        request = transport.requests[0]
+        assert request.method == "POST"
+        assert request.url.path == "/api/v1/courses/1/quizzes/20/submissions"
+        assert request.url.params["preview"] == "true"
+
+    def test_start_quiz_preview_reuses_open_preview_on_409(self, mock_client):
+        client, transport = mock_client
+        transport.add(409, json_data={"message": "already open"})
+        transport.add(json_data={"quiz_submissions": [{"id": 78, "user_id": 1}]})
+
+        sub = client.start_quiz_preview(20)
+
+        assert sub.id == 78
+        assert transport.requests[1].method == "GET"
+        assert transport.requests[1].url.path == (
+            "/api/v1/courses/1/quizzes/20/submission"
+        )
+
+    def test_list_submission_questions(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data={"quiz_submission_questions": [{"id": 13}, {"id": 11}]})
+
+        questions = client.list_submission_questions(77)
+
+        assert [q.id for q in questions] == [13, 11]
+        assert transport.requests[0].url.path == "/api/v1/quiz_submissions/77/questions"
+
     def test_create_quiz_posts_questions_then_resaves(self, mock_client):
         import json
 
