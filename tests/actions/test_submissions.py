@@ -1,14 +1,20 @@
-"""Tests for the pure excuse and clear-late planners."""
+"""Tests for excuse and clear-late planning, target fetching and applying."""
 
 from __future__ import annotations
 
 __docformat__ = "google"
 
+from unittest.mock import MagicMock
+
+import httpx
 import pytest
 
 from cass.actions.submissions import (
+    SubmissionApplyError,
     SubmissionChange,
+    SubmissionPlan,
     SubmissionTarget,
+    apply_submission_changes,
     change_counts,
     change_rows,
     due_before_enrollment,
@@ -16,8 +22,18 @@ from cass.actions.submissions import (
     pick_students,
     plan_clear_late,
     plan_excuse,
+    plan_submission_command,
+    submission_rows,
+    targets_enrolled_after,
+    targets_for_students,
 )
-from cass.apis.canvas.schema import CanvasAssignmentResponse, CanvasSubmissionResponse
+from cass.apis.canvas.client import CanvasClient
+from cass.apis.canvas.schema import (
+    CanvasAssignmentResponse,
+    CanvasEnrollment,
+    CanvasStudentResponse,
+    CanvasSubmissionResponse,
+)
 
 
 def make_assignment(**fields: object) -> CanvasAssignmentResponse:
@@ -173,3 +189,408 @@ def test_group_late_warning():
 
     (skipped,) = plan_clear_late([target(assignment=group, late=False)])
     assert group_late_warning([skipped]) is None
+
+
+# --- fetching targets ---------------------------------------------------------
+
+LA = "America/Los_Angeles"
+
+
+def student(user_id: int, name: str, sortable: str = "") -> CanvasStudentResponse:
+    return CanvasStudentResponse(id=user_id, name=name, sortable_name=sortable)
+
+
+def enrollment(user_id: int, name: str, created_at: str) -> CanvasEnrollment:
+    return CanvasEnrollment(
+        id=100 + user_id,
+        user_id=user_id,
+        type="StudentEnrollment",
+        enrollment_state="active",
+        created_at=created_at,
+        user=student(user_id, name),
+    )
+
+
+def fetch_client(**returns: object) -> MagicMock:
+    client = MagicMock()
+    client.time_zone = LA
+    for method, value in returns.items():
+        getattr(client, method).return_value = value
+    return client
+
+
+HW1 = make_assignment(id=7, name="HW1", published=True, due_at="2026-09-30T06:59:00Z")
+HW2 = make_assignment(id=8, name="HW2", published=True, due_at="2026-10-09T06:59:00Z")
+HW3 = make_assignment(id=9, name="HW3", published=True)
+ANN_ENROLLED = "2026-10-02T17:00:00Z"
+ANN_SUBS = [
+    submission(assignment_id=7, cached_due_date="2026-09-30T06:59:00Z"),
+    submission(assignment_id=8, cached_due_date="2026-10-09T06:59:00Z"),
+    submission(assignment_id=9, cached_due_date=None),
+]
+ENROLLMENTS = [
+    enrollment(5, "Ann", ANN_ENROLLED),
+    enrollment(6, "Ben", "2026-09-01T00:00:00Z"),
+]
+
+
+def test_targets_for_students_uses_included_user_names():
+    client = fetch_client(
+        list_submissions=[
+            submission(user_id=5, user=student(5, "Ann")),
+            submission(user_id=6, user=student(6, "Ben")),
+        ]
+    )
+    targets = targets_for_students(client, HW1, [5])
+    client.list_submissions.assert_called_once_with(7, include_user=True)
+    assert [t.student_name for t in targets] == ["Ann"]
+
+
+def test_targets_for_students_falls_back_to_id():
+    client = fetch_client(list_submissions=[submission(user_id=5)])
+    (only,) = targets_for_students(client, HW1, [5])
+    assert only.student_name == "5"
+
+
+def test_targets_enrolled_after_selects_due_before_enrollment():
+    client = fetch_client(
+        list_enrollments=ENROLLMENTS,
+        list_assignments=[HW1, HW2, HW3],
+        list_student_submissions=ANN_SUBS,
+    )
+    targets = targets_enrolled_after(client, "2026-10-01T00:00:00-07:00")
+    client.list_student_submissions.assert_called_once_with([5], assignment_ids=())
+    assert [(t.assignment.name, t.student_name, t.enrolled_at) for t in targets] == [
+        ("HW1", "Ann", ANN_ENROLLED)
+    ]
+
+
+def test_targets_enrolled_after_skips_unpublished_assignments():
+    hidden = make_assignment(id=7, name="HW1", published=False)
+    client = fetch_client(
+        list_enrollments=ENROLLMENTS,
+        list_assignments=[hidden],
+        list_student_submissions=ANN_SUBS[:1],
+    )
+    assert targets_enrolled_after(client, "2026-10-01T00:00:00-07:00") == []
+
+
+def test_targets_enrolled_after_orders_by_student_due_and_name():
+    zed_enrolled = "2026-10-05T00:00:00Z"
+    client = fetch_client(
+        list_enrollments=[*ENROLLMENTS, enrollment(4, "Zed", zed_enrolled)],
+        list_assignments=[HW1, HW2],
+        list_student_submissions=[
+            submission(user_id=4, assignment_id=8, cached_due_date="2026-10-01T00:00Z"),
+            submission(user_id=4, assignment_id=7, cached_due_date="2026-10-01T00:00Z"),
+            submission(user_id=5, assignment_id=7, cached_due_date="2026-09-30T06:59Z"),
+        ],
+    )
+    targets = targets_enrolled_after(client, "2026-10-01T00:00:00-07:00")
+    assert [(t.student_name, t.assignment.name) for t in targets] == [
+        ("Ann", "HW1"),
+        ("Zed", "HW1"),
+        ("Zed", "HW2"),
+    ]
+
+
+def test_targets_enrolled_after_with_assignment_narrows():
+    client = fetch_client(
+        list_enrollments=ENROLLMENTS, list_student_submissions=ANN_SUBS[:1]
+    )
+    targets = targets_enrolled_after(
+        client, "2026-10-01T00:00:00-07:00", assignment=HW1
+    )
+    client.list_student_submissions.assert_called_once_with([5], assignment_ids=[7])
+    client.list_assignments.assert_not_called()
+    assert [t.assignment.name for t in targets] == ["HW1"]
+
+
+def test_targets_enrolled_after_rejects_unpublished_assignment():
+    hidden = make_assignment(id=7, name="HW1", published=False)
+    client = fetch_client(list_enrollments=ENROLLMENTS)
+    with pytest.raises(RuntimeError, match=r"HW1.*unpublished"):
+        targets_enrolled_after(client, "2026-10-01T00:00:00-07:00", assignment=hidden)
+    assert client.method_calls == []
+
+
+def test_targets_enrolled_after_without_late_students_stops():
+    client = fetch_client(list_enrollments=ENROLLMENTS)
+    assert targets_enrolled_after(client, "2026-10-30T00:00:00-07:00") == []
+    client.list_assignments.assert_not_called()
+    client.list_student_submissions.assert_not_called()
+
+
+def test_submission_rows_sorts_all_by_sortable_name():
+    client = fetch_client(
+        list_submissions=[
+            submission(user_id=6, user=student(6, "Ben", "Bee, Ben")),
+            submission(user_id=5, user=student(5, "Ann", "Aye, Ann")),
+        ]
+    )
+    rows = submission_rows(client, HW1)
+    client.list_submissions.assert_called_once_with(7, include_user=True)
+    assert [s.user_id for s in rows] == [5, 6]
+
+
+def test_submission_rows_picks_students_in_order():
+    client = fetch_client(
+        list_submissions=[submission(user_id=5), submission(user_id=6)]
+    )
+    assert [s.user_id for s in submission_rows(client, HW1, student_ids=[6])] == [6]
+    with pytest.raises(RuntimeError, match="42"):
+        submission_rows(client, HW1, student_ids=[42])
+
+
+# --- planning a command -------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("assignment", "student_ids", "enrolled_after", "message"),
+    [
+        (HW1, [], "", "Give --student or --enrolled-after"),
+        (HW1, [5], "2026-10-01", "cannot be combined"),
+        (None, [5], "", "--student needs an ASSIGNMENT"),
+    ],
+)
+def test_plan_command_rejects_bad_target_options(
+    assignment, student_ids, enrolled_after, message
+):
+    client = fetch_client()
+    with pytest.raises(ValueError, match=message):
+        plan_submission_command(
+            client,
+            "excuse",
+            assignment=assignment,
+            student_ids=student_ids,
+            enrolled_after=enrolled_after,
+            include_graded=False,
+        )
+    assert client.method_calls == []
+
+
+def test_plan_command_excuse_students():
+    client = fetch_client(
+        list_submissions=[
+            submission(user_id=5, user=student(5, "Ann")),
+            submission(user_id=6, user=student(6, "Ben"), excused=True),
+        ]
+    )
+    plan = plan_submission_command(
+        client,
+        "excuse",
+        assignment=HW1,
+        student_ids=[5, 6],
+        enrolled_after="",
+        include_graded=False,
+    )
+    assert [c.action for c in plan.changes] == ["excuse", "skip"]
+    assert plan.counts == {"excuse": 1, "skip": 1}
+    assert plan.rows[0][:3] == ("excuse", "HW1", "Ann (5)")
+    assert plan.warnings == []
+
+
+def test_plan_command_include_graded():
+    client = fetch_client(
+        list_submissions=[submission(user_id=6, score=8.0, grade="8", grader_id=1)]
+    )
+
+    def plan(include_graded: bool) -> SubmissionPlan:
+        return plan_submission_command(
+            client,
+            "excuse",
+            assignment=HW1,
+            student_ids=[6],
+            enrolled_after="",
+            include_graded=include_graded,
+        )
+
+    skipped, forced = plan(False), plan(True)
+    assert [c.action for c in skipped.changes] == ["skip"]
+    assert [c.action for c in forced.changes] == ["excuse"]
+
+
+def test_plan_command_warns_on_explicit_unpublished_undated_assignment():
+    draft = make_assignment(id=7, name="HW1", published=False, due_at=None)
+    client = fetch_client(list_submissions=[submission(user_id=5)])
+    plan = plan_submission_command(
+        client,
+        "excuse",
+        assignment=draft,
+        student_ids=[5],
+        enrolled_after="",
+        include_graded=False,
+    )
+    assert [c.action for c in plan.changes] == ["excuse"]
+    assert len(plan.warnings) == 2
+    assert "unpublished" in plan.warnings[0]
+    assert "no due date" in plan.warnings[1]
+
+
+def test_plan_command_clear_late_group_warning():
+    group = make_assignment(
+        id=8,
+        name="HW2",
+        published=True,
+        due_at="2026-10-09T06:59:00Z",
+        group_category_id=3,
+    )
+    client = fetch_client(list_submissions=[submission(user_id=7, late=True)])
+    plan = plan_submission_command(
+        client,
+        "clear-late",
+        assignment=group,
+        student_ids=[7],
+        enrolled_after="",
+        include_graded=False,
+    )
+    assert [c.action for c in plan.changes] == ["clear-late"]
+    (warning,) = plan.warnings
+    assert "whole group" in warning
+    assert "HW2" in warning
+
+
+def test_plan_command_enrolled_after_parses_date_in_course_time_zone():
+    client = fetch_client(
+        list_enrollments=[enrollment(5, "Ann", "2026-10-01T06:59:00Z")],
+        list_assignments=[HW1],
+        list_student_submissions=ANN_SUBS[:1],
+    )
+    # Midnight Oct 1 in Los Angeles is 07:00Z, so a 06:59Z enrollment is before it.
+    plan = plan_submission_command(
+        client,
+        "excuse",
+        assignment=None,
+        student_ids=[],
+        enrolled_after="2026-10-01",
+        include_graded=False,
+    )
+    assert plan.changes == []
+    client.list_student_submissions.assert_not_called()
+
+
+def test_plan_command_enrolled_after():
+    client = fetch_client(
+        list_enrollments=ENROLLMENTS,
+        list_assignments=[HW1, HW2, HW3],
+        list_student_submissions=ANN_SUBS,
+    )
+    plan = plan_submission_command(
+        client,
+        "excuse",
+        assignment=None,
+        student_ids=[],
+        enrolled_after="2026-10-01",
+        include_graded=False,
+    )
+    assert [(c.action, c.target.assignment.name) for c in plan.changes] == [
+        ("excuse", "HW1")
+    ]
+    assert "enrolled 2026-10-02 10:00" in plan.rows[0][3]
+    assert plan.warnings == []
+
+
+# --- applying -----------------------------------------------------------------
+
+
+def apply_client(handler, log: list, *, dry_run: bool = False) -> CanvasClient:
+    """A real CanvasClient whose requests go to *handler* and into *log*."""
+
+    def logged(request: httpx.Request) -> httpx.Response:
+        log.append((request.method, request.url.path, request.content.decode()))
+        return handler(request)
+
+    return CanvasClient(
+        "https://canvas.example.com",
+        token="test-token",
+        course_id=1,
+        transport=httpx.MockTransport(logged),
+        time_zone=LA,
+        dry_run=dry_run,
+    )
+
+
+def ok(request: httpx.Request) -> httpx.Response:
+    return httpx.Response(200, json={"user_id": 5, "assignment_id": 7})
+
+
+def change(action: str, assignment_id: int, user_id: int) -> SubmissionChange:
+    names = {7: "HW1", 8: "HW2"}
+    item = SubmissionTarget(
+        assignment=make_assignment(id=assignment_id, name=names[assignment_id]),
+        submission=submission(user_id=user_id, assignment_id=assignment_id),
+        student_name={5: "Ann", 6: "Ben"}[user_id],
+    )
+    return SubmissionChange(action, item, "graded" if action == "skip" else "")
+
+
+def test_apply_sends_one_put_per_change():
+    log: list = []
+    client = apply_client(ok, log)
+    applied = apply_submission_changes(
+        client,
+        [change("excuse", 7, 5), change("skip", 7, 6), change("clear-late", 8, 5)],
+    )
+    assert log == [
+        (
+            "PUT",
+            "/api/v1/courses/1/assignments/7/submissions/5",
+            "submission%5Bexcuse%5D=true",
+        ),
+        (
+            "PUT",
+            "/api/v1/courses/1/assignments/8/submissions/5",
+            "submission%5Blate_policy_status%5D=none",
+        ),
+    ]
+    assert applied == ["excuse HW1: Ann", "clear-late HW2: Ann"]
+
+
+def test_apply_all_skips_sends_nothing():
+    log: list = []
+    client = apply_client(ok, log)
+    assert apply_submission_changes(client, [change("skip", 7, 6)]) == []
+    assert log == []
+
+
+def test_apply_failure_lists_sent_changes():
+    log: list = []
+
+    def fail_second(request: httpx.Request) -> httpx.Response:
+        if len(log) == 2:
+            return httpx.Response(500, json={"message": "boom"})
+        return ok(request)
+
+    client = apply_client(fail_second, log)
+    with pytest.raises(SubmissionApplyError) as caught:
+        apply_submission_changes(
+            client,
+            [change("excuse", 7, 5), change("excuse", 7, 6), change("excuse", 8, 5)],
+        )
+    assert caught.value.applied == ["excuse HW1: Ann"]
+    assert "Stopped; already sent:\n  excuse HW1: Ann" in str(caught.value)
+    assert caught.value.__cause__ is not None
+    assert len(log) == 2
+
+
+def test_apply_failure_before_any_change():
+    log: list = []
+    client = apply_client(lambda request: httpx.Response(500, json={}), log)
+    with pytest.raises(SubmissionApplyError, match="Stopped before any change"):
+        apply_submission_changes(client, [change("excuse", 7, 5)])
+
+
+def test_apply_dry_run_records_without_sending():
+    log: list = []
+
+    def current(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, json={"user_id": 5, "assignment_id": 7})
+        return httpx.Response(500, json={"message": "unexpected write"})
+
+    client = apply_client(current, log, dry_run=True)
+    apply_submission_changes(client, [change("excuse", 7, 5)])
+    assert [method for method, _, _ in log if method != "GET"] == []
+    assert [(r.method, r.path) for r in client.planned_requests] == [
+        ("PUT", "/courses/1/assignments/7/submissions/5")
+    ]
