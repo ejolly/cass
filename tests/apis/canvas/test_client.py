@@ -1,5 +1,7 @@
 """Tests for cass.canvas.client — CanvasClient typed API client."""
 
+import json
+
 import httpx
 import msgspec
 import pytest
@@ -405,6 +407,11 @@ class TestModels:
         q = msgspec.convert(data, CanvasQuizQuestion, strict=False)
         assert q.answers[0].weight == 100.0
         assert q.answers[1].text == "B"
+
+    def test_canvas_quiz_question_group_id(self):
+        q = msgspec.convert({"id": 1, "quiz_group_id": 5}, CanvasQuizQuestion)
+        assert q.quiz_group_id == 5
+        assert msgspec.convert({"id": 2}, CanvasQuizQuestion).quiz_group_id is None
 
 
 # --- CanvasClient unit tests (mocked HTTP) ---
@@ -1535,3 +1542,138 @@ class TestFileWrites:
         assert len(transport.requests) == 1
         assert b"parent_folder_path=%2F" in transport.requests[0].content
         assert b"on_duplicate=overwrite" in transport.requests[0].content
+
+
+_REORDER_QUIZ_BODY = (
+    b"order%5B%5D%5Bid%5D=11&order%5B%5D%5Btype%5D=question"
+    b"&order%5B%5D%5Bid%5D=5&order%5B%5D%5Btype%5D=group"
+)
+
+
+class TestQuizQuestionWrites:
+    def test_update_quiz_question(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data={"id": 100, "question_text": "x"})
+        question = client.update_quiz_question(20, 100, {"question_text": "x"})
+        (request,) = transport.requests
+        assert (request.method, request.url.path) == (
+            "PUT",
+            "/api/v1/courses/1/quizzes/20/questions/100",
+        )
+        assert json.loads(request.content) == {"question": {"question_text": "x"}}
+        assert question.id == 100
+
+    def test_delete_quiz_question(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data={"id": 100})
+        client.delete_quiz_question(20, 100)
+        (request,) = transport.requests
+        assert (request.method, request.url.path) == (
+            "DELETE",
+            "/api/v1/courses/1/quizzes/20/questions/100",
+        )
+
+    def test_create_question_group(self, mock_client):
+        client, transport = mock_client
+        transport.add(
+            json_data={"quiz_groups": [{"id": 5, "name": "Pair", "pick_count": 1}]}
+        )
+        group = client.create_question_group(
+            20, {"name": "Pair", "pick_count": 1, "question_points": 0}
+        )
+        (request,) = transport.requests
+        assert (request.method, request.url.path) == (
+            "POST",
+            "/api/v1/courses/1/quizzes/20/groups",
+        )
+        assert json.loads(request.content) == {
+            "quiz_groups": [{"name": "Pair", "pick_count": 1, "question_points": 0}]
+        }
+        assert group.id == 5
+
+    def test_update_question_group(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data={"quiz_groups": [{"id": 5, "pick_count": 2}]})
+        group = client.update_question_group(20, 5, {"pick_count": 2})
+        (request,) = transport.requests
+        assert (request.method, request.url.path) == (
+            "PUT",
+            "/api/v1/courses/1/quizzes/20/groups/5",
+        )
+        assert json.loads(request.content) == {"quiz_groups": [{"pick_count": 2}]}
+        assert group.pick_count == 2
+
+    def test_delete_question_group(self, mock_client):
+        client, transport = mock_client
+        transport.add(status=204, content=b"")
+        client.delete_question_group(20, 5)
+        (request,) = transport.requests
+        assert (request.method, request.url.path) == (
+            "DELETE",
+            "/api/v1/courses/1/quizzes/20/groups/5",
+        )
+
+    def test_get_question_group(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data={"id": 5, "name": "Pair", "position": 2})
+        group = client.get_question_group(20, 5)
+        (request,) = transport.requests
+        assert (request.method, request.url.path) == (
+            "GET",
+            "/api/v1/courses/1/quizzes/20/groups/5",
+        )
+        assert group.position == 2
+
+    def test_reorder_quiz_sends_repeated_pairs(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data={})
+        client.reorder_quiz(20, [("question", 11), ("group", 5)])
+        (request,) = transport.requests
+        assert (request.method, request.url.path) == (
+            "POST",
+            "/api/v1/courses/1/quizzes/20/reorder",
+        )
+        assert request.headers["content-type"] == "application/x-www-form-urlencoded"
+        assert request.content == _REORDER_QUIZ_BODY
+
+    def test_reorder_question_group(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data={})
+        client.reorder_question_group(20, 5, [12, 13])
+        (request,) = transport.requests
+        assert (request.method, request.url.path) == (
+            "POST",
+            "/api/v1/courses/1/quizzes/20/groups/5/reorder",
+        )
+        assert request.content == (
+            b"order%5B%5D%5Bid%5D=12&order%5B%5D%5Btype%5D=question"
+            b"&order%5B%5D%5Bid%5D=13&order%5B%5D%5Btype%5D=question"
+        )
+
+    def test_resave_quiz(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data={"id": 20})
+        transport.add(json_data={"id": 20})
+        client.resave_quiz(20, published=True)
+        client.resave_quiz(20)
+        published, unchanged = transport.requests
+        assert (published.method, published.url.path) == (
+            "PUT",
+            "/api/v1/courses/1/quizzes/20",
+        )
+        assert b"quiz%5Bnotify_of_update%5D=false" in published.content
+        assert b"quiz%5Bpublished%5D=true" in published.content
+        assert b"notify_of_update" in unchanged.content
+        assert b"published" not in unchanged.content
+
+    def test_create_quiz_question_with_group(self, mock_client):
+        from cass.actions.quizzes import QuestionSpec
+
+        client, transport = mock_client
+        transport.add(json_data={"id": 100})
+        transport.add(json_data={"id": 101})
+        client.create_quiz_question(20, QuestionSpec(text="a"), 1, quiz_group_id=5)
+        client.create_quiz_question(20, QuestionSpec(text="b"), 2)
+        grouped, ungrouped = transport.requests
+        assert json.loads(grouped.content)["question"]["quiz_group_id"] == 5
+        assert "quiz_group_id" not in json.loads(ungrouped.content)["question"]

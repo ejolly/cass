@@ -19,6 +19,7 @@ from ....actions.quizzes import (
 from ..schema import (
     CanvasQuiz,
     CanvasQuizAnswer,
+    CanvasQuizGroup,
     CanvasQuizQuestion,
     CanvasQuizReport,
     CanvasQuizSubmission,
@@ -72,13 +73,7 @@ class QuizzesMixin(BaseClient):
                     quiz.id, question, position, quiz_type=spec.quiz_type
                 )
             # Classic quizzes recount questions and points only after a re-save.
-            resave: dict[str, object] = {
-                "published": spec.published,
-                "notify_of_update": False,
-            }
-            self._client.put(
-                self._course(f"/quizzes/{quiz.id}"), data=_quiz_form(resave)
-            )
+            self.resave_quiz(quiz.id, published=spec.published)
         except Exception:
             self.delete_quiz(quiz.id)
             raise
@@ -151,6 +146,7 @@ class QuizzesMixin(BaseClient):
         position: int,
         *,
         quiz_type: str = "assignment",
+        quiz_group_id: int | None = None,
     ) -> CanvasQuizQuestion:
         """Add one question to a quiz.
 
@@ -159,6 +155,7 @@ class QuizzesMixin(BaseClient):
             question: Question spec; ``points`` ``None`` uses the type default.
             position: 1-based position; also the default name (``Question N``).
             quiz_type: Decides the default points (0 for surveys, else 1).
+            quiz_group_id: Question group to put the question in.
 
         Returns:
             The created question.
@@ -175,6 +172,8 @@ class QuizzesMixin(BaseClient):
             "points_possible": _number(points),
             "position": position,
         }
+        if quiz_group_id is not None:
+            payload["quiz_group_id"] = quiz_group_id
         if question.answers:
             payload["answers"] = [
                 {"answer_text": a.text, "answer_weight": 100 if a.correct else 0}
@@ -184,6 +183,109 @@ class QuizzesMixin(BaseClient):
             self._course(f"/quizzes/{quiz_id}/questions"), json={"question": payload}
         )
         return msgspec.convert(resp.json(), CanvasQuizQuestion, strict=False)
+
+    def update_quiz_question(
+        self, quiz_id: int, question_id: int, fields: dict[str, object]
+    ) -> CanvasQuizQuestion:
+        """Update one question (one call).
+
+        Args:
+            quiz_id: Canvas quiz ID.
+            question_id: Canvas question ID.
+            fields: Canvas question field → new value, e.g. ``question_text``.
+
+        Returns:
+            The updated question.
+        """
+        resp = self._client.put(
+            self._course(f"/quizzes/{quiz_id}/questions/{question_id}"),
+            json={"question": fields},
+        )
+        return msgspec.convert(resp.json(), CanvasQuizQuestion, strict=False)
+
+    def delete_quiz_question(self, quiz_id: int, question_id: int) -> None:
+        """Delete one question (one call)."""
+        self._client.delete(self._course(f"/quizzes/{quiz_id}/questions/{question_id}"))
+
+    def create_question_group(
+        self, quiz_id: int, fields: dict[str, object]
+    ) -> CanvasQuizGroup:
+        """Create a question group (one call).
+
+        Args:
+            quiz_id: Canvas quiz ID.
+            fields: Canvas group fields: ``name``, ``pick_count``,
+                ``question_points``.
+
+        Returns:
+            The created group.
+        """
+        resp = self._client.post(
+            self._course(f"/quizzes/{quiz_id}/groups"), json={"quiz_groups": [fields]}
+        )
+        return _quiz_group(resp.json())
+
+    def update_question_group(
+        self, quiz_id: int, group_id: int, fields: dict[str, object]
+    ) -> CanvasQuizGroup:
+        """Update a question group (one call); same fields as the create."""
+        resp = self._client.put(
+            self._course(f"/quizzes/{quiz_id}/groups/{group_id}"),
+            json={"quiz_groups": [fields]},
+        )
+        return _quiz_group(resp.json())
+
+    def delete_question_group(self, quiz_id: int, group_id: int) -> None:
+        """Delete a question group (one call)."""
+        self._client.delete(self._course(f"/quizzes/{quiz_id}/groups/{group_id}"))
+
+    def get_question_group(self, quiz_id: int, group_id: int) -> CanvasQuizGroup:
+        """Get one question group (one call).
+
+        Canvas has no endpoint that lists a quiz's groups.
+        """
+        resp = self._client.get(self._course(f"/quizzes/{quiz_id}/groups/{group_id}"))
+        return _quiz_group(resp.json())
+
+    def reorder_quiz(self, quiz_id: int, items: list[tuple[str, int]]) -> None:
+        """Set the quiz's top-level order (one call).
+
+        Args:
+            quiz_id: Canvas quiz ID.
+            items: ``("question" | "group", id)`` in the wanted order.
+        """
+        self.request(
+            "POST",
+            self._course(f"/quizzes/{quiz_id}/reorder"),
+            data=_reorder_pairs(items),
+        )
+
+    def reorder_question_group(
+        self, quiz_id: int, group_id: int, question_ids: list[int]
+    ) -> None:
+        """Set the order of the questions inside a group (one call)."""
+        items = [("question", question_id) for question_id in question_ids]
+        self.request(
+            "POST",
+            self._course(f"/quizzes/{quiz_id}/groups/{group_id}/reorder"),
+            data=_reorder_pairs(items),
+        )
+
+    def resave_quiz(self, quiz_id: int, *, published: bool | None = None) -> None:
+        """Re-save a quiz without notifying students (one call).
+
+        Classic quizzes recount questions and points, and fill in question
+        positions, only after a re-save.
+
+        Args:
+            quiz_id: Canvas quiz ID.
+            published: Also set the published state when given.
+        """
+        fields: dict[str, object] = {}
+        if published is not None:
+            fields["published"] = published
+        fields["notify_of_update"] = False
+        self._client.put(self._course(f"/quizzes/{quiz_id}"), data=_quiz_form(fields))
 
     def delete_quiz(self, quiz_id: int) -> None:
         """Delete a quiz."""
@@ -289,6 +391,21 @@ class _QuizSubmissionsPage(msgspec.Struct):
     """``/quizzes/:id/submissions`` wraps each page in an envelope."""
 
     quiz_submissions: list[CanvasQuizSubmission] = []
+
+
+def _reorder_pairs(items: list[tuple[str, int]]) -> list[tuple[str, object]]:
+    """Form pairs Canvas reads as a list of ``{id, type}`` objects."""
+    pairs: list[tuple[str, object]] = []
+    for kind, item_id in items:
+        pairs += [("order[][id]", item_id), ("order[][type]", kind)]
+    return pairs
+
+
+def _quiz_group(data: Any) -> CanvasQuizGroup:
+    """Unwrap a group from either the plain or the ``quiz_groups`` envelope."""
+    if isinstance(data, dict) and data.get("quiz_groups"):
+        data = data["quiz_groups"][0]
+    return msgspec.convert(data, CanvasQuizGroup, strict=False)
 
 
 def _quiz_report(data: Any) -> CanvasQuizReport:

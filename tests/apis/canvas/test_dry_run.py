@@ -6,7 +6,7 @@ import pytest
 from cass.actions.quizzes import QuestionSpec, QuizSpec
 from cass.apis.canvas.client import CanvasAPIError, CanvasClient
 from cass.apis.canvas.dry_run import PlannedRequest, format_plan
-from cass.apis.canvas.schema import CanvasQuiz
+from cass.apis.canvas.schema import CanvasQuiz, CanvasQuizGroup
 
 # --- Plan rendering ---
 
@@ -106,6 +106,22 @@ def test_create_quiz_records_chain(dry):
     assert quiz.id == -1
     assert writes(sent) == []
     assert not any("/-1" in str(r.url) for r in sent)
+
+
+def test_question_group_create_unwraps_envelope(dry):
+    client, sent = dry
+    group = client.create_question_group(20, {"name": "Pair", "pick_count": 1})
+    assert isinstance(group, CanvasQuizGroup)
+    assert (group.id, group.name) == (-1, "Pair")
+    assert client.planned_requests[0].path == "/courses/1/quizzes/20/groups"
+
+    client.reorder_question_group(20, group.id, [7])
+    assert [(r.method, r.path) for r in client.planned_requests] == [
+        ("POST", "/courses/1/quizzes/20/groups"),
+        ("POST", "/courses/1/quizzes/20/groups/-1/reorder"),
+    ]
+    assert writes(sent) == []
+    assert sent == []
 
 
 def test_update_tab_keeps_string_id_and_real_label(dry):

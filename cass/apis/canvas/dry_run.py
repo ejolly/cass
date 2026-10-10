@@ -26,6 +26,12 @@ _PLACEHOLDER_RE = re.compile(r"-\d+")
 _TAB_PATH_RE = re.compile(r"^(/courses/\d+/tabs)/([^/]+)$")
 _MAX_VALUE_LENGTH = 60
 
+# Endpoints whose request and response bodies Canvas wraps in a one-item list
+# under a key (``{"quiz_groups": [{...}]}``): path pattern -> key.
+_ENVELOPES: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"/quizzes/-?\d+/groups(/-?\d+)?$"), "quiz_groups"),
+]
+
 # Fields cass's own chained calls read from a create response, per endpoint.
 # Request fields override these.
 _ENDPOINT_DEFAULTS: list[tuple[re.Pattern[str], dict[str, Any]]] = [
@@ -109,6 +115,18 @@ def _defaults_for(path: str) -> dict[str, Any]:
     return {}
 
 
+def _envelope_key(path: str) -> str | None:
+    for pattern, key in _ENVELOPES:
+        if pattern.search(path):
+            return key
+    return None
+
+
+def _wrap(result: dict[str, Any], envelope_key: str | None) -> dict[str, Any]:
+    """Wrap a response in its endpoint's envelope, if the request used one."""
+    return {envelope_key: [result]} if envelope_key else result
+
+
 class DryRunRecorder:
     """Records planned writes and keeps the synthetic body of each written path."""
 
@@ -137,19 +155,34 @@ class DryRunRecorder:
         A POST to a collection creates a resource with the next placeholder
         ID. Any other write merges the request fields into the resource's
         current body: the stored one, else ``{}`` under a placeholder path,
-        else ``fetch_current()`` (called once per path).
+        else ``fetch_current()`` (called once per path). A ``/reorder`` POST
+        is recorded and answered with ``{}``. Endpoints in ``_ENVELOPES``
+        take and return their fields wrapped in a one-item list.
         """
         self.planned.append(PlannedRequest(method, path, body))
-        fields = _clear_empty(request_fields(body))
         path = path.rstrip("/")
+        envelope_key = _envelope_key(path)
+        if (
+            envelope_key
+            and isinstance(body.get(envelope_key), list)
+            and body[envelope_key]
+        ):
+            fields = _clear_empty(body[envelope_key][0])
+        else:
+            envelope_key = None
+            fields = _clear_empty(request_fields(body))
         last_segment = path.rsplit("/", 1)[-1]
         ends_with_id = _ID_RE.fullmatch(last_segment) is not None
+
+        if method == "POST" and last_segment == "reorder":
+            # An action on existing items, not a new resource.
+            return {}
 
         if method == "POST" and not ends_with_id:
             new_id = self._next_placeholder()
             result = {**_defaults_for(path), **fields, "id": new_id}
             self._bodies[f"{path}/{new_id}"] = result
-            return result
+            return _wrap(result, envelope_key)
 
         current = self._bodies.get(path)
         if current is None and self.has_placeholder(path):
@@ -161,7 +194,7 @@ class DryRunRecorder:
         resource_id = int(last_segment) if ends_with_id else last_segment
         result = {**current, **fields, "id": resource_id}
         self._bodies[path] = result
-        return result
+        return _wrap(result, envelope_key)
 
     def record_upload(
         self, url: str, params: dict[str, Any], filename: str

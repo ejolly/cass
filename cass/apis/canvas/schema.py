@@ -218,6 +218,18 @@ class CanvasQuizQuestion(msgspec.Struct):
     points_possible: float | None = None  # null on a freshly posted question
     position: int | None = None  # null until the quiz is re-saved
     answers: list[CanvasQuizAnswer] = []
+    quiz_group_id: int | None = None
+
+
+class CanvasQuizGroup(msgspec.Struct):
+    """Canvas question group: draws ``pick_count`` of its questions per attempt."""
+
+    id: int
+    quiz_id: int = 0
+    name: str = ""
+    pick_count: int = 1
+    question_points: float | None = None
+    position: int | None = None  # null until the quiz is re-saved
 
 
 class CanvasQuizReportFile(msgspec.Struct):
