@@ -25,17 +25,23 @@ Install: `uv tool install cass` or `uvx cass`.
 
 ## Canvas Commands (`cass canvas`)
 
+Every resource group has `list` (the bare group runs it). Commands acting on
+one resource take an ID or a name. `list` and `show` accept `--json`.
+
 | Command | Description |
 |---------|-------------|
 | `cass canvas` | Course overview with resource counts |
-| `cass canvas people` | Show course roster with roles and emails |
+| `cass canvas people list` | Show course roster with roles and emails |
 | `cass canvas sync` | Sync `cass.toml` declarations to Canvas |
+| `cass canvas login` | Save a browser session for Canvas authentication |
+| `cass canvas api` | Send a raw Canvas API request |
 
 ### Modules (`cass canvas modules`)
 
 | Command | Description |
 |---------|-------------|
-| `cass canvas modules` | List modules (with items) |
+| `cass canvas modules list` | List modules |
+| `cass canvas modules show` | Show a module with its items |
 | `cass canvas modules create` | Create a new module |
 | `cass canvas modules publish` | Publish a module |
 | `cass canvas modules unpublish` | Unpublish a module |
@@ -46,8 +52,9 @@ Install: `uv tool install cass` or `uvx cass`.
 
 | Command | Description |
 |---------|-------------|
-| `cass canvas assignments` | List assignments |
-| `cass canvas assignments groups` | Show assignment groups with weights |
+| `cass canvas assignments list` | List assignments |
+| `cass canvas assignments show` | Show one assignment |
+| `cass canvas assignments groups list` | Show assignment groups with weights |
 | `cass canvas assignments create` | Create a new assignment |
 | `cass canvas assignments publish` | Publish an assignment |
 | `cass canvas assignments unpublish` | Unpublish an assignment |
@@ -57,17 +64,21 @@ Install: `uv tool install cass` or `uvx cass`.
 
 | Command | Description |
 |---------|-------------|
-| `cass canvas quizzes` | List quizzes |
+| `cass canvas quizzes list` | List quizzes |
+| `cass canvas quizzes show` | Show a quiz's settings and questions |
+| `cass canvas quizzes export` | Write a quiz as a TOML file |
 | `cass canvas quizzes create` | Create a new quiz |
+| `cass canvas quizzes update` | Update a quiz's settings |
 | `cass canvas quizzes publish` | Publish a quiz |
 | `cass canvas quizzes unpublish` | Unpublish a quiz |
 | `cass canvas quizzes delete` | Delete a quiz |
+| `cass canvas quizzes responses` | Download every student's answers |
 
 ### Files
 
 | Command | Description |
 |---------|-------------|
-| `cass canvas files` | Show course files as a tree |
+| `cass canvas files list` | Show course files as a tree |
 | `cass canvas files upload` | Upload a file to the course |
 | `cass canvas files delete` | Delete a file from the course |
 
@@ -75,7 +86,7 @@ Install: `uv tool install cass` or `uvx cass`.
 
 | Command | Description |
 |---------|-------------|
-| `cass canvas announcements` | List course announcements |
+| `cass canvas announcements list` | List course announcements |
 | `cass canvas announcements create` | Create an announcement |
 | `cass canvas announcements update` | Update an announcement |
 | `cass canvas announcements delete` | Delete an announcement |
@@ -84,7 +95,7 @@ Install: `uv tool install cass` or `uvx cass`.
 
 | Command | Description |
 |---------|-------------|
-| `cass canvas tabs` | List course navigation tabs |
+| `cass canvas tabs list` | List course navigation tabs |
 | `cass canvas tabs show` | Make a navigation tab visible |
 | `cass canvas tabs hide` | Hide a navigation tab |
 
@@ -92,10 +103,17 @@ Install: `uv tool install cass` or `uvx cass`.
 
 | Command | Description |
 |---------|-------------|
-| `cass canvas calendar` | List course calendar events |
+| `cass canvas calendar list` | List course calendar events |
 | `cass canvas calendar create` | Create a calendar event |
 | `cass canvas calendar update` | Update a calendar event |
 | `cass canvas calendar delete` | Delete a calendar event |
+
+## Output
+
+`--json` prints JSON Lines (one object per line, Canvas field names) on list
+commands and one object on `show` commands and `cass status`. stdout carries
+only data; hints, progress, prompts and errors go to stderr. Errors exit 1,
+usage errors exit 2; `--debug` (or `CASS_DEBUG=1`) shows the full traceback.
 """
 
 import importlib.metadata

@@ -16,19 +16,24 @@ cass revert       # discard pending local changes
 
 ## Canvas management
 
+Every Canvas resource group has the same shape: `list` shows all items (the bare group runs `list`), `show ID_OR_NAME` shows one, and the write verbs follow. Commands that act on one resource take its ID or its name; if a name matches several items, the command fails and lists the matching IDs. Calendar events take IDs only.
+
 ```bash
 cass canvas                      # course overview
-cass canvas people               # roster with roles and emails
-cass canvas files                # course files as a tree
-cass canvas announcements        # list announcements
-cass canvas tabs                 # navigation tabs; tabs show / tabs hide change visibility
-cass canvas modules              # list / create / publish / delete modules
-cass canvas assignments          # list / create / publish / delete assignments and groups
-cass canvas quizzes              # list quizzes; see the Quizzes guide for authoring
+cass canvas people list          # roster with roles and emails
+cass canvas files list           # course files as a tree
+cass canvas announcements list
+cass canvas tabs list            # navigation tabs; tabs show / tabs hide change visibility
+cass canvas modules list         # also show / create / publish / delete
+cass canvas modules show "Week 1"
+cass canvas assignments list     # also show / create / publish / delete; assignments groups list
+cass canvas quizzes list         # see the Quizzes guide for authoring
+cass canvas quizzes show "Survey 1"
 cass canvas quizzes responses "Survey 1" --csv out.csv   # every student's answers
-cass canvas calendar             # list / create / update / delete events
-cass canvas files upload file.pdf   # upload a file (files delete removes one)
+cass canvas calendar list        # also create / update / delete, by event ID
+cass canvas files upload file.pdf   # also files delete
 cass canvas announcements create "Title" -m "Body"   # also update / delete
+cass canvas tabs hide "Grades"   # also tabs show
 cass canvas sync [--apply]       # reconcile [[canvas.*]] declarations in cass.toml
 cass canvas login --from-chrome  # browser-session auth, see Canvas authentication
 cass canvas api GET /courses/{course}/modules --all     # raw API request
@@ -36,6 +41,25 @@ cass canvas api PUT /courses/{course}/modules/5 --data 'module[name]=Week1'
 ```
 
 `cass canvas api` prints the response body as JSON. `{course}` expands to the configured course ID; `--param KEY=VALUE` adds query parameters and `--json-body` sends a JSON body. To call the API from Python, see the [Python API guide](python-api.md).
+
+## Output and errors
+
+`list` and `show` print tables; `--csv PATH` and `--save PATH` write a file instead.
+
+`--json` prints machine-readable output with Canvas field names: JSON Lines (one object per line) on `list` commands, one object on `show` commands and on `cass status --json`. It cannot be combined with `--csv` or `--save`.
+
+```bash
+cass canvas assignments list --json | jq -r '.name'
+cass canvas quizzes show "Survey 1" --json | jq '.questions_source'
+cass status --json | jq '.pending_changes'
+```
+
+- `files list --json` adds a `kind` field (`file` or `folder`) to each line.
+- `modules list --json` has no items; use `modules show --json` for a module with its items.
+- `quizzes show --json` adds `questions` and `questions_source`: `questions` when read from the quiz's questions endpoint, `statistics` when that endpoint is closed (concluded courses) and the questions come from the quiz statistics.
+- `status --json` has the keys `config_path`, `course_url`, `course_id`, `auth_source`, `db_path`, `course_name`, `counts` (`students`, `assignments`, `submissions`), and `pending_changes`.
+
+stdout carries only data. Hints, progress, prompts, and errors go to stderr, so pipes and redirects receive clean output. A failed command exits 1 with one message; a usage error (unknown option, missing argument) exits 2. Pass `--debug` (or set `CASS_DEBUG=1`) to see the full traceback.
 
 ## Previewing changes
 
@@ -69,5 +93,5 @@ cass delete                             # remove local database
 Every command accepts `--config PATH` (or the `CASS_CONFIG` environment variable) to run against a different `cass.toml`. Credentials and `cass.db` resolve beside that file.
 
 ```bash
-cass --config ../f25/cass.toml canvas quizzes
+cass --config ../f25/cass.toml canvas quizzes list
 ```

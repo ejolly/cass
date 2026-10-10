@@ -5,8 +5,8 @@ Author Canvas quizzes as TOML files in your course directory, then create, updat
 ## Commands
 
 ```bash
-cass canvas quizzes                                  # list quizzes
-cass canvas quizzes --id "Survey 1"                  # settings and questions
+cass canvas quizzes list
+cass canvas quizzes show "Survey 1"                   # settings and questions (--json for machines)
 cass canvas quizzes export "Survey 1" -o quizzes/survey-1.toml
 cass canvas quizzes create --from quizzes/survey-1.toml [--publish] [--create-groups]
 cass canvas quizzes update "Survey 1" --from quizzes/survey-1.toml

@@ -149,10 +149,10 @@ def canvas_callback(ctx: typer.Context) -> None:
     canvas_guide(
         "Browse content",
         [
-            ("cass canvas people", "Student roster"),
-            ("cass canvas modules", "Course modules"),
-            ("cass canvas assignments", "Assignments"),
-            ("cass canvas files", "File tree"),
+            ("cass canvas people list", "Student roster"),
+            ("cass canvas modules list", "Course modules"),
+            ("cass canvas assignments list", "Assignments"),
+            ("cass canvas files list", "File tree"),
         ],
     )
     canvas_guide(
