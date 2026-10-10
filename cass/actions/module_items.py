@@ -626,7 +626,7 @@ def apply_module_item_plan(
         removed_ids = _remove_items(client, module_id, plan, applied)
         needs_positions = plan.order_changed or bool(created) or bool(removed_ids)
         if needs_positions:
-            _set_positions(client, module_id, plan, created, removed_ids, applied)
+            _set_positions(client, module_id, plan, created, applied)
     except Exception as exc:
         raise ModuleItemApplyError(exc, applied) from exc
     return applied
@@ -657,11 +657,13 @@ def _upload_files(
             on_duplicate="overwrite",
             locked=_upload_lock(upload),
         )
+        index.uploaded[upload.path.lower()] = file
+        applied.append(f"upload {upload.path}")
         if upload.published is True and upload.existing is not None:
             # upload_file(locked=False) sends no unlock, so unlock explicitly.
             file = client.update_file(file.id, locked=False)
-        index.uploaded[upload.path.lower()] = file
-        applied.append(f"upload {upload.path}")
+            index.uploaded[upload.path.lower()] = file
+            applied.append(f"unlock {upload.path}")
 
 
 def _create_items(
@@ -710,8 +712,7 @@ def _update_items(
     for change in plan.items:
         if change.action != "update":
             continue
-        _update_item(client, module_id, change)
-        applied.append(f"update {item_label(change)} ({', '.join(change.changed)})")
+        _update_item(client, module_id, change, applied)
 
     for change, new in created:
         if change.spec is None or change.ref is None:
@@ -726,28 +727,34 @@ def _update_items(
             applied.append(f"update {item_label(change)} (published)")
 
 
-def _update_item(client: CanvasClient, module_id: int, change: ItemChange) -> None:
-    """Send one update change: item fields in one PUT, a File's lock separately."""
+def _update_item(
+    client: CanvasClient, module_id: int, change: ItemChange, applied: list[str]
+) -> None:
+    """Send one update change: item fields in one PUT, a File's lock separately.
+
+    Each request records its own step, so a failure lists exactly what was sent.
+    """
     spec, ref, live = change.spec, change.ref, change.live
     if spec is None or ref is None or live is None:
         return
+    label = item_label(change)
     is_file = ref.item_type == "File"
-    title = ref.title if "title" in change.changed else None
-    indent = spec.indent if "indent" in change.changed else None
-    published = None
-    if "published" in change.changed and not is_file:
-        published = spec.published
-    if title is not None or indent is not None or published is not None:
+    item_fields = [
+        name for name in change.changed if not (name == "published" and is_file)
+    ]
+    if item_fields:
         client.update_module_item(
             module_id,
             live.id,
-            title=title,
-            indent=indent,
-            published=published,
+            title=ref.title if "title" in item_fields else None,
+            indent=spec.indent if "indent" in item_fields else None,
+            published=spec.published if "published" in item_fields else None,
             current=live,
         )
-    if "published" in change.changed and is_file and ref.file is not None:
+        applied.append(f"update {label} ({', '.join(item_fields)})")
+    if is_file and "published" in change.changed and ref.file is not None:
         client.update_file(ref.file.id, locked=not spec.published)
+        applied.append(f"update {label} (published)")
 
 
 def _remove_items(
@@ -773,39 +780,22 @@ def _set_positions(
     module_id: int,
     plan: ModuleItemPlan,
     created: list[tuple[ItemChange, CanvasModuleItem]],
-    removed_ids: set[int],
     applied: list[str],
 ) -> None:
     """Step 5: put every item at its target position.
 
-    The current order is the list order of a fresh read, never the
-    ``position`` field. Removed items are dropped and created items appended
-    locally, because a dry run's re-read does not show this run's writes.
+    Target order is the declared items, then extras. Every slot gets a
+    ``position`` PUT, in order, even when the item already looks in place:
+    Canvas positions can have gaps (after deletions), and setting slots
+    1..n in turn gives the target order whatever the starting positions.
     """
-    created_ids = [(change, new.id) for change, new in created]
-    target: list[tuple[int, ItemChange]] = []
-    for change in plan.items:
-        if change.action == "remove":
-            continue
-        if change.live is not None:
-            target.append((change.live.id, change))
-        else:
-            new_id = next(i for c, i in created_ids if c is change)
-            target.append((new_id, change))
-
-    order = [
-        item.id
-        for item in client.list_module_items(module_id)
-        if item.id not in removed_ids
-    ]
-    order += [new_id for _, new_id in created_ids if new_id not in order]
-
-    for slot, (item_id, change) in enumerate(target):
-        if slot < len(order) and order[slot] == item_id:
-            continue
-        position = slot + 1
-        client.update_module_item(module_id, item_id, position=position)
-        if item_id in order:
-            order.remove(item_id)
-        order.insert(slot, item_id)
-        applied.append(f"move {item_label(change)} to {position}")
+    # ItemChange is a dataclass and cannot be a dict key, so key by identity.
+    new_items = {id(change): new for change, new in created}
+    for slot, change in enumerate(
+        [c for c in plan.items if c.action != "remove"], start=1
+    ):
+        item = new_items.get(id(change)) or change.live
+        if item is None:
+            raise RuntimeError(f"no module item for {item_label(change)}")
+        client.update_module_item(module_id, item.id, position=slot)
+        applied.append(f"move {item_label(change)} to {slot}")

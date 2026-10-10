@@ -549,17 +549,29 @@ def item_json(item: CanvasModuleItem) -> dict:
 
 
 class ScriptedCanvas:
-    """Answers item creates with ids 900, 901, … and the item list unchanged."""
+    """Answers item creates with ids 900, 901, … and the item list unchanged.
 
-    def __init__(self, live: list[CanvasModuleItem], fail_on_post: int = 0):
+    ``fail_on_post=n`` fails the n-th item create; ``fail_put`` fails every
+    PUT to that path. Failures are 500s.
+    """
+
+    def __init__(
+        self,
+        live: list[CanvasModuleItem],
+        fail_on_post: int = 0,
+        fail_put: str = "",
+    ):
         self.live = live
         self.posts = 0
         self.fail_on_post = fail_on_post
+        self.fail_put = fail_put
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
         form = dict(parse_qsl(request.content.decode()))
         is_item_list = re.fullmatch(r"/api/v1/courses/1/modules/\d+/items", path)
+        if request.method == "PUT" and path == self.fail_put:
+            return httpx.Response(500, json={"errors": [{"message": "boom"}]})
         if request.method == "GET" and is_item_list:
             return httpx.Response(200, json=[item_json(i) for i in self.live])
         if request.method == "POST" and is_item_list:
@@ -575,7 +587,9 @@ class ScriptedCanvas:
                     "published": False,
                 },
             )
-        if request.method == "PUT" and path.startswith(ITEMS + "/"):
+        if request.method == "PUT" and re.fullmatch(
+            r"/api/v1/courses/1/modules/\d+/items/\d+", path
+        ):
             item_id = int(path.rsplit("/", 1)[1])
             return httpx.Response(200, json={"id": item_id, "title": "x"})
         if request.method == "PUT" and path.startswith("/api/v1/files/"):
@@ -626,8 +640,10 @@ def test_apply_request_sequence(tmp_path, monkeypatch):
         ),
         ("PUT", f"{ITEMS}/31", {"module_item[title]": "Week 1 readings"}),
         ("DELETE", f"{ITEMS}/33", {}),
-        ("GET", ITEMS, {}),
+        ("PUT", f"{ITEMS}/31", {"module_item[position]": "1"}),
         ("PUT", f"{ITEMS}/900", {"module_item[position]": "2"}),
+        ("PUT", f"{ITEMS}/32", {"module_item[position]": "3"}),
+        ("PUT", f"{ITEMS}/901", {"module_item[position]": "4"}),
     ]
     assert applied == [
         "upload readings/w1.pdf",
@@ -635,7 +651,10 @@ def test_apply_request_sequence(tmp_path, monkeypatch):
         "create ExternalUrl 'Syllabus'",
         "update SubHeader 'Week 1 readings' (title)",
         "remove ExternalUrl 'Old'",
+        "move SubHeader 'Week 1 readings' to 1",
         "move File readings/w1.pdf to 2",
+        "move Assignment 'HW1' to 3",
+        "move ExternalUrl 'Syllabus' to 4",
     ]
     assert index.uploaded["readings/w1.pdf"].id == 77
 
@@ -754,12 +773,49 @@ def test_overwrite_with_published_true_unlocks_explicitly(tmp_path, monkeypatch)
     log: list = []
     client = make_client(ScriptedCanvas(live), log, monkeypatch)
 
-    apply_module_item_plan(client, 5, plan, index)
+    applied = apply_module_item_plan(client, 5, plan, index)
 
     assert log == [
         ("UPLOAD", "readings", "w1.pdf", "overwrite", False),
         ("PUT", "/api/v1/files/77", {"locked": "false"}),
     ]
+    assert applied == ["upload readings/w1.pdf", "unlock readings/w1.pdf"]
+
+
+def test_failed_unlock_still_lists_the_upload(tmp_path, monkeypatch):
+    plan, index, live = overwrite_plan(tmp_path, locked=True, published=True)
+    log: list = []
+    canvas = ScriptedCanvas(live, fail_put="/api/v1/files/77")
+    client = make_client(canvas, log, monkeypatch)
+
+    with pytest.raises(ModuleItemApplyError) as raised:
+        apply_module_item_plan(client, 5, plan, index)
+
+    assert raised.value.applied == ["upload readings/w1.pdf"]
+    assert index.uploaded["readings/w1.pdf"].id == 77
+
+
+def test_two_request_update_lists_the_first_request(monkeypatch):
+    index = apply_index()
+    index.files = [
+        CanvasFile(id=77, display_name="w1.pdf", folder_id=3, size=12, locked=True)
+    ]
+    spec = ModuleItemSpec(
+        type="File", file="readings/w1.pdf", title="Reading 1", published=True
+    )
+    live = [CanvasModuleItem(id=40, title="w1.pdf", type="File", content_id=77)]
+    plan = plan_module_items([spec], live, index, prune=False)
+    assert plan.items[0].changed == ["title", "published"]
+    log: list = []
+    canvas = ScriptedCanvas(live, fail_put="/api/v1/files/77")
+    client = make_client(canvas, log, monkeypatch)
+
+    with pytest.raises(ModuleItemApplyError) as raised:
+        apply_module_item_plan(client, 5, plan, index)
+
+    assert log[0] == ("PUT", f"{ITEMS}/40", {"module_item[title]": "Reading 1"})
+    assert log[1][:2] == ("PUT", "/api/v1/files/77")
+    assert raised.value.applied == ["update File readings/w1.pdf (title)"]
 
 
 def test_created_subheader_published_is_set_after_create(monkeypatch):
@@ -782,13 +838,35 @@ def test_created_subheader_published_is_set_after_create(monkeypatch):
 class FakeModuleCanvas:
     """A small stateful Canvas: one module's items plus the course content.
 
-    Items are kept in list order; ``position`` PUTs pop and re-insert.
+    What it assumes about Canvas (live test A10 is the authority):
+
+    - Each item has a ``position`` value; ``GET …/items`` lists items sorted
+      by it. Positions need not be dense: the constructor can start them with
+      gaps, and DELETE leaves a gap (nothing is renumbered).
+    - ``PUT position=p`` works like Canvas's ``insert_at``: every other item
+      at ``p`` or above moves up by one, then the item takes ``p``.
+    - A create is appended after the highest position, unpublished, and is
+      titled after its content unless a title is sent.
+    - Uploads (through the test's stub) add a file to the course files.
     """
 
-    def __init__(self, live: list[CanvasModuleItem], index: ContentIndex):
+    def __init__(
+        self,
+        live: list[CanvasModuleItem],
+        index: ContentIndex,
+        positions: list[int] | None = None,
+    ):
         self.items = [item_json(item) for item in live]
+        for item, position in zip(
+            self.items, positions or range(1, len(live) + 1), strict=True
+        ):
+            item["position"] = position
         self.index = index
         self.next_id = 900
+
+    def ordered(self) -> list[dict]:
+        """Items in list order: sorted by position."""
+        return sorted(self.items, key=lambda item: item["position"])
 
     def add_uploaded(self, file: CanvasFile) -> None:
         self.index.files = [f for f in self.index.files if f.id != file.id] + [file]
@@ -833,7 +911,7 @@ class FakeModuleCanvas:
         if request.method == "GET" and path in content:
             return httpx.Response(200, json=content[path])
         if request.method == "GET" and path == ITEMS:
-            return httpx.Response(200, json=self.items)
+            return httpx.Response(200, json=self.ordered())
         if request.method == "POST" and path == ITEMS:
             return httpx.Response(200, json=self._create(form))
         if path.startswith(ITEMS + "/"):
@@ -858,6 +936,7 @@ class FakeModuleCanvas:
             "indent": int(form.get("module_item[indent]", 0)),
             "external_url": form.get("module_item[external_url]", ""),
             "page_url": form.get("module_item[page_url]", ""),
+            "position": max((i["position"] for i in self.items), default=0) + 1,
         }
         self.next_id += 1
         self.items.append(item)
@@ -871,8 +950,11 @@ class FakeModuleCanvas:
         if "module_item[published]" in form:
             item["published"] = form["module_item[published]"] == "true"
         if "module_item[position]" in form:
-            self.items.remove(item)
-            self.items.insert(int(form["module_item[position]"]) - 1, item)
+            position = int(form["module_item[position]"])
+            for other in self.items:
+                if other is not item and other["position"] >= position:
+                    other["position"] += 1
+            item["position"] = position
         return item
 
 
@@ -904,9 +986,34 @@ def test_replan_after_apply_is_all_keep(tmp_path, monkeypatch):
 
     assert actions(replan) == ["keep"] * 4
     assert replan.has_changes is False
-    assert [item["title"] for item in fake.items] == [
+    assert [item["title"] for item in fake.ordered()] == [
         "Week 1 readings",
         "w1.pdf",
         "HW1",
         "Syllabus",
     ]
+
+
+def test_reorder_with_gapped_positions_ends_in_declared_order(monkeypatch):
+    index = apply_index()
+    live = [
+        CanvasModuleItem(
+            id=30 + n, title=title, type="ExternalUrl", external_url=f"https://{title}"
+        )
+        for n, title in enumerate("ABC", start=1)
+    ]
+    fake = FakeModuleCanvas(live, index, positions=[1, 3, 7])
+    log: list = []
+    client = make_client(fake, log, monkeypatch)
+    declared = [
+        ModuleItemSpec(type="ExternalUrl", title=title, url=f"https://{title}")
+        for title in "ACB"
+    ]
+    plan = plan_module_items(declared, client.list_module_items(5), index, prune=False)
+    assert plan.order_changed is True
+    log.clear()
+
+    apply_module_item_plan(client, 5, plan, index)
+
+    assert [item["title"] for item in fake.ordered()] == ["A", "C", "B"]
+    assert [entry[1] for entry in log] == [f"{ITEMS}/{i}" for i in (31, 33, 32)]
