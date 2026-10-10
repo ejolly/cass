@@ -1,4 +1,4 @@
-"""Module item rules: command-line arguments, content lookup and planning."""
+"""Module item rules: command-line arguments, content lookup, planning and applying."""
 
 from __future__ import annotations
 
@@ -578,3 +578,234 @@ def item_plan_rows(
     if kept:
         rows.append(("keep", "items", f"{module_name}: {kept} kept"))
     return rows
+
+
+# --- applying -----------------------------------------------------------------
+
+
+class ModuleItemApplyError(RuntimeError):
+    """A request failed while applying a module item plan.
+
+    Attributes:
+        applied: Descriptions of the steps completed before the failure.
+    """
+
+    def __init__(self, cause: BaseException, applied: list[str]):
+        self.applied = list(applied)
+        if applied:
+            done = "\n".join(f"  {step}" for step in applied)
+            message = f"{cause}\nStopped; applied before the failure:\n{done}"
+        else:
+            message = f"{cause}\nStopped before any change was applied."
+        super().__init__(message)
+
+
+def apply_module_item_plan(
+    client: CanvasClient, module_id: int, plan: ModuleItemPlan, index: ContentIndex
+) -> list[str]:
+    """Apply *plan* to module *module_id*: uploads, creates, updates, removes,
+    then positions, in that order.
+
+    Sends nothing at all when the plan has no changes. Uploaded files are
+    added to ``index.uploaded``, so a later plan reuses them.
+
+    Returns:
+        Descriptions of the applied steps, in order.
+
+    Raises:
+        ModuleItemApplyError: When a request fails; it lists the steps
+            completed before the failure. Nothing is rolled back.
+    """
+    applied: list[str] = []
+    if not plan.has_changes:
+        return applied
+    try:
+        _upload_files(client, plan, index, applied)
+        created = _create_items(client, module_id, plan, index, applied)
+        _update_items(client, module_id, plan, created, applied)
+        removed_ids = _remove_items(client, module_id, plan, applied)
+        needs_positions = plan.order_changed or bool(created) or bool(removed_ids)
+        if needs_positions:
+            _set_positions(client, module_id, plan, created, removed_ids, applied)
+    except Exception as exc:
+        raise ModuleItemApplyError(exc, applied) from exc
+    return applied
+
+
+def _upload_lock(upload: FileUploadPlan) -> bool:
+    """Whether the uploaded file ends up locked (see the plan's Decisions)."""
+    if upload.existing is None:
+        return upload.published is not True
+    if upload.published is None:
+        return upload.existing.locked
+    return not upload.published
+
+
+def _upload_files(
+    client: CanvasClient, plan: ModuleItemPlan, index: ContentIndex, applied: list[str]
+) -> None:
+    """Step 1: upload each planned file once per run."""
+    for change in plan.items:
+        upload = change.upload
+        if upload is None or upload.path.lower() in index.uploaded:
+            continue
+        folder, _, name = upload.path.rpartition("/")
+        file = client.upload_file(
+            str(upload.source),
+            folder=folder,
+            name=name,
+            on_duplicate="overwrite",
+            locked=_upload_lock(upload),
+        )
+        if upload.published is True and upload.existing is not None:
+            # upload_file(locked=False) sends no unlock, so unlock explicitly.
+            file = client.update_file(file.id, locked=False)
+        index.uploaded[upload.path.lower()] = file
+        applied.append(f"upload {upload.path}")
+
+
+def _create_items(
+    client: CanvasClient,
+    module_id: int,
+    plan: ModuleItemPlan,
+    index: ContentIndex,
+    applied: list[str],
+) -> list[tuple[ItemChange, CanvasModuleItem]]:
+    """Step 2: create the new items.
+
+    Returns:
+        Each create change with the item Canvas created for it.
+    """
+    created: list[tuple[ItemChange, CanvasModuleItem]] = []
+    for change in plan.items:
+        if change.action != "create" or change.spec is None or change.ref is None:
+            continue
+        ref, spec = change.ref, change.spec
+        content_id = ref.content_id
+        if content_id is None and ref.item_type == "File":
+            content_id = index.uploaded[ref.file_path.lower()].id
+        titled = ref.item_type in ("ExternalUrl", "SubHeader", "File")
+        new = client.create_module_item(
+            module_id,
+            item_type=ref.item_type,
+            content_id=content_id,
+            title=(ref.title or None) if titled else None,
+            indent=spec.indent or None,
+            page_url=ref.page_url or None,
+            external_url=ref.external_url or None,
+        )
+        created.append((change, new))
+        applied.append(f"create {item_label(change)}")
+    return created
+
+
+def _update_items(
+    client: CanvasClient,
+    module_id: int,
+    plan: ModuleItemPlan,
+    created: list[tuple[ItemChange, CanvasModuleItem]],
+    applied: list[str],
+) -> None:
+    """Step 3: update changed fields, then publish state of created items."""
+    for change in plan.items:
+        if change.action != "update":
+            continue
+        _update_item(client, module_id, change)
+        applied.append(f"update {item_label(change)} ({', '.join(change.changed)})")
+
+    for change, new in created:
+        if change.spec is None or change.ref is None:
+            continue
+        published = change.spec.published
+        if change.ref.item_type == "File" or published is None:
+            continue
+        if published != new.published:
+            client.update_module_item(
+                module_id, new.id, published=published, current=new
+            )
+            applied.append(f"update {item_label(change)} (published)")
+
+
+def _update_item(client: CanvasClient, module_id: int, change: ItemChange) -> None:
+    """Send one update change: item fields in one PUT, a File's lock separately."""
+    spec, ref, live = change.spec, change.ref, change.live
+    if spec is None or ref is None or live is None:
+        return
+    is_file = ref.item_type == "File"
+    title = ref.title if "title" in change.changed else None
+    indent = spec.indent if "indent" in change.changed else None
+    published = None
+    if "published" in change.changed and not is_file:
+        published = spec.published
+    if title is not None or indent is not None or published is not None:
+        client.update_module_item(
+            module_id,
+            live.id,
+            title=title,
+            indent=indent,
+            published=published,
+            current=live,
+        )
+    if "published" in change.changed and is_file and ref.file is not None:
+        client.update_file(ref.file.id, locked=not spec.published)
+
+
+def _remove_items(
+    client: CanvasClient, module_id: int, plan: ModuleItemPlan, applied: list[str]
+) -> set[int]:
+    """Step 4: delete the removed items.
+
+    Returns:
+        The ids of the deleted items.
+    """
+    removed_ids: set[int] = set()
+    for change in plan.items:
+        if change.action != "remove" or change.live is None:
+            continue
+        client.delete_module_item(module_id, change.live.id)
+        removed_ids.add(change.live.id)
+        applied.append(f"remove {item_label(change)}")
+    return removed_ids
+
+
+def _set_positions(
+    client: CanvasClient,
+    module_id: int,
+    plan: ModuleItemPlan,
+    created: list[tuple[ItemChange, CanvasModuleItem]],
+    removed_ids: set[int],
+    applied: list[str],
+) -> None:
+    """Step 5: put every item at its target position.
+
+    The current order is the list order of a fresh read, never the
+    ``position`` field. Removed items are dropped and created items appended
+    locally, because a dry run's re-read does not show this run's writes.
+    """
+    created_ids = [(change, new.id) for change, new in created]
+    target: list[tuple[int, ItemChange]] = []
+    for change in plan.items:
+        if change.action == "remove":
+            continue
+        if change.live is not None:
+            target.append((change.live.id, change))
+        else:
+            new_id = next(i for c, i in created_ids if c is change)
+            target.append((new_id, change))
+
+    order = [
+        item.id
+        for item in client.list_module_items(module_id)
+        if item.id not in removed_ids
+    ]
+    order += [new_id for _, new_id in created_ids if new_id not in order]
+
+    for slot, (item_id, change) in enumerate(target):
+        if slot < len(order) and order[slot] == item_id:
+            continue
+        position = slot + 1
+        client.update_module_item(module_id, item_id, position=position)
+        if item_id in order:
+            order.remove(item_id)
+        order.insert(slot, item_id)
+        applied.append(f"move {item_label(change)} to {position}")

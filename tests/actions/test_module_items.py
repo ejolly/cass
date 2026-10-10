@@ -1,23 +1,29 @@
-"""Tests for module item content lookup and planning."""
+"""Tests for module item content lookup, planning and applying."""
 
 from __future__ import annotations
 
 __docformat__ = "google"
 
+import re
 from pathlib import Path
 from unittest.mock import MagicMock
+from urllib.parse import parse_qsl
 
+import httpx
 import pytest
 
 from cass.actions.config import CanvasModuleSpec, ModuleItemSpec
 from cass.actions.module_items import (
     ContentIndex,
+    ModuleItemApplyError,
+    apply_module_item_plan,
     fetch_content_index,
     item_plan_rows,
     plan_module_items,
     plan_module_spec_items,
     resolve_content,
 )
+from cass.apis.canvas.client import CanvasClient
 from cass.apis.canvas.schema import (
     CanvasAssignmentResponse,
     CanvasFile,
@@ -455,4 +461,452 @@ def test_item_plan_rows_details(index):
         ("extra", "item", "W: ExternalTool 'Tool' (moved to end)"),
         ("extra", "item", "W: Discussion 'Chat' (not declared; --prune removes it)"),
         ("keep", "items", "W: 2 kept"),
+    ]
+
+
+# --- applying -----------------------------------------------------------------
+
+ITEMS = "/api/v1/courses/1/modules/5/items"
+UPLOADED = CanvasFile(id=77, display_name="w1.pdf", folder_id=3, size=12)
+
+
+def make_client(handler, log: list, monkeypatch) -> CanvasClient:
+    """A real CanvasClient whose requests go to *handler* and into *log*.
+
+    ``upload_file`` is replaced by a stub that logs its arguments and returns
+    file 77 in the readings folder.
+    """
+
+    def logged(request: httpx.Request) -> httpx.Response:
+        form = dict(parse_qsl(request.content.decode()))
+        log.append((request.method, request.url.path, form))
+        return handler(request)
+
+    client = CanvasClient(
+        "https://canvas.example.com",
+        token="test-token",
+        course_id=1,
+        transport=httpx.MockTransport(logged),
+        time_zone="America/Los_Angeles",
+    )
+
+    def fake_upload(local_path, *, folder="", name=None, on_duplicate, locked):
+        log.append(("UPLOAD", folder, name, on_duplicate, locked))
+        return CanvasFile(id=77, display_name=name or "", folder_id=3, size=12)
+
+    monkeypatch.setattr(client, "upload_file", fake_upload)
+    return client
+
+
+def apply_index() -> ContentIndex:
+    """Course content for the apply tests: HW1 and an empty readings folder."""
+    return ContentIndex(
+        assignments=[CanvasAssignmentResponse(id=7, name="HW1")],
+        quizzes=[],
+        pages=[],
+        folders=[
+            CanvasFolder(id=2, name="course files", full_name="course files"),
+            CanvasFolder(
+                id=3,
+                name="readings",
+                full_name="course files/readings",
+                parent_folder_id=2,
+            ),
+        ],
+        files=[],
+    )
+
+
+SEQUENCE_LIVE = [
+    CanvasModuleItem(id=31, title="Week 1", type="SubHeader"),
+    CanvasModuleItem(id=32, title="HW1", type="Assignment", content_id=7),
+    CanvasModuleItem(
+        id=33, title="Old", type="ExternalUrl", external_url="https://old.org"
+    ),
+]
+
+
+def sequence_declared(source: Path) -> list[ModuleItemSpec]:
+    return [
+        ModuleItemSpec(type="SubHeader", title="Week 1 readings"),
+        ModuleItemSpec(type="File", file="readings/w1.pdf", source=source, indent=1),
+        ModuleItemSpec(type="Assignment", title="HW1"),
+        ModuleItemSpec(type="ExternalUrl", title="Syllabus", url="https://s.org"),
+    ]
+
+
+def item_json(item: CanvasModuleItem) -> dict:
+    return {
+        "id": item.id,
+        "title": item.title,
+        "type": item.type,
+        "content_id": item.content_id,
+        "published": item.published,
+        "indent": item.indent,
+        "external_url": item.external_url,
+        "page_url": item.page_url,
+    }
+
+
+class ScriptedCanvas:
+    """Answers item creates with ids 900, 901, … and the item list unchanged."""
+
+    def __init__(self, live: list[CanvasModuleItem], fail_on_post: int = 0):
+        self.live = live
+        self.posts = 0
+        self.fail_on_post = fail_on_post
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        form = dict(parse_qsl(request.content.decode()))
+        is_item_list = re.fullmatch(r"/api/v1/courses/1/modules/\d+/items", path)
+        if request.method == "GET" and is_item_list:
+            return httpx.Response(200, json=[item_json(i) for i in self.live])
+        if request.method == "POST" and is_item_list:
+            self.posts += 1
+            if self.posts == self.fail_on_post:
+                return httpx.Response(500, json={"errors": [{"message": "boom"}]})
+            return httpx.Response(
+                200,
+                json={
+                    "id": 899 + self.posts,
+                    "title": form.get("module_item[title]", ""),
+                    "type": form["module_item[type]"],
+                    "published": False,
+                },
+            )
+        if request.method == "PUT" and path.startswith(ITEMS + "/"):
+            item_id = int(path.rsplit("/", 1)[1])
+            return httpx.Response(200, json={"id": item_id, "title": "x"})
+        if request.method == "PUT" and path.startswith("/api/v1/files/"):
+            return httpx.Response(
+                200, json={"id": 77, "display_name": "w1.pdf", "locked": False}
+            )
+        if request.method == "DELETE":
+            return httpx.Response(200, json={})
+        return httpx.Response(404, json={"errors": [{"message": "unexpected"}]})
+
+
+def sequence_plan(tmp_path: Path, index: ContentIndex):
+    source = tmp_path / "w1.pdf"
+    source.write_bytes(b"twelve bytes")
+    index.local_sizes[source] = 12
+    return plan_module_items(
+        sequence_declared(source), SEQUENCE_LIVE, index, prune=True
+    )
+
+
+def test_apply_request_sequence(tmp_path, monkeypatch):
+    index = apply_index()
+    plan = sequence_plan(tmp_path, index)
+    log: list = []
+    client = make_client(ScriptedCanvas(SEQUENCE_LIVE), log, monkeypatch)
+
+    applied = apply_module_item_plan(client, 5, plan, index)
+
+    assert log == [
+        ("UPLOAD", "readings", "w1.pdf", "overwrite", True),
+        (
+            "POST",
+            ITEMS,
+            {
+                "module_item[type]": "File",
+                "module_item[content_id]": "77",
+                "module_item[indent]": "1",
+            },
+        ),
+        (
+            "POST",
+            ITEMS,
+            {
+                "module_item[type]": "ExternalUrl",
+                "module_item[title]": "Syllabus",
+                "module_item[external_url]": "https://s.org",
+            },
+        ),
+        ("PUT", f"{ITEMS}/31", {"module_item[title]": "Week 1 readings"}),
+        ("DELETE", f"{ITEMS}/33", {}),
+        ("GET", ITEMS, {}),
+        ("PUT", f"{ITEMS}/900", {"module_item[position]": "2"}),
+    ]
+    assert applied == [
+        "upload readings/w1.pdf",
+        "create File readings/w1.pdf",
+        "create ExternalUrl 'Syllabus'",
+        "update SubHeader 'Week 1 readings' (title)",
+        "remove ExternalUrl 'Old'",
+        "move File readings/w1.pdf to 2",
+    ]
+    assert index.uploaded["readings/w1.pdf"].id == 77
+
+
+def test_apply_failure_stops_and_lists_completed_steps(tmp_path, monkeypatch):
+    index = apply_index()
+    plan = sequence_plan(tmp_path, index)
+    log: list = []
+    client = make_client(
+        ScriptedCanvas(SEQUENCE_LIVE, fail_on_post=2), log, monkeypatch
+    )
+
+    with pytest.raises(ModuleItemApplyError) as raised:
+        apply_module_item_plan(client, 5, plan, index)
+
+    assert raised.value.applied == [
+        "upload readings/w1.pdf",
+        "create File readings/w1.pdf",
+    ]
+    assert "Stopped; applied before the failure:" in str(raised.value)
+    assert "  create File readings/w1.pdf" in str(raised.value)
+    assert raised.value.__cause__ is not None
+    assert log[-1][:2] == ("POST", ITEMS)
+    assert len(log) == 3
+
+
+def test_apply_failure_before_any_change_says_so(monkeypatch):
+    index = apply_index()
+    live = [CanvasModuleItem(id=31, title="Week 1", type="SubHeader")]
+    declared = [ModuleItemSpec(type="SubHeader", title="Week 2")]
+    plan = plan_module_items(declared, live, index, prune=False)
+    log: list = []
+    client = make_client(lambda request: httpx.Response(500, json={}), log, monkeypatch)
+
+    with pytest.raises(ModuleItemApplyError) as raised:
+        apply_module_item_plan(client, 5, plan, index)
+
+    assert raised.value.applied == []
+    assert "Stopped before any change was applied." in str(raised.value)
+
+
+def test_apply_all_keep_sends_nothing(monkeypatch):
+    index = apply_index()
+    live = [CanvasModuleItem(id=31, title="Week 1", type="SubHeader")]
+    declared = [ModuleItemSpec(type="SubHeader", title="Week 1")]
+    plan = plan_module_items(declared, live, index, prune=False)
+    log: list = []
+    client = make_client(ScriptedCanvas(live), log, monkeypatch)
+
+    assert apply_module_item_plan(client, 5, plan, index) == []
+    assert log == []
+
+
+def test_apply_only_title_update_skips_positions(monkeypatch):
+    index = apply_index()
+    live = [CanvasModuleItem(id=31, title="Week 1", type="SubHeader")]
+    declared = [ModuleItemSpec(type="SubHeader", title="Week 2")]
+    plan = plan_module_items(declared, live, index, prune=False)
+    log: list = []
+    client = make_client(ScriptedCanvas(live), log, monkeypatch)
+
+    apply_module_item_plan(client, 5, plan, index)
+
+    assert log == [("PUT", f"{ITEMS}/31", {"module_item[title]": "Week 2"})]
+
+
+def test_apply_uploads_each_path_once(tmp_path, monkeypatch):
+    index = apply_index()
+    source = tmp_path / "w1.pdf"
+    source.write_bytes(b"twelve bytes")
+    index.local_sizes[source] = 12
+    declared = [ModuleItemSpec(type="File", file="readings/w1.pdf", source=source)]
+    plan_5 = plan_module_items(declared, [], index, prune=False)
+    plan_6 = plan_module_items(declared, [], index, prune=False)
+    log: list = []
+    client = make_client(ScriptedCanvas([]), log, monkeypatch)
+
+    apply_module_item_plan(client, 5, plan_5, index)
+    apply_module_item_plan(client, 6, plan_6, index)
+
+    uploads = [entry for entry in log if entry[0] == "UPLOAD"]
+    creates = [entry for entry in log if entry[0] == "POST"]
+    assert len(uploads) == 1
+    assert [c[2]["module_item[content_id]"] for c in creates] == ["77", "77"]
+    assert [c[1] for c in creates] == [ITEMS, "/api/v1/courses/1/modules/6/items"]
+
+
+def overwrite_plan(tmp_path: Path, *, locked: bool, published: bool | None):
+    """Plan a File item whose Canvas copy (id 77) is 10 bytes, the source 12."""
+    index = apply_index()
+    index.files = [
+        CanvasFile(id=77, display_name="w1.pdf", folder_id=3, size=10, locked=locked)
+    ]
+    source = tmp_path / "w1.pdf"
+    source.write_bytes(b"twelve bytes")
+    index.local_sizes[source] = 12
+    spec = ModuleItemSpec(
+        type="File", file="readings/w1.pdf", source=source, published=published
+    )
+    live = [CanvasModuleItem(id=40, title="w1.pdf", type="File", content_id=77)]
+    return plan_module_items([spec], live, index, prune=False), index, live
+
+
+def test_overwrite_keeps_existing_lock_when_published_omitted(tmp_path, monkeypatch):
+    plan, index, live = overwrite_plan(tmp_path, locked=False, published=None)
+    log: list = []
+    client = make_client(ScriptedCanvas(live), log, monkeypatch)
+
+    apply_module_item_plan(client, 5, plan, index)
+
+    assert log == [("UPLOAD", "readings", "w1.pdf", "overwrite", False)]
+
+
+def test_overwrite_with_published_true_unlocks_explicitly(tmp_path, monkeypatch):
+    plan, index, live = overwrite_plan(tmp_path, locked=True, published=True)
+    log: list = []
+    client = make_client(ScriptedCanvas(live), log, monkeypatch)
+
+    apply_module_item_plan(client, 5, plan, index)
+
+    assert log == [
+        ("UPLOAD", "readings", "w1.pdf", "overwrite", False),
+        ("PUT", "/api/v1/files/77", {"locked": "false"}),
+    ]
+
+
+def test_created_subheader_published_is_set_after_create(monkeypatch):
+    index = apply_index()
+    declared = [ModuleItemSpec(type="SubHeader", title="Week 1", published=True)]
+    plan = plan_module_items(declared, [], index, prune=False)
+    log: list = []
+    client = make_client(ScriptedCanvas([]), log, monkeypatch)
+
+    applied = apply_module_item_plan(client, 5, plan, index)
+
+    assert log[0][:2] == ("POST", ITEMS)
+    assert log[1] == ("PUT", f"{ITEMS}/900", {"module_item[published]": "true"})
+    assert applied[:2] == [
+        "create SubHeader 'Week 1'",
+        "update SubHeader 'Week 1' (published)",
+    ]
+
+
+class FakeModuleCanvas:
+    """A small stateful Canvas: one module's items plus the course content.
+
+    Items are kept in list order; ``position`` PUTs pop and re-insert.
+    """
+
+    def __init__(self, live: list[CanvasModuleItem], index: ContentIndex):
+        self.items = [item_json(item) for item in live]
+        self.index = index
+        self.next_id = 900
+
+    def add_uploaded(self, file: CanvasFile) -> None:
+        self.index.files = [f for f in self.index.files if f.id != file.id] + [file]
+
+    def _content_title(self, item_type: str, content_id: int) -> str:
+        if item_type == "Assignment":
+            return next(a.name for a in self.index.assignments if a.id == content_id)
+        if item_type == "File":
+            files = self.index.files
+            return next(f.display_name for f in files if f.id == content_id)
+        return ""
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        form = dict(parse_qsl(request.content.decode()))
+        content = {
+            "/api/v1/courses/1/assignments": [
+                {"id": a.id, "name": a.name} for a in self.index.assignments
+            ],
+            "/api/v1/courses/1/quizzes": [],
+            "/api/v1/courses/1/pages": [],
+            "/api/v1/courses/1/folders": [
+                {
+                    "id": f.id,
+                    "name": f.name,
+                    "full_name": f.full_name,
+                    "parent_folder_id": f.parent_folder_id,
+                }
+                for f in self.index.folders
+            ],
+            "/api/v1/courses/1/files": [
+                {
+                    "id": f.id,
+                    "display_name": f.display_name,
+                    "folder_id": f.folder_id,
+                    "size": f.size,
+                    "locked": f.locked,
+                }
+                for f in self.index.files
+            ],
+        }
+        if request.method == "GET" and path in content:
+            return httpx.Response(200, json=content[path])
+        if request.method == "GET" and path == ITEMS:
+            return httpx.Response(200, json=self.items)
+        if request.method == "POST" and path == ITEMS:
+            return httpx.Response(200, json=self._create(form))
+        if path.startswith(ITEMS + "/"):
+            item_id = int(path.rsplit("/", 1)[1])
+            [item] = [i for i in self.items if i["id"] == item_id]
+            if request.method == "DELETE":
+                self.items.remove(item)
+                return httpx.Response(200, json=item)
+            return httpx.Response(200, json=self._update(item, form))
+        return httpx.Response(404, json={"errors": [{"message": "unexpected"}]})
+
+    def _create(self, form: dict[str, str]) -> dict:
+        item_type = form["module_item[type]"]
+        content_id = int(form.get("module_item[content_id]", 0))
+        item = {
+            "id": self.next_id,
+            "title": form.get("module_item[title]")
+            or self._content_title(item_type, content_id),
+            "type": item_type,
+            "content_id": content_id,
+            "published": False,
+            "indent": int(form.get("module_item[indent]", 0)),
+            "external_url": form.get("module_item[external_url]", ""),
+            "page_url": form.get("module_item[page_url]", ""),
+        }
+        self.next_id += 1
+        self.items.append(item)
+        return item
+
+    def _update(self, item: dict, form: dict[str, str]) -> dict:
+        if "module_item[title]" in form:
+            item["title"] = form["module_item[title]"]
+        if "module_item[indent]" in form:
+            item["indent"] = int(form["module_item[indent]"])
+        if "module_item[published]" in form:
+            item["published"] = form["module_item[published]"] == "true"
+        if "module_item[position]" in form:
+            self.items.remove(item)
+            self.items.insert(int(form["module_item[position]"]) - 1, item)
+        return item
+
+
+def test_replan_after_apply_is_all_keep(tmp_path, monkeypatch):
+    source = tmp_path / "w1.pdf"
+    source.write_bytes(b"twelve bytes")
+    assert len(source.read_bytes()) == 12  # the upload stub reports size=12
+    declared = sequence_declared(source)
+    fake = FakeModuleCanvas(SEQUENCE_LIVE, apply_index())
+    log: list = []
+    client = make_client(fake, log, monkeypatch)
+    stub_upload = client.upload_file
+
+    def upload_into_fake(local_path, **kwargs) -> CanvasFile:
+        file = stub_upload(local_path, **kwargs)
+        fake.add_uploaded(file)
+        return file
+
+    monkeypatch.setattr(client, "upload_file", upload_into_fake)
+
+    index = fetch_content_index(client, sources=[source])
+    live = client.list_module_items(5)
+    plan = plan_module_items(declared, live, index, prune=True)
+    apply_module_item_plan(client, 5, plan, index)
+
+    index = fetch_content_index(client, sources=[source])
+    live = client.list_module_items(5)
+    replan = plan_module_items(declared, live, index, prune=True)
+
+    assert actions(replan) == ["keep"] * 4
+    assert replan.has_changes is False
+    assert [item["title"] for item in fake.items] == [
+        "Week 1 readings",
+        "w1.pdf",
+        "HW1",
+        "Syllabus",
     ]
