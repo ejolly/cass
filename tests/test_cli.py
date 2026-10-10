@@ -856,8 +856,9 @@ class TestCanvasQuizzes:
         header, row = out.read_text().splitlines()
         assert header.startswith("student,user_id,sis_id,section,attempt")
         assert "To learn" in row
-        # Submitted after the quiz's 2026-09-26T00:00Z due date.
-        assert ",2026-09-26T00:00:00Z,true," in row
+        # Submitted after the quiz's 2026-09-26T00:00Z due date, written in
+        # the course time zone.
+        assert ",2026-09-25T17:00:00-07:00,true," in row
 
     def test_responses_table(self, quiz_client):
         quiz_client.download_quiz_report.return_value = self._REPORT

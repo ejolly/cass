@@ -151,7 +151,12 @@ def quizzes_responses(
         help="Canvas's report as is: one row per student, a column per question",
     ),
 ) -> None:
-    """Download every student's answers to a classic quiz or survey."""
+    """Download every student's answers to a classic quiz or survey.
+
+    Times are in the course time zone. started_at and auto_submitted describe
+    only each student's latest attempt, so they are blank while a newer attempt
+    is open.
+    """
     from pathlib import Path
 
     from ...actions.quiz_responses import RESPONSE_COLUMNS, fetch_quiz_responses

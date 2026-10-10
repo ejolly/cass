@@ -82,6 +82,15 @@ class TestParseStudentAnalysis:
         assert parse_student_analysis("") == []
         assert parse_student_analysis("name,id\nA,1\n") == []
 
+    def test_answers_trimmed(self):
+        text = (
+            "name,id,submitted,101: Q,0.0,102: R,0.0\n"
+            'A,1,,"  stood up\n\n ",0.0, ,0.0\n'
+        )
+        first, second = parse_student_analysis(text)
+        assert first.answer == "stood up"
+        assert second.answer == ""
+
     def test_anonymous_rows_have_no_user_id(self):
         text = "name,id,submitted,101: Q,0.0\n,,,yes,0.0\n"
         (r,) = parse_student_analysis(text)
@@ -158,13 +167,38 @@ class TestAddTiming:
         assert second.started_at == "2026-09-25T23:00:00Z"
         assert second.auto_submitted is False
 
-    def test_attempt_in_progress_is_not_the_reported_one(self):
-        """An open new attempt must not relabel the finished one in the report."""
+    def test_open_newer_attempt_reports_the_one_before(self):
+        """An open attempt 3 means the report holds finished attempt 2."""
         responses = parse_student_analysis(LATEST_REPORT)
-        subs = [_sub(11, 3, workflow_state="untaken")]
+        subs = [
+            _sub(11, 3, workflow_state="untaken", started_at="2026-09-27T00:00:00Z")
+        ]
+        add_timing(responses, due_by_user={}, quiz_submissions=subs)
+        assert responses[0].attempt == 2
+        # Timing describes only the open attempt, so it stays unknown.
+        assert responses[0].started_at is None
+        assert responses[0].auto_submitted is None
+
+    def test_open_first_attempt_leaves_attempt_unknown(self):
+        responses = parse_student_analysis(LATEST_REPORT)
+        subs = [_sub(11, 1, workflow_state="untaken")]
         add_timing(responses, due_by_user={}, quiz_submissions=subs)
         assert responses[0].attempt is None
-        assert responses[0].started_at is None
+
+    def test_times_in_course_time_zone(self):
+        responses = parse_student_analysis(LATEST_REPORT)
+        subs = [_sub(11, 2, started_at="2026-09-25T23:00:00Z")]
+        add_timing(
+            responses,
+            due_by_user={11: "2026-09-26T00:00:00Z"},
+            quiz_submissions=subs,
+            tz="America/Los_Angeles",
+        )
+        alice = responses[0]
+        assert alice.submitted_at == "2026-09-25T16:30:00-07:00"
+        assert alice.due_at == "2026-09-25T17:00:00-07:00"
+        assert alice.started_at == "2026-09-25T16:00:00-07:00"
+        assert alice.late is False
 
 
 class TestRow:
@@ -180,6 +214,7 @@ class TestRow:
 class TestFetchQuizResponses:
     def _client(self):
         client = MagicMock()
+        client.time_zone = "UTC"
         client.download_quiz_report.return_value = LATEST_REPORT
         client.list_quiz_submissions.return_value = []
         client.list_submissions.return_value = [

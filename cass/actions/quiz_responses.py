@@ -17,6 +17,7 @@ import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
+from zoneinfo import ZoneInfo
 
 if TYPE_CHECKING:
     from ..apis.canvas.client import CanvasClient
@@ -115,7 +116,7 @@ def parse_student_analysis(text: str) -> list[QuizResponse]:
         attempt = _as_int(meta_value(row, "attempt"))
         submitted_at = _iso_utc(meta_value(row, "submitted")) or ""
         for position, (col, question_id, question) in enumerate(questions, 1):
-            answer = row[col] if col < len(row) else ""
+            answer = row[col].strip() if col < len(row) else ""
             score_col = col + 1
             score = (
                 _as_float(row[score_col])
@@ -146,6 +147,7 @@ def add_timing(
     due_by_user: dict[int, str | None],
     quiz_submissions: list[CanvasQuizSubmission],
     default_due: str | None = None,
+    tz: str = "UTC",
 ) -> list[QuizResponse]:
     """Fill due dates, lateness, and auto-submission flags in place.
 
@@ -153,11 +155,16 @@ def add_timing(
       respects overrides and extensions, and may be ``None``), else
       ``default_due`` for students missing from *due_by_user*.
     - ``late``: ``submitted_at > due_at`` when both are known.
-    - ``attempt``: the latest finished attempt number, for latest-only reports.
+    - ``attempt``: for latest-only reports, the student's latest finished
+      attempt. When the student has opened a newer attempt and not submitted
+      it, the report holds the one before it.
     - ``started_at`` / ``auto_submitted``: from the student's latest quiz
-      submission, on that attempt only. ``auto_submitted`` means Canvas
-      closed the attempt (``finished_at >= end_at``): a time limit ran out,
-      or an attempt left open was force-submitted when the course concluded.
+      submission, on that attempt only, so they stay empty while a newer
+      attempt is open. ``auto_submitted`` means Canvas closed the attempt
+      (``finished_at >= end_at``): a time limit ran out, or an attempt left
+      open was force-submitted when the course concluded.
+    - ``submitted_at``, ``due_at`` and ``started_at`` are rewritten as ISO 8601
+      with *tz*'s offset (``Z`` for UTC).
 
     Returns:
         The same list, for chaining.
@@ -165,14 +172,18 @@ def add_timing(
     latest = {s.user_id: s for s in quiz_submissions}
     for r in responses:
         sub = latest.get(r.user_id) if r.user_id is not None else None
-        if r.attempt is None and sub and sub.workflow_state in _FINISHED_STATES:
-            r.attempt = sub.attempt
+        if r.attempt is None and sub:
+            if sub.workflow_state in _FINISHED_STATES:
+                r.attempt = sub.attempt
+            elif sub.attempt and sub.attempt > 1:
+                r.attempt = sub.attempt - 1
         due = due_by_user.get(r.user_id, default_due) if r.user_id else default_due
-        r.due_at = _iso_utc(due)
-        submitted, due_at = _parse(r.submitted_at), _parse(r.due_at)
+        submitted, due_at = _parse(r.submitted_at), _parse(due)
         r.late = submitted > due_at if submitted and due_at else None
+        r.submitted_at = _iso_in(r.submitted_at, tz) or ""
+        r.due_at = _iso_in(due, tz)
         if sub and r.attempt is not None and sub.attempt == r.attempt:
-            r.started_at = _iso_utc(sub.started_at)
+            r.started_at = _iso_in(sub.started_at, tz)
             finished, end = _parse(sub.finished_at), _parse(sub.end_at)
             r.auto_submitted = finished >= end if finished and end else False
     return responses
@@ -182,6 +193,8 @@ def fetch_quiz_responses(
     client: CanvasClient, quiz: CanvasQuiz, *, all_attempts: bool = False
 ) -> list[QuizResponse]:
     """Download, reshape, and time-stamp every student's answers to a quiz.
+
+    Times are written in the course time zone.
 
     Args:
         client: Canvas client for the quiz's course.
@@ -201,6 +214,7 @@ def fetch_quiz_responses(
         due_by_user=due_by_user,
         quiz_submissions=client.list_quiz_submissions(quiz.id),
         default_due=quiz.due_at,
+        tz=client.time_zone,
     )
 
 
@@ -220,10 +234,17 @@ def _parse(value: str | None) -> datetime | None:
 
 def _iso_utc(value: str | None) -> str | None:
     """Normalize a timestamp to ``YYYY-MM-DDTHH:MM:SSZ``; keep unparseable text."""
+    return _iso_in(value, "UTC")
+
+
+def _iso_in(value: str | None, tz: str) -> str | None:
+    """Render a timestamp as ISO 8601 in *tz* (``Z`` for UTC); keep unparseable text."""
     parsed = _parse(value)
     if parsed is None:
         return value or None
-    return parsed.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if tz == "UTC":
+        return parsed.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return parsed.astimezone(ZoneInfo(tz)).isoformat(timespec="seconds")
 
 
 def _as_int(value: str) -> int | None:

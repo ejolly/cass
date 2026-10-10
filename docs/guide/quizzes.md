@@ -68,19 +68,19 @@ cass canvas quizzes responses "Survey 1" --wide --csv report.csv              # 
 
 cass asks Canvas to generate a student analysis report and waits for it, which usually takes about 30 seconds. This also works on concluded courses, where the quiz questions endpoint returns 403.
 
-The CSV has one row per student, attempt, and question:
+The CSV has one row per student, attempt, and question. Times are ISO 8601 in the course time zone, with its offset (`2026-09-25T16:30:00-07:00`).
 
 | Column | Meaning |
 | --- | --- |
 | `student`, `user_id`, `sis_id`, `section` | Who answered |
 | `attempt` | Attempt number, blank if it can't be determined |
-| `submitted_at` | When the attempt was submitted (UTC) |
+| `submitted_at` | When the attempt was submitted |
 | `due_at` | The student's own due date, including overrides and extensions; the quiz due date if the quiz has no assignment |
 | `late` | `submitted_at` is after `due_at` |
 | `started_at` | When the student opened the attempt (latest attempt only) |
 | `auto_submitted` | Canvas closed the attempt itself (latest attempt only) |
 | `question_id`, `position`, `question` | The question, in report order; `question` is the report's text |
-| `answer`, `score` | The student's answer and the points it earned |
+| `answer`, `score` | The student's answer, trimmed of surrounding whitespace, and the points it earned |
 
 `auto_submitted` is `true` when an attempt finished at or after its cutoff. This happens when a time limit runs out, and when a student opened an attempt but never submitted it: Canvas force-submits those when the course concludes and stamps them with the term end date. Without this flag, those attempts look like real submissions made on that date.
 
@@ -88,4 +88,4 @@ Limitations:
 
 - Classic Quizzes only. New Quizzes use a different reporting API.
 - Calculated (formula) questions show the student's answer but not the randomized values they saw.
-- `started_at` and `auto_submitted` are blank for earlier attempts. Canvas keeps timing only for each student's latest attempt.
+- `started_at` and `auto_submitted` are blank for earlier attempts. Canvas keeps timing only for each student's latest attempt, so they are also blank when a student has opened a newer attempt without submitting it.
