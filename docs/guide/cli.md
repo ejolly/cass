@@ -59,7 +59,7 @@ cass status --json | jq '.pending_changes'
 - `quizzes show --json` adds `questions` and `questions_source`: `questions` when read from the quiz's questions endpoint, `statistics` when that endpoint is closed (concluded courses) and the questions come from the quiz statistics.
 - `status --json` has the keys `config_path`, `course_url`, `course_id`, `auth_source`, `db_path`, `course_name`, `counts` (`students`, `assignments`, `submissions`), and `pending_changes`.
 
-stdout carries only data. Hints, progress, prompts, and errors go to stderr, so pipes and redirects receive clean output. A failed command exits 1 with one message; a usage error (unknown option, missing argument) exits 2. `--debug` is a global option and goes before the subcommand (`cass --debug canvas quizzes list`); or set `CASS_DEBUG=1`. Either shows the full traceback.
+stdout carries only data. Hints, progress, prompts, and errors go to stderr, so pipes and redirects receive clean output. A failed command exits 1 with one message; a usage error (unknown option, missing argument) exits 2. To see the full traceback, pass the global `--debug` flag before the subcommand (`cass --debug canvas quizzes list`) or set `CASS_DEBUG=1`.
 
 ## Previewing changes
 

@@ -33,7 +33,7 @@ with CanvasClient.from_config("../f25/cass.toml") as c:
     print(c.get_course().name)
 ```
 
-`from_config` reads the base URL, course ID, time zone and credentials from that file and its directory, and leaves the project config alone.
+`from_config` reads the base URL, course ID and time zone from that file and the credentials from its directory, and leaves the project config alone.
 
 ## Credential files
 
