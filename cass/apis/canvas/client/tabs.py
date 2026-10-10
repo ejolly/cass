@@ -35,7 +35,6 @@ class TabsMixin(BaseClient):
         resp = self._client.put(
             self._course(f"/tabs/{tab_id}"), data={"hidden": hidden}
         )
-        resp.raise_for_status()
         return msgspec.convert(resp.json(), CanvasTab, strict=False)
 
     def resolve_tab(self, id_or_label: str) -> CanvasTab:

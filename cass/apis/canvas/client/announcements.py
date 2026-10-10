@@ -44,7 +44,6 @@ class AnnouncementsMixin(BaseClient):
                 "published": True,
             },
         )
-        resp.raise_for_status()
         return msgspec.convert(resp.json(), CanvasAnnouncement, strict=False)
 
     def update_announcement(
@@ -62,10 +61,8 @@ class AnnouncementsMixin(BaseClient):
         resp = self._client.put(
             self._course(f"/discussion_topics/{topic_id}"), data=kwargs
         )
-        resp.raise_for_status()
         return msgspec.convert(resp.json(), CanvasAnnouncement, strict=False)
 
     def delete_announcement(self, topic_id: int) -> None:
         """Delete an announcement."""
-        resp = self._client.delete(self._course(f"/discussion_topics/{topic_id}"))
-        resp.raise_for_status()
+        self._client.delete(self._course(f"/discussion_topics/{topic_id}"))

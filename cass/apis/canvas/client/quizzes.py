@@ -41,7 +41,6 @@ class QuizzesMixin(BaseClient):
     def get_quiz(self, quiz_id: int) -> CanvasQuiz:
         """Get a single quiz by ID."""
         resp = self._client.get(self._course(f"/quizzes/{quiz_id}"))
-        resp.raise_for_status()
         return msgspec.convert(resp.json(), CanvasQuiz, strict=False)
 
     def create_quiz(
@@ -66,7 +65,6 @@ class QuizzesMixin(BaseClient):
         )
         fields["published"] = False
         resp = self._client.post(self._course("/quizzes"), data=_quiz_form(fields))
-        resp.raise_for_status()
         quiz = msgspec.convert(resp.json(), CanvasQuiz, strict=False)
         try:
             for position, question in enumerate(spec.questions, 1):
@@ -80,7 +78,7 @@ class QuizzesMixin(BaseClient):
             }
             self._client.put(
                 self._course(f"/quizzes/{quiz.id}"), data=_quiz_form(resave)
-            ).raise_for_status()
+            )
         except Exception:
             self.delete_quiz(quiz.id)
             raise
@@ -101,7 +99,6 @@ class QuizzesMixin(BaseClient):
         resp = self._client.put(
             self._course(f"/quizzes/{quiz_id}"), data=_quiz_form(changes)
         )
-        resp.raise_for_status()
         return msgspec.convert(resp.json(), CanvasQuiz, strict=False)
 
     def list_quiz_questions(
@@ -126,7 +123,6 @@ class QuizzesMixin(BaseClient):
             return sorted(questions, key=lambda q: q.position or 0), False
 
         resp = self._client.get(self._course(f"/quizzes/{quiz_id}/statistics"))
-        resp.raise_for_status()
         stats = resp.json().get("quiz_statistics") or []
         raw_questions = stats[0].get("question_statistics", []) if stats else []
         questions = [
@@ -187,13 +183,11 @@ class QuizzesMixin(BaseClient):
         resp = self._client.post(
             self._course(f"/quizzes/{quiz_id}/questions"), json={"question": payload}
         )
-        resp.raise_for_status()
         return msgspec.convert(resp.json(), CanvasQuizQuestion, strict=False)
 
     def delete_quiz(self, quiz_id: int) -> None:
         """Delete a quiz."""
-        resp = self._client.delete(self._course(f"/quizzes/{quiz_id}"))
-        resp.raise_for_status()
+        self._client.delete(self._course(f"/quizzes/{quiz_id}"))
 
     def create_quiz_report(
         self, quiz_id: int, *, all_versions: bool = False
@@ -218,7 +212,6 @@ class QuizzesMixin(BaseClient):
                 "include[]": ["file", "progress"],
             },
         )
-        resp.raise_for_status()
         return _quiz_report(resp.json())
 
     def get_quiz_report(self, quiz_id: int, report_id: int) -> CanvasQuizReport:
@@ -227,7 +220,6 @@ class QuizzesMixin(BaseClient):
             self._course(f"/quizzes/{quiz_id}/reports/{report_id}"),
             params={"include[]": ["file", "progress"]},
         )
-        resp.raise_for_status()
         return _quiz_report(resp.json())
 
     def download_quiz_report(
@@ -265,7 +257,6 @@ class QuizzesMixin(BaseClient):
             time.sleep(interval)
             report = self.get_quiz_report(quiz_id, report.id)
         resp = self._client.get(report.file.url, follow_redirects=True)
-        resp.raise_for_status()
         return resp.content.decode("utf-8-sig")
 
     def list_quiz_submissions(self, quiz_id: int) -> list[CanvasQuizSubmission]:

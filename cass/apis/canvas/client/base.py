@@ -12,7 +12,7 @@ import re
 import time
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, Self, TypeVar
+from typing import IO, Any, Self, TypeVar
 from urllib.parse import parse_qsl, urlsplit, urlunsplit
 
 import httpx
@@ -30,6 +30,7 @@ from ..auth import (
     check_response,
     find_auth,
 )
+from ..errors import raise_for_canvas_status
 from ..raw import api_path, form_content
 
 T = TypeVar("T")
@@ -144,7 +145,7 @@ class RetryTransport(httpx.BaseTransport):
 
             if response.status_code == 429:
                 if attempt == MAX_RETRIES:
-                    return response  # let raise_for_status handle it
+                    return response  # the response hook raises CanvasAPIError
                 retry_after = response.headers.get("Retry-After")
                 wait = float(retry_after) if retry_after else 2**attempt
                 response.close()
@@ -276,6 +277,7 @@ class BaseClient:
                 cookies=self.auth.cookies(),
                 transport=transport,
                 timeout=30.0,
+                event_hooks={"response": [raise_for_canvas_status]},
             )
         return self._http
 
@@ -342,7 +344,6 @@ class BaseClient:
         results: list[dict[str, Any]] = []
         resp = self._client.get(urlunsplit(url._replace(query="")), params=first)
         while True:
-            resp.raise_for_status()
             data = resp.json()
             if isinstance(data, list):
                 results.extend(data)
@@ -372,7 +373,7 @@ class BaseClient:
         *path* may be ``/api/v1/x``, ``/x`` or ``x``; use ``course_path()``
         for course-relative paths. ``data`` may be a dict or a list of pairs
         (repeated keys are kept); other kwargs go to httpx. Raises
-        ``httpx.HTTPStatusError`` on a 4xx/5xx response.
+        ``CanvasAPIError`` on a 4xx/5xx response.
         """
         if isinstance(kwargs.get("data"), list):
             kwargs["content"] = form_content(kwargs.pop("data"))
@@ -381,7 +382,16 @@ class BaseClient:
                 "Content-Type": "application/x-www-form-urlencoded",
             }
         resp = self._client.request(method, api_path(path), **kwargs)
-        resp.raise_for_status()
+        return resp
+
+    def _post_upload(
+        self, url: str, *, data: dict[str, Any], filename: str, file: IO[bytes]
+    ) -> httpx.Response:
+        """POST a file to an absolute upload URL (outside the Canvas API client)."""
+        resp = httpx.post(
+            url, data=data, files={"file": (filename, file)}, timeout=120.0
+        )
+        raise_for_canvas_status(resp)
         return resp
 
     @property
@@ -389,7 +399,6 @@ class BaseClient:
         """IANA time zone of the course (from cass.toml, else fetched once)."""
         if not self._time_zone:
             resp = self._client.get(self._course())
-            resp.raise_for_status()
             self._time_zone = resp.json().get("time_zone") or "UTC"
             _console.print(
                 "[dim]Course time zone is not in cass.toml; "
@@ -405,11 +414,10 @@ class BaseClient:
             resource_id: Canvas resource ID.
         """
         key = resource_key(resource)
-        resp = self._client.put(
+        self._client.put(
             self._course(f"/{resource}/{resource_id}"),
             data={f"{key}[published]": True},
         )
-        resp.raise_for_status()
 
     def unpublish(self, resource: str, resource_id: int) -> None:
         """Unpublish a resource (module, assignment, or quiz).
@@ -419,11 +427,10 @@ class BaseClient:
             resource_id: Canvas resource ID.
         """
         key = resource_key(resource)
-        resp = self._client.put(
+        self._client.put(
             self._course(f"/{resource}/{resource_id}"),
             data={f"{key}[published]": False},
         )
-        resp.raise_for_status()
 
     # --- Resolve by name ---
 

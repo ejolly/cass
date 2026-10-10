@@ -25,7 +25,6 @@ class ModulesMixin(BaseClient):
     def get_module(self, module_id: int) -> CanvasModule:
         """Get a single module by ID."""
         resp = self._client.get(self._course(f"/modules/{module_id}"))
-        resp.raise_for_status()
         return msgspec.convert(resp.json(), CanvasModule, strict=False)
 
     def list_module_items(self, module_id: int) -> list[CanvasModuleItem]:
@@ -54,7 +53,6 @@ class ModulesMixin(BaseClient):
         if position is not None:
             params["module[position]"] = position
         resp = self._client.post(self._course("/modules"), data=params)
-        resp.raise_for_status()
         return msgspec.convert(resp.json(), CanvasModule, strict=False)
 
     def update_module(self, module_id: int, **kwargs: object) -> CanvasModule:
@@ -69,13 +67,11 @@ class ModulesMixin(BaseClient):
         """
         params = {f"module[{k}]": v for k, v in kwargs.items()}
         resp = self._client.put(self._course(f"/modules/{module_id}"), data=params)
-        resp.raise_for_status()
         return msgspec.convert(resp.json(), CanvasModule, strict=False)
 
     def delete_module(self, module_id: int) -> None:
         """Delete a module."""
-        resp = self._client.delete(self._course(f"/modules/{module_id}"))
-        resp.raise_for_status()
+        self._client.delete(self._course(f"/modules/{module_id}"))
 
     def create_module_item(
         self,
@@ -105,7 +101,6 @@ class ModulesMixin(BaseClient):
         resp = self._client.post(
             self._course(f"/modules/{module_id}/items"), data=params
         )
-        resp.raise_for_status()
         return msgspec.convert(resp.json(), CanvasModuleItem, strict=False)
 
     def resolve_module(self, id_or_name: str) -> CanvasModule:

@@ -25,7 +25,6 @@ class AssignmentsMixin(BaseClient):
     def get_assignment(self, assignment_id: int) -> CanvasAssignmentResponse:
         """Get a single assignment by ID."""
         resp = self._client.get(self._course(f"/assignments/{assignment_id}"))
-        resp.raise_for_status()
         return msgspec.convert(resp.json(), CanvasAssignmentResponse, strict=False)
 
     def create_assignment(
@@ -71,7 +70,6 @@ class AssignmentsMixin(BaseClient):
             params["assignment[description]"] = description
 
         resp = self._client.post(self._course("/assignments"), data=params)
-        resp.raise_for_status()
         return msgspec.convert(resp.json(), CanvasAssignmentResponse, strict=False)
 
     def update_assignment(
@@ -90,13 +88,11 @@ class AssignmentsMixin(BaseClient):
         resp = self._client.put(
             self._course(f"/assignments/{assignment_id}"), data=params
         )
-        resp.raise_for_status()
         return msgspec.convert(resp.json(), CanvasAssignmentResponse, strict=False)
 
     def delete_assignment(self, assignment_id: int) -> None:
         """Delete an assignment."""
-        resp = self._client.delete(self._course(f"/assignments/{assignment_id}"))
-        resp.raise_for_status()
+        self._client.delete(self._course(f"/assignments/{assignment_id}"))
 
     def list_assignment_groups(self) -> list[CanvasAssignmentGroup]:
         """List assignment groups (grade categories).
@@ -131,13 +127,11 @@ class AssignmentsMixin(BaseClient):
         if group_weight is not None:
             params["group_weight"] = group_weight
         resp = self._client.post(self._course("/assignment_groups"), data=params)
-        resp.raise_for_status()
         return msgspec.convert(resp.json(), CanvasAssignmentGroup, strict=False)
 
     def delete_assignment_group(self, group_id: int) -> None:
         """Delete an assignment group (Canvas also deletes its assignments)."""
-        resp = self._client.delete(self._course(f"/assignment_groups/{group_id}"))
-        resp.raise_for_status()
+        self._client.delete(self._course(f"/assignment_groups/{group_id}"))
 
     def resolve_assignment_group(self, id_or_name: str) -> CanvasAssignmentGroup:
         """Resolve an assignment group by numeric ID or name (case-insensitive).

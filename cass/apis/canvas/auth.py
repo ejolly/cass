@@ -270,17 +270,24 @@ def find_auth(root: Path) -> CanvasAuth | None:
 
 
 def _error_detail(response: httpx.Response) -> str:
-    """Best-effort extraction of Canvas's error message from a response."""
+    """Best-effort extraction of Canvas's error message from a response.
+
+    Prefers ``errors[0].message``, then a top-level ``message``, then the
+    first 200 characters of the body, then the bare status code.
+    """
     try:
         body = response.json()
     except ValueError:
-        return response.text[:200] or f"HTTP {response.status_code}"
-    errors = body.get("errors") if isinstance(body, dict) else None
-    if isinstance(errors, list) and errors:
-        first = errors[0]
-        if isinstance(first, dict) and "message" in first:
-            return str(first["message"])
-    return f"HTTP {response.status_code}"
+        body = None
+    if isinstance(body, dict):
+        errors = body.get("errors")
+        if isinstance(errors, list) and errors:
+            first = errors[0]
+            if isinstance(first, dict) and "message" in first:
+                return str(first["message"])
+        if isinstance(body.get("message"), str):
+            return body["message"]
+    return response.text[:200] or f"HTTP {response.status_code}"
 
 
 def _is_csrf_rejection(response: httpx.Response) -> bool:

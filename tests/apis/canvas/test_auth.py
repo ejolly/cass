@@ -210,3 +210,34 @@ class TestClientSessionAuth:
         no_csrf = SessionAuth(session="s", csrf_token="", source=CREDS_FILENAME)
         with _client(no_csrf, lambda r: _json(200, {"id": 1, "name": "C"})) as c:
             assert c.get_course().id == 1
+
+
+class TestErrorDetail:
+    def test_error_detail_errors_list(self):
+        from cass.apis.canvas.auth import _error_detail
+
+        resp = httpx.Response(400, json={"errors": [{"message": "Not allowed"}]})
+        assert _error_detail(resp) == "Not allowed"
+
+    def test_error_detail_top_level_message(self):
+        from cass.apis.canvas.auth import _error_detail
+
+        message = "The specified resource does not exist."
+        assert _error_detail(httpx.Response(404, json={"message": message})) == message
+
+    def test_error_detail_html_body(self):
+        from cass.apis.canvas.auth import _error_detail
+
+        body = "<html>" + "x" * 300
+        assert _error_detail(httpx.Response(404, text=body)) == body[:200]
+
+    def test_error_detail_dict_errors_falls_back_to_body(self):
+        from cass.apis.canvas.auth import _error_detail
+
+        resp = httpx.Response(400, json={"errors": {"name": [{"message": "blank"}]}})
+        assert _error_detail(resp) == resp.text[:200]
+
+    def test_error_detail_empty_body(self):
+        from cass.apis.canvas.auth import _error_detail
+
+        assert _error_detail(httpx.Response(502)) == "HTTP 502"

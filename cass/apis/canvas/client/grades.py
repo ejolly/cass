@@ -49,13 +49,12 @@ class GradesMixin(BaseClient):
             True on success, False on failure.
         """
         try:
-            resp = self._client.put(
+            self._client.put(
                 self._course(
                     f"/assignments/{assignment_id}/submissions/{student_canvas_id}"
                 ),
                 data={"submission[posted_grade]": grade},
             )
-            resp.raise_for_status()
             return True
         except CanvasAuthError:
             raise
@@ -84,7 +83,6 @@ class GradesMixin(BaseClient):
             self._course(f"/assignments/{assignment_id}/submissions/update_grades"),
             data=params,
         )
-        resp.raise_for_status()
         return msgspec.convert(resp.json(), CanvasProgress, strict=False)
 
     def check_progress(self, progress_id: int) -> CanvasProgress:
@@ -97,7 +95,6 @@ class GradesMixin(BaseClient):
             Current progress state.
         """
         resp = self._client.get(f"/progress/{progress_id}")
-        resp.raise_for_status()
         return msgspec.convert(resp.json(), CanvasProgress, strict=False)
 
     def wait_for_progress(
@@ -151,7 +148,6 @@ class GradesMixin(BaseClient):
             f"{base}/api/graphql",
             json=payload,
         )
-        resp.raise_for_status()
         body = resp.json()
         if body.get("errors"):
             msgs = "; ".join(e.get("message", str(e)) for e in body["errors"])

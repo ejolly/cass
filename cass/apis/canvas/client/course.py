@@ -27,7 +27,6 @@ class CourseMixin(BaseClient):
             Course metadata.
         """
         resp = self._client.get(self._course("?include[]=total_students"))
-        resp.raise_for_status()
         return msgspec.convert(resp.json(), CanvasCourse, strict=False)
 
     def list_users(self, enrollment_type: str | None = None) -> list[CanvasUser]:

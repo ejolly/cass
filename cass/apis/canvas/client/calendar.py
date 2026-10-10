@@ -80,7 +80,6 @@ class CalendarMixin(BaseClient):
         if location_name:
             fields["location_name"] = location_name
         resp = self._client.post("/calendar_events", data=_calendar_event_form(fields))
-        resp.raise_for_status()
         return msgspec.convert(resp.json(), CanvasCalendarEvent, strict=False)
 
     def update_calendar_event(
@@ -99,13 +98,11 @@ class CalendarMixin(BaseClient):
         resp = self._client.put(
             f"/calendar_events/{event_id}", data=_calendar_event_form(kwargs)
         )
-        resp.raise_for_status()
         return msgspec.convert(resp.json(), CanvasCalendarEvent, strict=False)
 
     def delete_calendar_event(self, event_id: int) -> None:
         """Delete a calendar event."""
-        resp = self._client.delete(f"/calendar_events/{event_id}")
-        resp.raise_for_status()
+        self._client.delete(f"/calendar_events/{event_id}")
 
 
 def _calendar_event_form(fields: dict[str, object]) -> dict[str, object]:

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 __docformat__ = "google"
 
+from ..errors import CanvasAPIError
 from .announcements import AnnouncementsMixin
 from .assignments import AssignmentsMixin
 from .base import (
@@ -35,6 +36,7 @@ __all__ = [
     "THROTTLE_DELAY",
     "THROTTLE_THRESHOLD",
     "BaseClient",
+    "CanvasAPIError",
     "CanvasClient",
     "RetryTransport",
     "get_auth",

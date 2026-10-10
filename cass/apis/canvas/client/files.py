@@ -4,7 +4,6 @@ from __future__ import annotations
 
 __docformat__ = "google"
 
-import httpx
 import msgspec
 
 from ..schema import CanvasFile, CanvasFolder
@@ -65,21 +64,15 @@ class FilesMixin(BaseClient):
             "parent_folder_path": folder or "/",
         }
         resp = self._client.post(self._course("/files"), data=params)
-        resp.raise_for_status()
         upload_info = resp.json()
 
         # Step 2: POST to upload URL
         upload_url = upload_info["upload_url"]
         upload_params = upload_info.get("upload_params", {})
         with open(local_path, "rb") as f:
-            # Upload URL is absolute — use a fresh httpx call
-            resp2 = httpx.post(
-                upload_url,
-                data=upload_params,
-                files={"file": (filename, f)},
-                timeout=120.0,
+            resp2 = self._post_upload(
+                upload_url, data=upload_params, filename=filename, file=f
             )
-        resp2.raise_for_status()
 
         # Step 3: Canvas may return the file directly or a redirect
         if resp2.status_code == 201:
@@ -89,12 +82,10 @@ class FilesMixin(BaseClient):
         location = resp2.headers.get("Location")
         if location:
             resp3 = self._client.get(location)
-            resp3.raise_for_status()
             return msgspec.convert(resp3.json(), CanvasFile, strict=False)
 
         return msgspec.convert(resp2.json(), CanvasFile, strict=False)
 
     def delete_file(self, file_id: int) -> None:
         """Delete a file."""
-        resp = self._client.delete(f"/files/{file_id}")
-        resp.raise_for_status()
+        self._client.delete(f"/files/{file_id}")

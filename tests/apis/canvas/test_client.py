@@ -734,6 +734,56 @@ class TestCanvasClient:
         with pytest.raises(httpx.HTTPStatusError):
             client.request("GET", "/nope")
 
+    def test_client_methods_raise_canvas_api_error(self, mock_client):
+        from cass.apis.canvas.client import CanvasAPIError
+
+        client, transport = mock_client
+        transport.add(404, json_data={"message": "not found"})
+        with pytest.raises(CanvasAPIError) as info:
+            client.get_quiz(9)
+        assert info.value.status_code == 404
+        assert info.value.canvas_message == "not found"
+
+    def test_request_raises_canvas_api_error_for_html_404(self, mock_client):
+        from cass.apis.canvas.client import CanvasAPIError
+
+        client, transport = mock_client
+        transport.add(404, content=b"<html>Page not found</html>")
+        with pytest.raises(CanvasAPIError) as info:
+            client.request("GET", "/nope")
+        assert info.value.canvas_message.startswith("<html>")
+
+    def test_upload_post_failure_raises_canvas_api_error(
+        self, mock_client, monkeypatch, tmp_path
+    ):
+        from cass.apis.canvas.client import CanvasAPIError
+
+        client, transport = mock_client
+        transport.add(
+            json_data={
+                "upload_url": "https://upload.example.com/u",
+                "upload_params": {"k": "v"},
+            }
+        )
+        monkeypatch.setattr(
+            "cass.apis.canvas.client.base.httpx.post",
+            lambda *args, **kwargs: httpx.Response(
+                500,
+                text="boom",
+                request=httpx.Request("POST", "https://upload.example.com/u"),
+            ),
+        )
+        path = tmp_path / "a.txt"
+        path.write_text("hi")
+        with pytest.raises(CanvasAPIError) as info:
+            client.upload_file(str(path))
+        assert info.value.status_code == 500
+
+    def test_push_grade_returns_false_on_error(self, mock_client):
+        client, transport = mock_client
+        transport.add(422, json_data={"errors": [{"message": "bad grade"}]})
+        assert client.push_grade(5, 7, "A") is False
+
     def test_course_path(self, mock_client):
         client, _ = mock_client
         assert client.course_path("/quizzes") == "/courses/1/quizzes"
