@@ -1280,3 +1280,83 @@ class TestRequestQuery:
         params = transport.requests[0].url.params
         assert params["a"] == "1"
         assert params["b"] == "2"
+
+
+class TestResolveRules:
+    def test_resolve_ambiguous_case_insensitive(self, mock_client):
+        client, transport = mock_client
+        transport.add(
+            json_data=[
+                {"id": "a", "label": "Week 1"},
+                {"id": "b", "label": "week 1"},
+            ]
+        )
+        with pytest.raises(
+            RuntimeError, match=r"ambiguous: week 1 \(matching IDs: a, b\)"
+        ):
+            client.resolve_tab("week 1")
+
+    def test_resolve_unique_name(self, mock_client):
+        client, transport = mock_client
+        transport.add(
+            json_data=[{"id": "a", "label": "Files"}, {"id": "b", "label": "Grades"}]
+        )
+        assert client.resolve_tab("grades").id == "b"
+
+    def test_resolve_exact_id_beats_name(self, mock_client):
+        client, transport = mock_client
+        transport.add(
+            json_data=[
+                {"id": "files", "label": "Syllabus"},
+                {"id": "x", "label": "files"},
+            ]
+        )
+        assert client.resolve_tab("files").label == "Syllabus"
+
+    def test_resolve_not_found_caps_available_list(self, mock_client):
+        client, transport = mock_client
+        transport.add(
+            json_data=[{"id": i, "name": f"G{i}", "position": i} for i in range(1, 26)]
+        )
+        with pytest.raises(RuntimeError) as exc_info:
+            client.resolve_assignment_group("nope")
+        message = str(exc_info.value)
+        assert "G20, and 5 more" in message
+        assert "G21" not in message
+
+    def test_resolve_not_found_short_list_unchanged(self, mock_client):
+        client, transport = mock_client
+        transport.add(
+            json_data=[
+                {"id": 1, "name": "Labs", "position": 1},
+                {"id": 2, "name": "HW", "position": 2},
+            ]
+        )
+        with pytest.raises(RuntimeError, match=r"\(available: Labs, HW\)$"):
+            client.resolve_assignment_group("nope")
+
+    def test_resolve_announcement_by_title(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data=[{"id": 13, "title": "Welcome"}])
+        assert client.resolve_announcement("welcome").id == 13
+
+    def test_resolve_announcement_by_id(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data=[{"id": 13, "title": "Welcome"}])
+        assert client.resolve_announcement("13").title == "Welcome"
+
+    def test_resolve_file_by_display_name(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data=[{"id": 15, "display_name": "notes.txt"}])
+        assert client.resolve_file("notes.txt").id == 15
+
+    def test_resolve_file_ambiguous(self, mock_client):
+        client, transport = mock_client
+        transport.add(
+            json_data=[
+                {"id": 15, "display_name": "notes.txt"},
+                {"id": 16, "display_name": "notes.txt"},
+            ]
+        )
+        with pytest.raises(RuntimeError, match="matching IDs: 15, 16"):
+            client.resolve_file("notes.txt")

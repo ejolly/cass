@@ -25,6 +25,16 @@ class AnnouncementsMixin(BaseClient):
         )
         return msgspec.convert(data, list[CanvasAnnouncement], strict=False)
 
+    def resolve_announcement(self, id_or_title: str) -> CanvasAnnouncement:
+        """Resolve an announcement by ID or case-insensitive title.
+
+        Raises:
+            RuntimeError: If no announcement matches, or the title is ambiguous.
+        """
+        return self._resolve(
+            self.list_announcements(), id_or_title, "Announcement", lambda a: a.title
+        )
+
     def create_announcement(self, title: str, message: str) -> CanvasAnnouncement:
         """Create an announcement.
 

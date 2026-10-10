@@ -484,17 +484,34 @@ class BaseClient:
         label: str,
         name_of: Callable[[T], str],
     ) -> T:
-        """Match by numeric ID string or case-insensitive name.
+        """Match by exact ID string, else by case-insensitive name.
+
+        An exact ID match wins over any name match.
 
         Raises:
-            RuntimeError: ``"<label> not found: <id_or_name> (available: ...)"``.
+            RuntimeError: ``"<label> name is ambiguous: ..."`` when several
+                items share the name, or ``"<label> not found: ..."`` (listing
+                up to 20 available names) when nothing matches.
         """
-        wanted = id_or_name.lower()
         for item in items:
-            item_id = str(getattr(item, "id", ""))
-            if item_id == id_or_name or name_of(item).lower() == wanted:
+            if str(getattr(item, "id", "")) == id_or_name:
                 return item
-        names = ", ".join(name_of(item) for item in items)
+
+        wanted = id_or_name.lower()
+        matches = [item for item in items if name_of(item).lower() == wanted]
+        if len(matches) == 1:
+            return matches[0]
+        if matches:
+            ids = ", ".join(str(getattr(item, "id", "")) for item in matches)
+            raise RuntimeError(
+                f"{label} name is ambiguous: {id_or_name} "
+                f"(matching IDs: {ids}). Use an ID."
+            )
+
+        max_listed = 20
+        names = ", ".join(name_of(item) for item in items[:max_listed])
+        if len(items) > max_listed:
+            names += f", and {len(items) - max_listed} more"
         raise RuntimeError(f"{label} not found: {id_or_name} (available: {names})")
 
 

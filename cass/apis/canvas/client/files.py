@@ -28,6 +28,16 @@ class FilesMixin(BaseClient):
             data = self._get_paginated(self._course("/files"))
         return msgspec.convert(data, list[CanvasFile], strict=False)
 
+    def resolve_file(self, id_or_name: str) -> CanvasFile:
+        """Resolve a file by ID or case-insensitive display name.
+
+        Raises:
+            RuntimeError: If no file matches, or the name is ambiguous.
+        """
+        return self._resolve(
+            self.list_files(), id_or_name, "File", lambda f: f.display_name
+        )
+
     def list_folders(self) -> list[CanvasFolder]:
         """List all folders in the course.
 
