@@ -34,6 +34,14 @@ def file_tree_records(
     return records
 
 
+def folder_records(folders: list[CanvasFolder]) -> list[dict[str, Any]]:
+    """Every folder with its path relative to the course files root added."""
+    from ..apis.canvas.client.files import folder_paths
+
+    paths = folder_paths(folders)
+    return [{**msgspec.to_builtins(f), "path": paths[f.id]} for f in folders]
+
+
 def quiz_detail_record(
     quiz: CanvasQuiz,
     questions: list[CanvasQuizQuestion],

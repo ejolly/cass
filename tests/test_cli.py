@@ -1468,9 +1468,104 @@ class TestCanvasTabsAndFiles:
         fake.list_files.return_value = [
             CanvasFile(id=18962999, display_name="notes.txt", size=20, folder_id=1)
         ]
+        readings = CanvasFolder(
+            id=3,
+            name="readings",
+            full_name="course files/readings",
+            parent_folder_id=1,
+        )
+        fake.update_file.return_value = CanvasFile(id=15, display_name="notes.txt")
+        fake.resolve_folder.return_value = readings
+        fake.create_folder.return_value = readings
         monkeypatch.setattr("cass.cli.canvas._common.require_canvas", lambda: None)
         monkeypatch.setattr("cass.cli.canvas._common.client", lambda **_: fake)
         return fake
+
+    def test_files_mv_creates_folder_and_moves(self, fake_client):
+        result = runner.invoke(
+            app, ["canvas", "files", "mv", "notes.txt", "readings/week1"]
+        )
+        assert result.exit_code == 0, result.output
+        fake_client.create_folder.assert_called_once_with("readings/week1")
+        fake_client.update_file.assert_called_once_with(
+            15, folder_id=3, on_duplicate=None
+        )
+        assert "Moved:" in result.stdout
+
+    def test_files_rename(self, fake_client):
+        result = runner.invoke(
+            app,
+            [
+                "canvas",
+                "files",
+                "rename",
+                "15",
+                "new.txt",
+                "--on-duplicate",
+                "overwrite",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        fake_client.update_file.assert_called_once_with(
+            15, name="new.txt", on_duplicate="overwrite"
+        )
+        assert "Renamed:" in result.stdout
+
+    def test_files_publish_unpublish(self, fake_client):
+        assert runner.invoke(app, ["canvas", "files", "publish", "15"]).exit_code == 0
+        fake_client.update_file.assert_called_with(15, locked=False)
+        assert runner.invoke(app, ["canvas", "files", "unpublish", "15"]).exit_code == 0
+        fake_client.update_file.assert_called_with(15, locked=True)
+
+    def test_folders_create(self, fake_client):
+        result = runner.invoke(app, ["canvas", "files", "folders", "create", "a/b"])
+        assert result.exit_code == 0, result.output
+        fake_client.create_folder.assert_called_once_with("a/b")
+        assert "Created folder:" in result.stdout
+
+    def test_folders_delete_needs_yes_off_tty(self, fake_client):
+        result = runner.invoke(
+            app, ["canvas", "files", "folders", "delete", "readings"]
+        )
+        assert result.exit_code == 1
+        assert "--yes" in result.stderr
+        fake_client.delete_folder.assert_not_called()
+
+    def test_folders_delete_force(self, fake_client):
+        result = runner.invoke(
+            app, ["canvas", "files", "folders", "delete", "readings", "--force", "-y"]
+        )
+        assert result.exit_code == 0, result.output
+        fake_client.delete_folder.assert_called_once_with(3, force=True)
+        assert "Deleted folder:" in result.stdout
+
+    def test_folders_delete_root_refused(self, fake_client):
+        from cass.apis.canvas.schema import CanvasFolder
+
+        fake_client.resolve_folder.return_value = CanvasFolder(
+            id=1, name="course files", full_name="course files"
+        )
+        result = runner.invoke(app, ["canvas", "files", "folders", "delete", "1", "-y"])
+        assert result.exit_code == 1
+        # the entry point turns this RuntimeError into a one-line stderr error
+        assert "root folder" in str(result.exception)
+        fake_client.delete_folder.assert_not_called()
+
+    def test_folders_bare_runs_list(self, fake_client):
+        from cass.apis.canvas.schema import CanvasFolder
+
+        fake_client.list_folders.return_value = [
+            CanvasFolder(id=1, name="course files", full_name="course files"),
+            CanvasFolder(
+                id=3,
+                name="readings",
+                full_name="course files/readings",
+                parent_folder_id=1,
+            ),
+        ]
+        result = runner.invoke(app, ["canvas", "files", "folders"])
+        assert result.exit_code == 0, result.output
+        assert "readings" in result.stdout
 
     def test_delete_file_without_yes_on_non_tty_exits_1(self, fake_client):
         result = runner.invoke(app, ["canvas", "files", "delete", "15"])

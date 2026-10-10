@@ -6,6 +6,7 @@ __docformat__ = "google"
 
 from cass.actions.canvas_records import (
     file_tree_records,
+    folder_records,
     module_detail_record,
     quiz_detail_record,
 )
@@ -48,3 +49,19 @@ def test_module_detail_record_has_items() -> None:
     )
     assert record["name"] == "Week 1"
     assert record["items"][0]["title"] == "Read"
+
+
+def test_folder_records_add_path() -> None:
+    records = folder_records(
+        [
+            CanvasFolder(id=2, name="course files", full_name="course files"),
+            CanvasFolder(
+                id=3,
+                name="readings",
+                full_name="course files/readings",
+                parent_folder_id=2,
+            ),
+        ]
+    )
+    assert [r["path"] for r in records] == ["", "readings"]
+    assert records[1]["id"] == 3

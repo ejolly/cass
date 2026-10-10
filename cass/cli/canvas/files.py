@@ -1,4 +1,4 @@
-"""``cass canvas files`` — list, upload, delete."""
+"""``cass canvas files`` — list, upload, move, rename, publish, delete; folders."""
 
 from __future__ import annotations
 
@@ -8,15 +8,22 @@ from typing import Annotated
 
 import typer
 
-from ...actions.files import OnDuplicate
+from ...actions.files import OnConflict, OnDuplicate
 from . import _common
 from ._common import console, due, err_console, size
 
 files_app = typer.Typer(
     invoke_without_command=True,
     no_args_is_help=False,
-    help="Course files — list, upload, delete.",
+    help="Course files — list, upload, move, rename, publish, delete; folders.",
 )
+
+folders_app = typer.Typer(
+    invoke_without_command=True,
+    no_args_is_help=False,
+    help="Course folders — list, create, delete.",
+)
+files_app.add_typer(folders_app, name="folders")
 
 
 @files_app.callback()
@@ -171,3 +178,167 @@ def files_delete(
         _common.print_plan(c)
         return
     console.print(f"[red]Deleted file:[/red] {f.display_name}")
+
+
+OnConflictOption = Annotated[
+    OnConflict | None,
+    typer.Option(
+        "--on-duplicate",
+        case_sensitive=False,
+        help="If the name exists in the destination: rename or overwrite",
+    ),
+]
+
+
+@files_app.command(name="mv")
+def files_mv(
+    id_or_name: str = typer.Argument(..., help="File ID or name"),
+    folder: str = typer.Argument(
+        ..., help="Destination folder path (created if missing); '' is the root"
+    ),
+    on_duplicate: OnConflictOption = None,
+    dry_run: bool = _common.dry_run_option(),
+) -> None:
+    """Move a file to another folder."""
+    _common.require_canvas()
+    with _common.client(dry_run=dry_run) as c:
+        f = c.resolve_file(id_or_name)
+        dest = c.create_folder(folder)
+        c.update_file(
+            f.id,
+            folder_id=dest.id,
+            on_duplicate=on_duplicate.value if on_duplicate else None,
+        )
+    if dry_run:
+        _common.print_plan(c)
+        return
+    console.print(
+        f"[green]Moved:[/green] {f.display_name} → "
+        f"{folder.strip('/') or 'the files root'}"
+    )
+
+
+@files_app.command(name="rename")
+def files_rename(
+    id_or_name: str = typer.Argument(..., help="File ID or name"),
+    new_name: str = typer.Argument(..., help="New file name"),
+    on_duplicate: OnConflictOption = None,
+    dry_run: bool = _common.dry_run_option(),
+) -> None:
+    """Rename a file."""
+    _common.require_canvas()
+    with _common.client(dry_run=dry_run) as c:
+        f = c.resolve_file(id_or_name)
+        renamed = c.update_file(
+            f.id,
+            name=new_name,
+            on_duplicate=on_duplicate.value if on_duplicate else None,
+        )
+    if dry_run:
+        _common.print_plan(c)
+        return
+    console.print(f"[green]Renamed:[/green] {f.display_name} → {renamed.display_name}")
+
+
+@files_app.command(name="publish")
+def files_publish(
+    id_or_name: str = typer.Argument(..., help="File ID or name"),
+    dry_run: bool = _common.dry_run_option(),
+) -> None:
+    """Make a file visible to students."""
+    _set_locked(id_or_name, locked=False, dry_run=dry_run)
+
+
+@files_app.command(name="unpublish")
+def files_unpublish(
+    id_or_name: str = typer.Argument(..., help="File ID or name"),
+    dry_run: bool = _common.dry_run_option(),
+) -> None:
+    """Hide a file from students (lock it)."""
+    _set_locked(id_or_name, locked=True, dry_run=dry_run)
+
+
+def _set_locked(id_or_name: str, *, locked: bool, dry_run: bool) -> None:
+    _common.require_canvas()
+    with _common.client(dry_run=dry_run) as c:
+        f = c.resolve_file(id_or_name)
+        c.update_file(f.id, locked=locked)
+    if dry_run:
+        _common.print_plan(c)
+        return
+    label = "Unpublished" if locked else "Published"
+    console.print(f"[green]{label}:[/green] {f.display_name}")
+
+
+@folders_app.callback()
+def folders_callback(ctx: typer.Context) -> None:
+    """Course folders; bare ``folders`` runs ``folders list``."""
+    if ctx.invoked_subcommand is None:
+        folders_list(as_json=False)
+
+
+@folders_app.command(name="list")
+def folders_list(as_json: bool = _common.json_option()) -> None:
+    """Show course folders with their paths."""
+    from ...apis.canvas.client.files import folder_paths
+    from .. import report
+
+    _common.require_canvas()
+    with _common.client() as c:
+        folders = c.list_folders()
+
+    if as_json:
+        from ...actions.canvas_records import folder_records
+
+        _common.emit_json_lines(folder_records(folders))
+        return
+
+    paths = folder_paths(folders)
+    headers = ["ID", "Path", "Files", "Folders"]
+    rows = [
+        [str(f.id), paths[f.id] or "/", str(f.files_count), str(f.folders_count)]
+        for f in sorted(folders, key=lambda f: paths[f.id])
+    ]
+    report.render_list(headers, rows, title="Course Folders")
+
+
+@folders_app.command(name="create")
+def folders_create(
+    path: str = typer.Argument(..., help="Folder path (missing parents are created)"),
+    dry_run: bool = _common.dry_run_option(),
+) -> None:
+    """Create a folder."""
+    _common.require_canvas()
+    with _common.client(dry_run=dry_run) as c:
+        folder = c.create_folder(path)
+    if dry_run:
+        _common.print_plan(c)
+        return
+    console.print(f"[green]Created folder:[/green] {path.strip('/')} (id={folder.id})")
+
+
+@folders_app.command(name="delete")
+def folders_delete(
+    id_or_path: str = typer.Argument(..., help="Folder ID or path"),
+    force: bool = typer.Option(
+        False, "--force", help="Delete even if the folder holds files or folders"
+    ),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
+    dry_run: bool = _common.dry_run_option(),
+) -> None:
+    """Delete a folder."""
+    from ..prompts import confirm
+
+    _common.require_canvas()
+    with _common.client(dry_run=dry_run) as c:
+        folder = c.resolve_folder(id_or_path)
+        if folder.parent_folder_id is None:
+            raise RuntimeError("Cannot delete the course files root folder")
+        # Canvas full names start with the root folder's name ("course files/...")
+        path = folder.full_name.partition("/")[2]
+        confirm(f"Delete folder '{path}'?", yes=yes, dry_run=dry_run)
+        c.delete_folder(folder.id, force=force)
+    if dry_run:
+        _common.print_plan(c)
+        return
+    console.print(f"[red]Deleted folder:[/red] {path}")
