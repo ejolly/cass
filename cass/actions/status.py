@@ -70,17 +70,20 @@ def project_status(config_path: Path) -> ProjectStatus:
         return status
 
     conn = db.connect_db(cfg.root)
-    tables = {table.name for table in conn.tables}
+    try:
+        tables = {table.name for table in conn.tables}
 
-    def count(table: str) -> int:
-        return conn[table].count if table in tables else 0
+        def count(table: str) -> int:
+            return conn[table].count if table in tables else 0
 
-    status.db_path = str(db_file)
-    status.course_name = db.get_meta("course_name", conn)
-    status.counts = StatusCounts(
-        students=count("canvas_students"),
-        assignments=count("canvas_assignments"),
-        submissions=count("canvas_submissions"),
-    )
-    status.pending_changes = count_pending(db.get_pending_changes(conn))
+        status.db_path = str(db_file)
+        status.course_name = db.get_meta("course_name", conn)
+        status.counts = StatusCounts(
+            students=count("canvas_students"),
+            assignments=count("canvas_assignments"),
+            submissions=count("canvas_submissions"),
+        )
+        status.pending_changes = count_pending(db.get_pending_changes(conn))
+    finally:
+        conn.close()
     return status

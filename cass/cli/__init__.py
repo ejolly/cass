@@ -193,13 +193,11 @@ def status(
     """Show project sync status and the local DB overview."""
     from .. import db
     from ..actions.config import config_file_path, get_config
-    from ..actions.status import count_pending
+    from ..actions.status import project_status
 
     cfg_path = config_file_path()
     if as_json:
         import msgspec
-
-        from ..actions.status import project_status
 
         if cfg_path is None:
             err_console.print("No cass.toml found. Run 'cass init' to create one.")
@@ -213,61 +211,45 @@ def status(
         )
         return
 
+    info = project_status(cfg_path)
     cfg = get_config()
     console.print("\n[bold]cass status[/bold]\n")
-    console.print(f"Config: {cfg_path}")
+    console.print(f"Config: {info.config_path}")
     console.print(
         "Canvas: " + ("configured" if cfg.has_canvas else "[dim]not configured[/dim]")
     )
     if cfg.has_canvas:
         from ..apis.canvas.auth import find_auth
 
-        console.print(
-            f"Canvas course: {cfg.canvas_base_url}/courses/{cfg.canvas_course_id}"
-        )
+        console.print(f"Canvas course: {info.course_url}")
 
         auth = find_auth(cfg.root)
         auth_label = auth.description if auth else "[red]not found[/red]"
         console.print(f"Canvas auth: {auth_label}")
 
-    db_file = Path(db.db_path())
-    if not db_file.exists():
+    if info.db_path is None or info.counts is None:
         err_console.print("\n[yellow]No local database yet.[/yellow]")
         err_console.print("Next: [bold]cass pull[/bold] to fetch data.\n")
         return
 
-    conn = db.get_db()
-    course_name = db.get_meta("course_name", conn)
+    db_file = Path(info.db_path)
     size_kb = db_file.stat().st_size / 1024
-    if course_name:
-        console.print(f"Course: {course_name}")
+    if info.course_name:
+        console.print(f"Course: {info.course_name}")
     console.print(f"Database: {db_file.name} ({size_kb:.0f} KB)")
 
-    tables = {table.name for table in conn.tables}
+    conn = db.get_db()
     console.print("\n[bold]Data[/bold]")
-    console.print(
-        "  students: "
-        f"{conn['canvas_students'].count if 'canvas_students' in tables else 0}"
-    )
-    console.print(
-        "  assignments: "
-        f"{conn['canvas_assignments'].count if 'canvas_assignments' in tables else 0}"
-    )
-    if (
-        "canvas_grades" in tables
-        and "canvas_assignments" in tables
-        and "canvas_students" in tables
-    ):
+    console.print(f"  students: {info.counts.students}")
+    console.print(f"  assignments: {info.counts.assignments}")
+    if "canvas_grades" in conn.table_names():
         console.print(
             "  gradebook: "
-            f"{conn['canvas_students'].count} students x "
-            f"{conn['canvas_assignments'].count} assignments"
+            f"{info.counts.students} students x {info.counts.assignments} assignments"
         )
-    if "canvas_submissions" in tables:
-        console.print(f"  canvas submissions: {conn['canvas_submissions'].count}")
+    console.print(f"  canvas submissions: {info.counts.submissions}")
 
-    pending = db.get_pending_changes(conn)
-    total = count_pending(pending)
+    total = info.pending_changes or 0
     console.print("\n[bold]Sync[/bold]")
     if total == 0:
         console.print("  [green]All Canvas-managed changes are synchronized.[/green]")
@@ -278,7 +260,7 @@ def status(
         return
 
     console.print(f"  [yellow]{total} pending change(s) ready to review.[/yellow]")
-    _render_pending_summary(pending, title="Pending Changes")
+    _render_pending_summary(db.get_pending_changes(conn), title="Pending Changes")
     err_console.print(
         "Next: [bold]cass push[/bold], [bold]cass revert[/bold], "
         "or [bold]cass view[/bold]\n"
