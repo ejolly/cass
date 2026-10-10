@@ -640,7 +640,11 @@ class TestSessionCookieAuth:
 
 
 class TestCliErrors:
-    def _run_with(self, monkeypatch, exc: Exception):
+    @pytest.fixture(autouse=True)
+    def no_debug(self, monkeypatch):
+        monkeypatch.setenv("CASS_DEBUG", "")
+
+    def _run_with(self, monkeypatch, exc: BaseException):
         from cass.cli import run
 
         def boom() -> None:
@@ -651,24 +655,134 @@ class TestCliErrors:
             run()
         return info.value.code
 
-    def test_run_prints_http_error_without_traceback(self, monkeypatch, capsys):
-        import httpx
+    @pytest.mark.parametrize(
+        ("make_exc", "expected"),
+        [
+            (
+                lambda: _auth_error("Canvas rejected the API token"),
+                ["Canvas rejected the API token"],
+            ),
+            (
+                lambda: _api_error(
+                    404, "DELETE", {"errors": [{"message": "does not exist"}]}
+                ),
+                ["DELETE /courses/1/modules/9 → 404: does not exist"],
+            ),
+            (
+                lambda: _plain_http_error(500, {"message": "boom"}),
+                ["500", "boom"],
+            ),
+            (
+                lambda: __import__("httpx").ConnectError("refused"),
+                ["Could not reach Canvas: refused"],
+            ),
+            (
+                lambda: RuntimeError("Assignment not found: nope"),
+                ["Assignment not found: nope"],
+            ),
+            (
+                lambda: SystemExit("Canvas credentials not found."),
+                ["Canvas credentials not found."],
+            ),
+        ],
+    )
+    def test_run_reports_error_cleanly(self, monkeypatch, capsys, make_exc, expected):
+        assert self._run_with(monkeypatch, make_exc()) == 1
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        for text in expected:
+            assert text in captured.err
+        assert "Traceback" not in captured.err
 
-        req = httpx.Request("DELETE", "https://canvas.example.com/api/v1/modules/1")
-        resp = httpx.Response(404, request=req, json={"errors": [{"message": "x"}]})
-        exc = httpx.HTTPStatusError("nope", request=req, response=resp)
-        assert self._run_with(monkeypatch, exc) == 1
-        out = capsys.readouterr().err
-        assert "404" in out
-        assert "/modules/1" in out
-        assert "Traceback" not in out
+    def test_run_passes_int_exit_codes(self, monkeypatch, capsys):
+        assert self._run_with(monkeypatch, SystemExit(2)) == 2
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert captured.err == ""
 
-    def test_run_prints_runtime_error_without_traceback(self, monkeypatch, capsys):
-        code = self._run_with(monkeypatch, RuntimeError("Assignment not found: nope"))
-        assert code == 1
-        out = capsys.readouterr().err
-        assert "Assignment not found: nope" in out
-        assert "Traceback" not in out
+    def test_debug_flag_reraises(self, monkeypatch):
+        import sys
+
+        from cass.cli import run
+        from cass.cli.canvas import _common
+
+        fake = MagicMock()
+        fake.__enter__.return_value = fake
+        fake.list_quizzes.side_effect = RuntimeError("boom")
+        monkeypatch.setattr(_common, "require_canvas", lambda: None)
+        monkeypatch.setattr(_common, "client", lambda **_: fake)
+        monkeypatch.setattr(sys, "argv", ["cass", "--debug", "canvas", "quizzes"])
+        with pytest.raises(RuntimeError, match="boom"):
+            run()
+
+    def test_cass_debug_env_reraises(self, monkeypatch):
+        monkeypatch.setenv("CASS_DEBUG", "1")
+        from cass.cli import run
+
+        def boom() -> None:
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr("cass.cli.app", boom)
+        with pytest.raises(RuntimeError, match="boom"):
+            run()
+
+    def test_cass_debug_zero_is_off(self, monkeypatch, capsys):
+        monkeypatch.setenv("CASS_DEBUG", "0")
+        assert self._run_with(monkeypatch, RuntimeError("boom")) == 1
+        assert "Traceback" not in capsys.readouterr().err
+
+    def test_pull_runtime_error_reaches_root(self, project_dir, monkeypatch, capsys):
+        import sys
+
+        from cass.cli import run
+
+        def fail(*_args, **_kwargs):
+            raise RuntimeError("pull failed")
+
+        monkeypatch.chdir(project_dir)
+        monkeypatch.setattr("cass.db.pull_block_reason", lambda: None)
+        monkeypatch.setattr("cass.actions.pull.pull_all", fail)
+        monkeypatch.setattr(sys, "argv", ["cass", "pull"])
+        with pytest.raises(SystemExit) as info:
+            run()
+        assert info.value.code == 1
+        err = capsys.readouterr().err
+        assert "pull failed" in err
+        assert "Traceback" not in err
+
+    @pytest.mark.parametrize(
+        "args", [["canvas", "quizzes", "nope"], ["canvas", "nope"]]
+    )
+    def test_usage_errors_exit_2(self, args):
+        assert runner.invoke(app, args).exit_code == 2
+
+
+def _auth_error(message: str) -> Exception:
+    from cass.apis.canvas.auth import CanvasAuthError
+
+    return CanvasAuthError(message)
+
+
+def _error_response(status: int, method: str, body: dict):
+    import httpx
+
+    request = httpx.Request(
+        method, "https://canvas.example.com/api/v1/courses/1/modules/9"
+    )
+    return httpx.Response(status, request=request, json=body)
+
+
+def _api_error(status: int, method: str, body: dict) -> Exception:
+    from cass.apis.canvas.errors import CanvasAPIError
+
+    return CanvasAPIError(_error_response(status, method, body))
+
+
+def _plain_http_error(status: int, body: dict) -> Exception:
+    import httpx
+
+    response = _error_response(status, "DELETE", body)
+    return httpx.HTTPStatusError("failed", request=response.request, response=response)
 
 
 class TestReportHelpers:

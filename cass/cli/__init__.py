@@ -4,6 +4,7 @@ from __future__ import annotations
 
 __docformat__ = "google"
 
+import os
 import tomllib
 from pathlib import Path
 from typing import cast
@@ -47,8 +48,11 @@ def main(
         is_eager=True,
         help="Show version",
     ),
+    debug: bool = typer.Option(False, "--debug", help="Show full tracebacks on errors"),
 ) -> None:
     """cass — Canvas grading CLI."""
+    if debug:
+        os.environ["CASS_DEBUG"] = "1"
     if config is not None:
         from ..actions.config import set_config_path
 
@@ -483,24 +487,20 @@ def pull(
         err_console.print(f"[red]{reason}[/red]")
         raise typer.Exit(code=1)
 
-    try:
-        if not any([do_students, do_assignments, do_submissions]):
-            pull_mod.pull_all(
-                cfg,
-                on_progress=lambda step, detail: err_console.print(
-                    f"  [dim]{step}[/dim] {detail}"
-                ),
-            )
-            return
-        if do_students:
-            pull_mod.pull_students(cfg, err_console)
-        if do_assignments:
-            pull_mod.pull_assignments(cfg, err_console)
-        if do_submissions:
-            pull_mod.pull_submissions(cfg, err_console)
-    except RuntimeError as exc:
-        err_console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(code=1) from exc
+    if not any([do_students, do_assignments, do_submissions]):
+        pull_mod.pull_all(
+            cfg,
+            on_progress=lambda step, detail: err_console.print(
+                f"  [dim]{step}[/dim] {detail}"
+            ),
+        )
+        return
+    if do_students:
+        pull_mod.pull_students(cfg, err_console)
+    if do_assignments:
+        pull_mod.pull_assignments(cfg, err_console)
+    if do_submissions:
+        pull_mod.pull_submissions(cfg, err_console)
 
 
 @app.command()
@@ -584,55 +584,51 @@ def query(
         )
         raise typer.Exit(code=1)
 
-    try:
-        if sql_text:
-            typer.echo(render_query(db.db_path(), sql_text), nl=False)
-            return
+    if sql_text:
+        typer.echo(render_query(db.db_path(), sql_text), nl=False)
+        return
 
-        if dataset not in QUERY_DATASETS:
-            err_console.print(
-                f"[red]Unknown dataset '{dataset}'. "
-                f"Choose from: {', '.join(QUERY_DATASETS)}[/red]"
-            )
-            raise typer.Exit(code=1)
+    if dataset not in QUERY_DATASETS:
+        err_console.print(
+            f"[red]Unknown dataset '{dataset}'. "
+            f"Choose from: {', '.join(QUERY_DATASETS)}[/red]"
+        )
+        raise typer.Exit(code=1)
 
-        if dataset in TABLE_QUERY_DATASETS:
-            typer.echo(
-                render_rows(
-                    db.db_path(),
-                    TABLE_QUERY_DATASETS[dataset],
-                    where=where,
-                    order=order,
-                    limit=limit,
-                ),
-                nl=False,
-            )
-            return
+    if dataset in TABLE_QUERY_DATASETS:
+        typer.echo(
+            render_rows(
+                db.db_path(),
+                TABLE_QUERY_DATASETS[dataset],
+                where=where,
+                order=order,
+                limit=limit,
+            ),
+            nl=False,
+        )
+        return
 
-        if dataset == "submissions":
-            typer.echo(
-                render_query(
-                    db.db_path(),
-                    db.build_submissions_query(where=where, order=order, limit=limit),
-                ),
-                nl=False,
-            )
-            return
+    if dataset == "submissions":
+        typer.echo(
+            render_query(
+                db.db_path(),
+                db.build_submissions_query(where=where, order=order, limit=limit),
+            ),
+            nl=False,
+        )
+        return
 
-        if where or order:
-            err_console.print(
-                "[red]The gradebook dataset only supports --limit in CLI mode.[/red]"
-            )
-            raise typer.Exit(code=1)
+    if where or order:
+        err_console.print(
+            "[red]The gradebook dataset only supports --limit in CLI mode.[/red]"
+        )
+        raise typer.Exit(code=1)
 
-        conn = db.get_db()
-        headers, rows = db.build_canvas_gradebook_matrix(conn)
-        if limit:
-            rows = rows[:limit]
-        report.render_list(headers, rows, title="Gradebook")
-    except RuntimeError as exc:
-        err_console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(code=1) from exc
+    conn = db.get_db()
+    headers, rows = db.build_canvas_gradebook_matrix(conn)
+    if limit:
+        rows = rows[:limit]
+    report.render_list(headers, rows, title="Gradebook")
 
 
 @app.command(name="delete")
@@ -804,24 +800,49 @@ def view(
         start_nicegui_server(port=port, project_root=get_config().root)
 
 
+def _debug_enabled() -> bool:
+    """True when ``--debug`` or ``CASS_DEBUG`` asks for full tracebacks."""
+    return os.environ.get("CASS_DEBUG", "") not in ("", "0")
+
+
+def _fail(message: str) -> SystemExit:
+    err_console.print(f"Error: {message}", style="red", markup=False, highlight=False)
+    return SystemExit(1)
+
+
 def run() -> None:
-    """Console-script entry point: run the CLI, reporting auth failures cleanly."""
+    """Console-script entry point: the one place errors become messages.
+
+    Auth, HTTP, network, runtime and string-coded exits print one line to
+    stderr and exit 1. ``--debug`` / ``CASS_DEBUG`` re-raises for a traceback.
+    """
     import httpx
 
     from ..apis.canvas.auth import CanvasAuthError
+    from ..apis.canvas.errors import CanvasAPIError
 
     try:
         app()
     except CanvasAuthError as exc:
-        err_console.print(f"[red]{exc}[/red]")
-        raise SystemExit(1) from None
+        if _debug_enabled():
+            raise
+        raise _fail(str(exc)) from None
     except httpx.HTTPStatusError as exc:
-        resp = exc.response
-        err_console.print(
-            f"[red]Canvas returned {resp.status_code} for "
-            f"{exc.request.method} {exc.request.url.path}[/red]"
+        if _debug_enabled():
+            raise
+        api_error = (
+            exc if isinstance(exc, CanvasAPIError) else CanvasAPIError(exc.response)
         )
-        raise SystemExit(1) from None
+        raise _fail(str(api_error)) from None
+    except httpx.TransportError as exc:
+        if _debug_enabled():
+            raise
+        raise _fail(f"Could not reach Canvas: {exc}") from None
     except RuntimeError as exc:
-        err_console.print(f"[red]{exc}[/red]")
-        raise SystemExit(1) from None
+        if _debug_enabled():
+            raise
+        raise _fail(str(exc)) from None
+    except SystemExit as exc:
+        if not isinstance(exc.code, str) or _debug_enabled():
+            raise
+        raise _fail(exc.code) from None
