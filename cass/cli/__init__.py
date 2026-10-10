@@ -801,7 +801,13 @@ def _debug_enabled() -> bool:
 
 
 def _fail(message: str) -> SystemExit:
-    err_console.print(f"Error: {message}", style="red", markup=False, highlight=False)
+    err_console.print(
+        f"Error: {message}",
+        style="red",
+        markup=False,
+        highlight=False,
+        soft_wrap=True,
+    )
     return SystemExit(1)
 
 

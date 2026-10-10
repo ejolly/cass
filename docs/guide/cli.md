@@ -16,7 +16,7 @@ cass revert       # discard pending local changes
 
 ## Canvas management
 
-Every Canvas resource group has the same shape: `list` shows all items (the bare group runs `list`), `show ID_OR_NAME` shows one, and the write verbs follow. Commands that act on one resource take its ID or its name; if a name matches several items, the command fails and lists the matching IDs. Calendar events take IDs only.
+Every Canvas resource group has the same shape: `list` shows all items (the bare group runs `list`), `show ID_OR_NAME` shows one item (except `tabs show`, which makes a tab visible), and the write verbs follow. Commands that act on one resource take its ID or its name; if a name matches several items, the command fails and lists the matching IDs. Calendar events take IDs only.
 
 ```bash
 cass canvas                      # course overview
@@ -46,7 +46,7 @@ cass canvas api PUT /courses/{course}/modules/5 --data 'module[name]=Week1'
 
 `list` and `show` print tables; `--csv PATH` and `--save PATH` write a file instead.
 
-`--json` prints machine-readable output with Canvas field names: JSON Lines (one object per line) on `list` commands, one object on `show` commands and on `cass status --json`. It cannot be combined with `--csv` or `--save`.
+`--json` prints machine-readable output with Canvas field names: JSON Lines (one object per line) on `list` commands, one object on `quizzes`/`modules`/`assignments show` and on `cass status --json`. It cannot be combined with `--csv` or `--save`. `tabs show` is a write: it takes `--dry-run`, not `--json`.
 
 ```bash
 cass canvas assignments list --json | jq -r '.name'
@@ -59,7 +59,7 @@ cass status --json | jq '.pending_changes'
 - `quizzes show --json` adds `questions` and `questions_source`: `questions` when read from the quiz's questions endpoint, `statistics` when that endpoint is closed (concluded courses) and the questions come from the quiz statistics.
 - `status --json` has the keys `config_path`, `course_url`, `course_id`, `auth_source`, `db_path`, `course_name`, `counts` (`students`, `assignments`, `submissions`), and `pending_changes`.
 
-stdout carries only data. Hints, progress, prompts, and errors go to stderr, so pipes and redirects receive clean output. A failed command exits 1 with one message; a usage error (unknown option, missing argument) exits 2. Pass `--debug` (or set `CASS_DEBUG=1`) to see the full traceback.
+stdout carries only data. Hints, progress, prompts, and errors go to stderr, so pipes and redirects receive clean output. A failed command exits 1 with one message; a usage error (unknown option, missing argument) exits 2. `--debug` is a global option and goes before the subcommand (`cass --debug canvas quizzes list`); or set `CASS_DEBUG=1`. Either shows the full traceback.
 
 ## Previewing changes
 

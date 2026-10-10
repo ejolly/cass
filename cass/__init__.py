@@ -26,7 +26,9 @@ Install: `uv tool install cass` or `uvx cass`.
 ## Canvas Commands (`cass canvas`)
 
 Every resource group has `list` (the bare group runs it). Commands acting on
-one resource take an ID or a name. `list` and `show` accept `--json`.
+one resource take an ID or a name. `list` accepts `--json`, as does `show` on
+quizzes, modules and assignments (it displays one item). `tabs show` instead
+makes a tab visible: a write that accepts `--dry-run`.
 
 | Command | Description |
 |---------|-------------|
@@ -111,9 +113,11 @@ one resource take an ID or a name. `list` and `show` accept `--json`.
 ## Output
 
 `--json` prints JSON Lines (one object per line, Canvas field names) on list
-commands and one object on `show` commands and `cass status`. stdout carries
-only data; hints, progress, prompts and errors go to stderr. Errors exit 1,
-usage errors exit 2; `--debug` (or `CASS_DEBUG=1`) shows the full traceback.
+commands and one object on `show` commands that display an item, and on
+`cass status`. stdout carries only data; hints, progress, prompts and errors
+go to stderr. Errors exit 1, usage errors exit 2. `--debug` is a global option
+placed before the subcommand (`cass --debug canvas quizzes list`); or set
+`CASS_DEBUG=1`. Either shows the full traceback.
 """
 
 import importlib.metadata

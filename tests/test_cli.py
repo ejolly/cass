@@ -1143,7 +1143,9 @@ class TestCanvasQuizzes:
         assert "id=20" in result.stdout
 
     def test_create_from_file_missing_group_errors(self, quiz_client, tmp_path):
-        quiz_client.resolve_assignment_group.side_effect = RuntimeError(
+        from cass.apis.canvas.errors import CanvasNotFoundError
+
+        quiz_client.resolve_assignment_group.side_effect = CanvasNotFoundError(
             "Assignment group not found: Nope"
         )
         path = tmp_path / "q.toml"
@@ -1156,9 +1158,10 @@ class TestCanvasQuizzes:
         quiz_client.create_quiz.assert_not_called()
 
     def test_create_from_file_creates_group(self, quiz_client, tmp_path):
+        from cass.apis.canvas.errors import CanvasNotFoundError
         from cass.apis.canvas.schema import CanvasAssignmentGroup
 
-        quiz_client.resolve_assignment_group.side_effect = RuntimeError("nope")
+        quiz_client.resolve_assignment_group.side_effect = CanvasNotFoundError("nope")
         quiz_client.create_assignment_group.return_value = CanvasAssignmentGroup(
             id=11, name="Nope"
         )
@@ -1810,3 +1813,72 @@ class TestCanvasCalendar:
         result = runner.invoke(app, ["canvas", "calendar", "delete", "235", "-y"])
         assert result.exit_code == 0, result.output
         calendar_client.delete_calendar_event.assert_called_once_with(235)
+
+
+class TestGroupIdFor:
+    """``group_id_for`` creates only missing groups; ambiguous names propagate."""
+
+    @pytest.fixture
+    def client(self):
+        from cass.apis.canvas.client import CanvasClient
+        from cass.apis.canvas.schema import CanvasAssignmentGroup
+
+        class StubClient:
+            dry_run = False
+            created: list[str]
+            _resolve = CanvasClient._resolve
+            resolve_assignment_group = CanvasClient.resolve_assignment_group
+
+            def __init__(self) -> None:
+                self.created = []
+
+            def list_assignment_groups(self):
+                return [
+                    CanvasAssignmentGroup(id=1, name="Labs", position=1),
+                    CanvasAssignmentGroup(id=2, name="Labs", position=2),
+                    CanvasAssignmentGroup(id=3, name="Exams", position=3),
+                ]
+
+            def create_assignment_group(self, name):
+                self.created.append(name)
+                return CanvasAssignmentGroup(id=9, name=name, position=4)
+
+        return StubClient()
+
+    @pytest.mark.parametrize("create", [False, True])
+    def test_ambiguous_name_propagates_and_creates_nothing(self, client, create):
+        from cass.cli.canvas._common import group_id_for
+
+        with pytest.raises(RuntimeError, match="ambiguous"):
+            group_id_for(client, "Labs", create=create)  # ty: ignore[invalid-argument-type]
+        assert client.created == []
+
+    def test_missing_name_creates_when_asked(self, client):
+        from cass.cli.canvas._common import group_id_for
+
+        assert group_id_for(client, "Quizzes", create=True) == 9  # ty: ignore[invalid-argument-type]
+        assert client.created == ["Quizzes"]
+
+    def test_missing_name_without_create_exits(self, client):
+        import typer
+
+        from cass.cli.canvas._common import group_id_for
+
+        with pytest.raises(typer.Exit):
+            group_id_for(client, "Quizzes", create=False)  # ty: ignore[invalid-argument-type]
+        assert client.created == []
+
+    def test_fail_message_stays_on_one_line(self, monkeypatch, capfd):
+        from cass.cli import _fail
+
+        monkeypatch.setenv("COLUMNS", "80")
+        monkeypatch.setattr("cass.cli.err_console", _fresh_err_console())
+        _fail("word " * 60)
+        err = capfd.readouterr().err
+        assert len(err.strip().splitlines()) == 1
+
+
+def _fresh_err_console():
+    from rich.console import Console
+
+    return Console(stderr=True, width=80)

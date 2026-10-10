@@ -10,9 +10,9 @@ cass canvas quizzes show "Survey 1"                   # settings and questions (
 cass canvas quizzes export "Survey 1" -o quizzes/survey-1.toml
 cass canvas quizzes create --from quizzes/survey-1.toml [--publish] [--create-groups]
 cass canvas quizzes update "Survey 1" --from quizzes/survey-1.toml
-cass canvas quizzes publish "Survey 1"               # also unpublish, delete
+cass canvas quizzes publish "Survey 1"                # also unpublish, delete
 cass canvas quizzes responses "Survey 1" [--all-attempts] [--csv responses.csv] [--wide]
-cass canvas sync [--apply] [--create-groups]         # reconcile [[canvas.quizzes]] declarations
+cass canvas sync [--apply] [--create-groups]          # reconcile [[canvas.quizzes]] declarations
 ```
 
 `update` and `sync` change quiz settings only. Questions on an existing quiz are never modified.

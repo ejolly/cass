@@ -11,6 +11,10 @@ from .auth import _error_detail
 _API_PREFIX = "/api/v1"
 
 
+class CanvasNotFoundError(RuntimeError):
+    """A name or ID matched nothing (as opposed to matching several)."""
+
+
 class CanvasAPIError(httpx.HTTPStatusError):
     """A Canvas request failed with a 4xx/5xx status.
 

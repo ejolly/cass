@@ -31,7 +31,7 @@ from ..auth import (
     find_auth,
 )
 from ..dry_run import DryRunRecorder, DryRunTransport, PlannedRequest
-from ..errors import raise_for_canvas_status
+from ..errors import CanvasNotFoundError, raise_for_canvas_status
 from ..raw import api_path, form_content
 
 T = TypeVar("T")
@@ -512,7 +512,9 @@ class BaseClient:
         names = ", ".join(name_of(item) for item in items[:max_listed])
         if len(items) > max_listed:
             names += f", and {len(items) - max_listed} more"
-        raise RuntimeError(f"{label} not found: {id_or_name} (available: {names})")
+        raise CanvasNotFoundError(
+            f"{label} not found: {id_or_name} (available: {names})"
+        )
 
 
 def resource_key(resource: str) -> str:
