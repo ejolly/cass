@@ -41,6 +41,28 @@ if TYPE_CHECKING:
     )
 
 QUESTION_FIELDS = ("text", "name", "type", "points", "answers", "group")
+# Types whose answers cass can resend without losing data. Other types carry
+# answer fields cass doesn't read (numerical ranges, matching pairs, blank
+# ids), so updating them would change how Canvas grades them.
+UPDATABLE_QUESTION_TYPES = frozenset(
+    {
+        "essay_question",
+        "text_only_question",
+        "multiple_choice_question",
+        "multiple_answers_question",
+        "true_false_question",
+        "short_answer_question",
+    }
+)
+# Question-level feedback, resent from Canvas on every update.
+QUESTION_COMMENT_FIELDS = (
+    "correct_comments",
+    "incorrect_comments",
+    "neutral_comments",
+    "correct_comments_html",
+    "incorrect_comments_html",
+    "neutral_comments_html",
+)
 GROUP_FIELDS = ("pick_count", "points_per_item")
 GROUP_CANVAS_FIELDS = {"pick_count": "pick_count", "points_per_item": "question_points"}
 
@@ -64,6 +86,8 @@ class QuestionChange:
     live: CanvasQuizQuestion | None  # None for add
     group: str = ""  # desired group (current group for delete / extra)
     changed: list[str] = field(default_factory=list)  # QUESTION_FIELDS order
+    # An answer gets a new Canvas id or a live answer is dropped
+    relinks_answers: bool = False
 
 
 @dataclass
@@ -219,6 +243,41 @@ def _group_changes(
     return [name for name in GROUP_FIELDS if differs[name]]
 
 
+def match_live_answers(
+    texts: list[str], live: CanvasQuizQuestion
+) -> list[CanvasQuizAnswer | None]:
+    """The live answer each of *texts* keeps, by equal text; None for a new one.
+
+    Each live answer is used at most once, so duplicate texts pair in order.
+    """
+    unused: dict[str, list[CanvasQuizAnswer]] = {}
+    for answer in live.answers:
+        unused.setdefault(answer.text, []).append(answer)
+    matched: list[CanvasQuizAnswer | None] = []
+    for text in texts:
+        candidates = unused.get(text)
+        matched.append(candidates.pop(0) if candidates else None)
+    return matched
+
+
+def _relinks_answers(question: QuestionSpec, live: CanvasQuizQuestion) -> bool:
+    """True when an answer would get a new id or a live answer would be dropped."""
+    matched = match_live_answers([a.text for a in question.answers], live)
+    kept = [a for a in matched if a is not None]
+    return len(kept) < len(matched) or len(kept) < len(live.answers)
+
+
+def _check_updatable(question: QuestionSpec, live: CanvasQuizQuestion) -> None:
+    """Raise unless cass can resend this question without losing answer data."""
+    for question_type in (live.question_type, question.type):
+        if question_type not in UPDATABLE_QUESTION_TYPES:
+            raise RuntimeError(
+                f"cass can't safely update {question_type} questions; edit "
+                f"question {live.id} ({live.question_name!r}) in Canvas or leave "
+                "it unchanged in the file."
+            )
+
+
 # --- Planning ---
 
 
@@ -234,8 +293,9 @@ def plan_quiz_questions(
             otherwise they are kept as extras.
 
     Raises:
-        RuntimeError: A file id is not on the quiz, or two live groups share a
-            name.
+        RuntimeError: A file id is not on the quiz, two live groups share a
+            name, or a question to update has a type outside
+            ``UPDATABLE_QUESTION_TYPES``.
     """
     quiz_type = state.quiz.quiz_type
     live_groups = groups_by_name(state.groups, state.quiz.title)
@@ -253,9 +313,13 @@ def plan_quiz_questions(
             questions.append(QuestionChange("add", question, None, question.group))
             continue
         changed = _question_changes(question, live, current_group(live), quiz_type)
-        action = "update" if changed else "keep"
+        if not changed:
+            questions.append(QuestionChange("keep", question, live, question.group))
+            continue
+        _check_updatable(question, live)
+        relinks = "answers" in changed and _relinks_answers(question, live)
         questions.append(
-            QuestionChange(action, question, live, question.group, changed)
+            QuestionChange("update", question, live, question.group, changed, relinks)
         )
     leftover_action = "delete" if prune else "extra"
     for live in _unmatched_live(state, pairs):
@@ -419,7 +483,7 @@ def _question_line(change: QuestionChange, student_attempts: int) -> str:
         line += f"  [group {change.group!r}]"
     if change.action == "extra":
         line += f"  {EXTRA_NOTE}"
-    if student_attempts > 0 and "answers" in change.changed:
+    if student_attempts > 0 and change.relinks_answers:
         line += f"  {ANSWERS_REPLACED_NOTE}"
     return line
 
@@ -447,11 +511,12 @@ def _group_line(change: GroupChange, quiz_type: str) -> str:
 def format_question_plan(plan: QuestionPlan) -> list[str]:
     """One line per question and group, each starting with its action.
 
-    A final ``reorder  questions`` line appears when the layout changes.
+    A final ``reorder  questions`` line appears whenever the plan changes
+    anything, since every apply reorders the quiz.
     """
     lines = [_question_line(c, plan.student_attempts) for c in plan.questions]
     lines += [_group_line(g, plan.quiz_type) for g in plan.groups]
-    if plan.order_changed or plan.reordered_groups:
+    if plan.has_changes:
         lines.append("reorder  questions")
     return lines
 
@@ -515,11 +580,13 @@ def question_update_fields(
 
     Canvas fills every field an update leaves out from a copy of the question
     saved when it was created, so a partial update would undo earlier edits.
-    Each update therefore sends text, name, type, points and answers.
+    Each update therefore sends text, name, type, points, answers and the
+    live question-level feedback (``QUESTION_COMMENT_FIELDS``).
 
     Answers keep their Canvas ids: unchanged answers go back as the live
-    answers; changed ones are the file's answers, each reusing the id of a
-    live answer with the same text.
+    answers; changed ones are the file's answers. A file answer whose text
+    matches a live answer keeps that answer's id, HTML and feedback, since
+    the file sets only text and correctness.
 
     Args:
         change: An update change; its spec holds the desired values.
@@ -539,9 +606,11 @@ def question_update_fields(
         "question_type": form["question_type"],
         "points_possible": form["points_possible"],
     }
+    for name in QUESTION_COMMENT_FIELDS:
+        # "" rather than null: Canvas skips null and keeps the creation value
+        fields[name] = getattr(change.live, name) or ""
     if "answers" in change.changed:
-        file_answers = answer_form_fields(change.spec.answers)
-        fields["answers"] = _answers_with_live_ids(file_answers, change.live)
+        fields["answers"] = _file_answers_on_live(change.spec, change.live)
     else:
         fields["answers"] = [_live_answer_fields(a) for a in change.live.answers]
     if "group" in change.changed and group_id is not None:
@@ -565,18 +634,19 @@ def _live_answer_fields(answer: CanvasQuizAnswer) -> dict[str, object]:
     return fields
 
 
-def _answers_with_live_ids(
-    file_answers: list[dict[str, object]], live: CanvasQuizQuestion
+def _file_answers_on_live(
+    question: QuestionSpec, live: CanvasQuizQuestion
 ) -> list[dict[str, object]]:
-    """*file_answers*, each with the id of an unused live answer of the same text."""
-    unused_ids: dict[str, list[int]] = {}
-    for answer in live.answers:
-        unused_ids.setdefault(answer.text, []).append(answer.id)
-    with_ids: list[dict[str, object]] = []
-    for answer in file_answers:
-        ids = unused_ids.get(str(answer["answer_text"]))
-        with_ids.append({"id": ids.pop(0), **answer} if ids else answer)
-    return with_ids
+    """The file's answers; one matching a live answer by text keeps its fields."""
+    file_answers = answer_form_fields(question.answers)
+    matched = match_live_answers([a.text for a in question.answers], live)
+    answers: list[dict[str, object]] = []
+    for file_answer, live_answer in zip(file_answers, matched, strict=True):
+        if live_answer is None:
+            answers.append(file_answer)
+        else:
+            answers.append({**_live_answer_fields(live_answer), **file_answer})
+    return answers
 
 
 def apply_question_plan(

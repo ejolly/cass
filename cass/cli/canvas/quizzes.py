@@ -78,7 +78,7 @@ def quizzes_show(
 ) -> None:
     """Show settings and questions for one quiz."""
     from ...actions.canvas_records import quiz_detail_record
-    from ...actions.quizzes import strip_html
+    from ...actions.quizzes import fetch_quiz_state, strip_html
     from .. import report
 
     _common.reject_json_with_files(as_json, csv_out, save)
@@ -86,7 +86,8 @@ def quizzes_show(
     with _common.client() as c:
         tz = c.time_zone
         q = c.resolve_quiz(id_or_name)
-        questions, from_stats = c.list_quiz_questions(q.id)
+        state = fetch_quiz_state(c, q.id, allow_statistics=True)
+        questions, from_stats = state.questions, state.from_statistics
         groups = {} if as_json else {g.id: g.name for g in c.list_assignment_groups()}
 
     if as_json:
@@ -119,7 +120,7 @@ def quizzes_show(
     title = f"Quiz: {q.title}"
     question_rows = [
         [
-            str(qq.position or index),
+            str(index),
             qq.question_type,
             str(qq.points_possible or 0.0),
             strip_html(qq.question_text),

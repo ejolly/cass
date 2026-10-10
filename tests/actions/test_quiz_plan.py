@@ -4,11 +4,13 @@ from __future__ import annotations
 
 __docformat__ = "google"
 
+
 import json
 import re
 from urllib.parse import parse_qsl
 
 import httpx
+import msgspec
 import pytest
 
 from cass.actions.quiz_plan import (
@@ -42,6 +44,15 @@ from cass.apis.canvas.schema import (
 LA = "America/Los_Angeles"
 QUIZ = CanvasQuiz(id=20, title="Survey", quiz_type="survey")
 ANSWER_MARKER = "(answers replaced: existing responses may lose their answer link)"
+# Question-level feedback every update resends; empty on the mocks
+COMMENTS = {
+    "correct_comments": "",
+    "incorrect_comments": "",
+    "neutral_comments": "",
+    "correct_comments_html": "",
+    "incorrect_comments_html": "",
+    "neutral_comments_html": "",
+}
 
 
 def _live(
@@ -427,7 +438,8 @@ def test_unchanged_partial_weight_answers_keep():
     assert _actions(plan) == ["keep"]
 
 
-def _answer_change(student_attempts: int):
+def _answer_change(student_attempts: int, answers=None):
+    """Live A (correct), B; the file flips correctness unless *answers* is given."""
     live = _live(
         11,
         question_type="multiple_choice_question",
@@ -442,7 +454,7 @@ def _answer_change(student_attempts: int):
                 text="<p>11</p>",
                 id=11,
                 type="multiple_choice_question",
-                answers=[AnswerSpec("A"), AnswerSpec("B", correct=True)],
+                answers=answers or [AnswerSpec("A"), AnswerSpec("B", correct=True)],
             )
         ]
     )
@@ -451,7 +463,8 @@ def _answer_change(student_attempts: int):
 
 
 def test_format_marks_answer_changes_when_students_attempted():
-    plan = _answer_change(student_attempts=2)
+    reworded = [AnswerSpec("A", correct=True), AnswerSpec("B, reworded")]
+    plan = _answer_change(student_attempts=2, answers=reworded)
     assert plan.questions[0].changed == ["answers"]
     lines = format_question_plan(plan)
     assert lines[0].startswith("update question 11")
@@ -460,11 +473,24 @@ def test_format_marks_answer_changes_when_students_attempted():
     assert warning is not None
     assert "2 finished student attempt(s)" in warning
 
-    plan = _answer_change(student_attempts=0)
+    plan = _answer_change(student_attempts=0, answers=reworded)
     lines = format_question_plan(plan)
     assert not any(ANSWER_MARKER in line for line in lines)
     assert lines[0].endswith("(answers)")
     assert question_plan_warning(plan) is None
+
+
+def test_marker_skips_correctness_flip_but_flags_dropped_answer():
+    # Flipping which answer is correct keeps every answer id
+    plan = _answer_change(student_attempts=2)
+    assert plan.questions[0].changed == ["answers"]
+    assert not plan.questions[0].relinks_answers
+    assert ANSWER_MARKER not in format_question_plan(plan)[0]
+
+    # Dropping a live answer unlinks its responses
+    plan = _answer_change(student_attempts=2, answers=[AnswerSpec("A", correct=True)])
+    assert plan.questions[0].relinks_answers
+    assert format_question_plan(plan)[0].endswith(ANSWER_MARKER)
 
 
 def test_format_lines_start_with_action():
@@ -589,6 +615,7 @@ def test_apply_request_sequence():
             "question_type": "essay_question",
             "points_possible": 0,
             "answers": [],
+            **COMMENTS,
         }
     }
     assert json.loads(requests[2].content)["question"]["quiz_group_id"] == 50
@@ -761,6 +788,7 @@ def test_update_fields_never_sends_empty_name():
         "question_type": "essay_question",
         "points_possible": 0,
         "answers": [],
+        **COMMENTS,
     }
 
 
@@ -811,6 +839,7 @@ def test_update_fields_resend_unchanged_answers_with_ids():
                 "answer_html": "<b>B</b>",
             },
         ],
+        **COMMENTS,
     }
 
 
@@ -838,3 +867,124 @@ def test_apply_reorders_even_when_layout_is_unchanged():
     assert applied == ["update question 11 (text)", "reorder quiz", "re-save quiz"]
     reorder = parse_qsl(requests[1].content.decode())
     assert [v for k, v in reorder if k == "order[][id]"] == ["11", "12"]
+
+
+def _numerical(text: str = "<p>11</p>"):
+    live = _live(
+        11,
+        name="Count",
+        question_type="numerical_question",
+        answers=[CanvasQuizAnswer(id=1, text="", weight=100.0)],
+    )
+    spec = QuestionSpec(
+        text=text,
+        name="Count",
+        id=11,
+        type="numerical_question",
+        answers=[AnswerSpec("", correct=True)],
+    )
+    return live, spec
+
+
+def test_unchanged_numerical_question_stays_keep():
+    live, spec = _numerical()
+    plan = plan_quiz_questions(_spec([spec]), _state([live]), prune=False)
+    assert _actions(plan) == ["keep"]
+
+
+def test_numerical_update_raises():
+    live, spec = _numerical(text="<p>edited</p>")
+    with pytest.raises(
+        RuntimeError,
+        match=r"can't safely update numerical_question questions; edit question "
+        r"11 \('Count'\)",
+    ):
+        plan_quiz_questions(_spec([spec]), _state([live]), prune=False)
+
+
+def test_update_to_unsupported_file_type_raises():
+    spec = QuestionSpec(text="<p>11</p>", id=11, type="matching_question")
+    with pytest.raises(RuntimeError, match="matching_question"):
+        plan_quiz_questions(_spec([spec]), _state([_live(11)]), prune=False)
+
+
+def test_unsupported_live_question_can_be_deleted_or_kept_as_extra():
+    live, _ = _numerical()
+    for prune, action in ((True, "delete"), (False, "extra")):
+        plan = plan_quiz_questions(_spec([]), _state([live]), prune=prune)
+        assert _actions(plan) == [action]
+
+
+def test_update_fields_changed_answers_keep_matched_live_fields():
+    live = _live(
+        11,
+        question_type="multiple_choice_question",
+        answers=[
+            CanvasQuizAnswer(id=1, text="A", weight=100.0, comments="Yes!"),
+            CanvasQuizAnswer(
+                id=2, text="B", html="<b>B</b>", comments_html="<i>No</i>"
+            ),
+            CanvasQuizAnswer(id=3, text="C", comments="Old C"),
+        ],
+    )
+    spec = QuestionSpec(
+        text="<p>11</p>",
+        id=11,
+        type="multiple_choice_question",
+        answers=[AnswerSpec("A"), AnswerSpec("B", correct=True), AnswerSpec("C2")],
+    )
+    change = QuestionChange("update", spec, live, changed=["answers"])
+    assert question_update_fields(change, "assignment", None)["answers"] == [
+        {"id": 1, "answer_text": "A", "answer_weight": 0, "answer_comment": "Yes!"},
+        {
+            "id": 2,
+            "answer_text": "B",
+            "answer_weight": 100,
+            "answer_html": "<b>B</b>",
+            "answer_comment_html": "<i>No</i>",
+        },
+        {"answer_text": "C2", "answer_weight": 0},
+    ]
+
+
+def test_update_fields_resend_question_feedback():
+    live = msgspec.structs.replace(
+        _live(11),
+        correct_comments="Nice",
+        incorrect_comments_html="<p>Try again</p>",
+        neutral_comments=None,
+    )
+    change = QuestionChange(
+        "update", QuestionSpec(text="<p>x</p>", id=11), live, changed=["text"]
+    )
+    fields = question_update_fields(change, "survey", None)
+    assert {name: fields[name] for name in COMMENTS} == {
+        **COMMENTS,
+        "correct_comments": "Nice",
+        "incorrect_comments_html": "<p>Try again</p>",
+    }
+
+
+def test_update_fields_duplicate_answer_texts_pair_in_order():
+    live = _live(
+        11,
+        question_type="multiple_choice_question",
+        answers=[
+            CanvasQuizAnswer(id=1, text="Same", weight=100.0),
+            CanvasQuizAnswer(id=2, text="Same"),
+        ],
+    )
+    spec = QuestionSpec(
+        text="<p>11</p>",
+        id=11,
+        type="multiple_choice_question",
+        answers=[
+            AnswerSpec("Same"),
+            AnswerSpec("Same", correct=True),
+            AnswerSpec("Same"),
+        ],
+    )
+    change = QuestionChange("update", spec, live, changed=["answers"])
+    answers = question_update_fields(change, "assignment", None)["answers"]
+    assert isinstance(answers, list)
+    assert [a.get("id") for a in answers] == [1, 2, None]

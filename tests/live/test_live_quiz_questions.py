@@ -123,7 +123,7 @@ def test_question_editing_round_trip(
                 dataclasses.replace(by_name["A"], name="First", group="Pair"),
                 QuestionSpec(text="<p>Added</p>", name="Added", group="Pair"),
                 by_name["B"],
-                by_name["D"],
+                dataclasses.replace(by_name["D"], text="<p>Pick one, edited</p>"),
             ],
         )
         edit1_path = tmp_path / "edit1.toml"
@@ -165,10 +165,11 @@ def test_question_editing_round_trip(
         rows = _question_rows(quiz_id)
         assert [r["question_name"] for r in rows] == ["C", "First", "B", "D"]
         assert all(r["quiz_group_id"] is None for r in rows)
-        # Updates resend the whole question: earlier edits survive, and answers
-        # whose text is unchanged keep their ids.
+        # Edit 2 changes only D's answers; D's edit-1 text survives because
+        # updates resend the whole question (Canvas would otherwise restore the
+        # creation-time text). Answers whose text is unchanged keep their ids.
         d_row = rows[3]
-        assert d_row["question_text"] == "<p>Pick one</p>"
+        assert d_row["question_text"] == "<p>Pick one, edited</p>"
         assert [a["text"] for a in d_row["answers"]][2] == "Third, reworded"
         for answer in d_row["answers"][:2]:
             assert answer["id"] == answer_ids[answer["text"]], d_row["answers"]

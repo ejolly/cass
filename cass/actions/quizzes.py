@@ -444,6 +444,8 @@ def canvas_layout(
     slot_count = len(ungrouped) + len(groups)
     slots: list[tuple[str, int] | None] = [None] * slot_count
 
+    # Every group in `positioned` has a position; the `or` fallbacks only
+    # satisfy the type checker.
     positioned = sorted(
         (g for g in groups if g.position is not None),
         key=lambda g: (g.position or 0, g.id),

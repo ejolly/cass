@@ -1094,6 +1094,32 @@ class TestCanvasQuizzes:
         assert "<b>" not in result.stdout
         assert "weights" not in result.stdout
 
+    def test_show_numbers_questions_in_quiz_order(self, quiz_client):
+        from cass.apis.canvas.schema import CanvasQuizGroup, CanvasQuizQuestion
+
+        # The API lists the grouped question first; its group sits second.
+        grouped = CanvasQuizQuestion(
+            id=3,
+            question_type="essay_question",
+            question_text="Grouped",
+            quiz_group_id=5,
+        )
+        loose = CanvasQuizQuestion(
+            id=4, question_type="essay_question", question_text="Loose"
+        )
+        quiz_client.list_quiz_questions.return_value = ([grouped, loose], False)
+        quiz_client.get_question_group.return_value = CanvasQuizGroup(
+            id=5, name="Pair", position=2
+        )
+        result = runner.invoke(app, ["canvas", "quizzes", "show", "20"])
+        assert result.exit_code == 0, result.output
+        lines = result.stdout.splitlines()
+        loose_line = next(line for line in lines if "Loose" in line)
+        grouped_line = next(line for line in lines if "Grouped" in line)
+        assert lines.index(loose_line) < lines.index(grouped_line)
+        assert re.search(r"\b1\b", loose_line)
+        assert re.search(r"\b2\b", grouped_line)
+
     def test_show_notes_statistics_fallback(self, quiz_client):
         questions, _ = quiz_client.list_quiz_questions.return_value
         quiz_client.list_quiz_questions.return_value = (questions, True)

@@ -206,9 +206,9 @@ class CanvasQuizAnswer(msgspec.Struct):
     id: int = 0
     text: str = ""
     weight: float = 0.0
-    html: str = ""
-    comments: str = ""
-    comments_html: str = ""
+    html: str | None = None
+    comments: str | None = None
+    comments_html: str | None = None
 
 
 class CanvasQuizQuestion(msgspec.Struct):
@@ -222,6 +222,12 @@ class CanvasQuizQuestion(msgspec.Struct):
     position: int | None = None  # null for API-created questions; see canvas_layout
     answers: list[CanvasQuizAnswer] = []
     quiz_group_id: int | None = None
+    correct_comments: str | None = None
+    incorrect_comments: str | None = None
+    neutral_comments: str | None = None
+    correct_comments_html: str | None = None
+    incorrect_comments_html: str | None = None
+    neutral_comments_html: str | None = None
 
 
 class CanvasQuizGroup(msgspec.Struct):
