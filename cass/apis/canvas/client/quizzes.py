@@ -13,7 +13,7 @@ import msgspec
 from ....actions.quizzes import (
     QuestionSpec,
     QuizSpec,
-    default_question_points,
+    question_form_fields,
     quiz_form_fields,
 )
 from ..schema import (
@@ -153,32 +153,17 @@ class QuizzesMixin(BaseClient):
         Args:
             quiz_id: Canvas quiz ID.
             question: Question spec; ``points`` ``None`` uses the type default.
-            position: 1-based position; also the default name (``Question N``).
+            position: 1-based position.
             quiz_type: Decides the default points (0 for surveys, else 1).
             quiz_group_id: Question group to put the question in.
 
         Returns:
             The created question.
         """
-        points = (
-            question.points
-            if question.points is not None
-            else default_question_points(quiz_type)
-        )
-        payload: dict[str, object] = {
-            "question_name": question.name or f"Question {position}",
-            "question_text": question.text,
-            "question_type": question.type,
-            "points_possible": _number(points),
-            "position": position,
-        }
+        payload = question_form_fields(question, quiz_type)
+        payload["position"] = position
         if quiz_group_id is not None:
             payload["quiz_group_id"] = quiz_group_id
-        if question.answers:
-            payload["answers"] = [
-                {"answer_text": a.text, "answer_weight": 100 if a.correct else 0}
-                for a in question.answers
-            ]
         resp = self._client.post(
             self._course(f"/quizzes/{quiz_id}/questions"), json={"question": payload}
         )
@@ -413,11 +398,6 @@ def _quiz_report(data: Any) -> CanvasQuizReport:
     if isinstance(data, dict) and data.get("quiz_reports"):
         data = data["quiz_reports"][0]
     return msgspec.convert(data, CanvasQuizReport, strict=False)
-
-
-def _number(value: float) -> int | float:
-    """Send whole numbers without a trailing ``.0``."""
-    return int(value) if float(value).is_integer() else value
 
 
 def _as_int(value: object) -> int:

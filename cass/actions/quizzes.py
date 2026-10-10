@@ -62,9 +62,12 @@ _QUIZ_KEYS = (
     "shuffle_answers",
     "one_question_at_a_time",
     "published",
+    "groups",
     "questions",
 )
-_QUESTION_KEYS = ("type", "text", "name", "points", "answers")
+_GROUP_KEYS = ("name", "pick_count", "points_per_item")
+_QUESTION_KEYS = ("id", "type", "text", "name", "points", "answers", "group")
+DEFAULT_QUESTION_NAME_RE = re.compile(r"^Question( \d+)?$")
 _ANSWER_KEYS = ("text", "correct")
 
 
@@ -77,6 +80,15 @@ class AnswerSpec:
 
 
 @dataclass
+class GroupSpec:
+    """A question group: Canvas draws ``pick_count`` of its questions per attempt."""
+
+    name: str
+    pick_count: int = 1
+    points_per_item: float | None = None  # None = default_question_points(quiz_type)
+
+
+@dataclass
 class QuestionSpec:
     """One question in a quiz file."""
 
@@ -85,6 +97,8 @@ class QuestionSpec:
     name: str = ""
     points: float | None = None  # None = type default
     answers: list[AnswerSpec] = field(default_factory=list)
+    group: str = ""  # question-group name, not the assignment group
+    id: int | None = None  # Canvas question id, set by export
 
 
 @dataclass
@@ -106,12 +120,65 @@ class QuizSpec:
     shuffle_answers: bool = False
     one_question_at_a_time: bool = False
     published: bool = False
+    groups: list[GroupSpec] = field(default_factory=list)
     questions: list[QuestionSpec] = field(default_factory=list)
 
 
 def default_question_points(quiz_type: str) -> float:
     """Points a question gets when the file leaves them out."""
     return 0.0 if quiz_type in SURVEY_TYPES else 1.0
+
+
+def is_default_question_name(name: str) -> bool:
+    """True for Canvas's default question names ("Question", "Question 3") and ""."""
+    return name == "" or DEFAULT_QUESTION_NAME_RE.match(name) is not None
+
+
+def file_layout(spec: QuizSpec) -> list[tuple[str, int | str]]:
+    """Top-level quiz entries in file order.
+
+    ``("question", i)`` is an ungrouped question at ``spec.questions[i]``;
+    ``("group", name)`` appears once, at its first question's place.
+    """
+    layout: list[tuple[str, int | str]] = []
+    seen: set[str] = set()
+    for index, question in enumerate(spec.questions):
+        if not question.group:
+            layout.append(("question", index))
+        elif question.group not in seen:
+            seen.add(question.group)
+            layout.append(("group", question.group))
+    return layout
+
+
+def group_members(spec: QuizSpec) -> dict[str, list[int]]:
+    """Group name → indices into ``spec.questions``, in file order."""
+    members: dict[str, list[int]] = {}
+    for index, question in enumerate(spec.questions):
+        if question.group:
+            members.setdefault(question.group, []).append(index)
+    return members
+
+
+def question_form_fields(question: QuestionSpec, quiz_type: str) -> dict[str, object]:
+    """Canvas question fields for *question* (``answers`` only when it has any)."""
+    points = (
+        question.points
+        if question.points is not None
+        else default_question_points(quiz_type)
+    )
+    fields: dict[str, object] = {
+        "question_name": question.name or "Question",
+        "question_text": question.text,
+        "question_type": question.type,
+        "points_possible": _number(points),
+    }
+    if question.answers:
+        fields["answers"] = [
+            {"answer_text": a.text, "answer_weight": 100 if a.correct else 0}
+            for a in question.answers
+        ]
+    return fields
 
 
 # --- Quiz files ---
@@ -158,7 +225,28 @@ def load_quiz_file(path: Path) -> QuizSpec:
     if "points" in raw and quiz_type != "graded_survey":
         _fail(path, 'points is only valid for type = "graded_survey"')
 
+    groups: list[GroupSpec] = []
+    for number, g in enumerate(raw.get("groups", []), 1):
+        where = f" in group {number}"
+        _check_keys(path, g, _GROUP_KEYS, where)
+        if "name" not in g:
+            _fail(path, f"missing required key 'name'{where}")
+        if any(existing.name == g["name"] for existing in groups):
+            _fail(path, f"two [[groups]] are named '{g['name']}'")
+        per_item = g.get("points_per_item")
+        groups.append(
+            GroupSpec(
+                name=g["name"],
+                pick_count=int(g.get("pick_count", 1)),
+                points_per_item=float(per_item) if per_item is not None else None,
+            )
+        )
+    group_names = {g.name for g in groups}
+
     questions: list[QuestionSpec] = []
+    seen_ids: set[int] = set()
+    closed_groups: set[str] = set()
+    previous_group = ""
     for index, q in enumerate(raw.get("questions", []), 1):
         where = f" in question {index}"
         _check_keys(path, q, _QUESTION_KEYS, where)
@@ -172,15 +260,43 @@ def load_quiz_file(path: Path) -> QuizSpec:
         if qtype == "multiple_choice_question" and sum(a.correct for a in answers) > 1:
             _fail(path, f"multiple_choice allows only one correct answer{where}")
         points = q.get("points")
+        group = q.get("group", "")
+        if group and group not in group_names:
+            _fail(
+                path,
+                f"group '{group}' in question {index} is not declared in [[groups]]",
+            )
+        if group and group in closed_groups:
+            _fail(
+                path,
+                f"questions in group '{group}' must be contiguous (question {index})",
+            )
+        if previous_group and group != previous_group:
+            closed_groups.add(previous_group)
+        previous_group = group
+        question_id = q.get("id")
+        if question_id is not None:
+            if question_id in seen_ids:
+                _fail(
+                    path,
+                    f"id {question_id} appears on two questions (question {index})",
+                )
+            seen_ids.add(question_id)
+        name = q.get("name", "")
         questions.append(
             QuestionSpec(
                 text=q["text"],
                 type=qtype,
-                name=q.get("name", ""),
+                name="" if is_default_question_name(name) else name,
                 points=float(points) if points is not None else None,
                 answers=answers,
+                group=group,
+                id=question_id,
             )
         )
+    for g in groups:
+        if not any(q.group == g.name for q in questions):
+            _fail(path, f"group '{g.name}' has no questions")
 
     points = raw.get("points")
     return QuizSpec(
@@ -199,6 +315,7 @@ def load_quiz_file(path: Path) -> QuizSpec:
         shuffle_answers=bool(raw.get("shuffle_answers", False)),
         one_question_at_a_time=bool(raw.get("one_question_at_a_time", False)),
         published=bool(raw.get("published", False)),
+        groups=groups,
         questions=questions,
     )
 
@@ -237,11 +354,22 @@ def dump_quiz_file(spec: QuizSpec, path: Path | None) -> str:
         f"one_question_at_a_time = {format_toml_value(spec.one_question_at_a_time)}",
         f"published = {format_toml_value(spec.published)}",
     ]
+    for g in spec.groups:
+        lines += ["", "[[groups]]", f"name = {format_toml_value(g.name)}"]
+        lines.append(f"pick_count = {g.pick_count}")
+        if g.points_per_item is not None:
+            lines.append(
+                f"points_per_item = {format_toml_value(_number(g.points_per_item))}"
+            )
     for q in spec.questions:
         lines += ["", "[[questions]]"]
+        if q.id is not None:
+            lines.append(f"id = {q.id}")
         lines.append(
             f"type = {format_toml_value(_CANVAS_TO_ALIAS.get(q.type, q.type))}"
         )
+        if q.group:
+            lines.append(f"group = {format_toml_value(q.group)}")
         if q.name:
             lines.append(f"name = {format_toml_value(q.name)}")
         lines.append(f"text = {format_toml_value(q.text)}")

@@ -917,7 +917,7 @@ class TestCanvasClient:
         assert "quiz%5Bassignment_group_id%5D=9" in body
         assert "quiz%5Bpublished%5D=false" in body  # published only after questions
         q1 = json.loads(transport.requests[1].content)["question"]
-        assert q1["question_name"] == "Question 1"
+        assert q1["question_name"] == "Question"
         assert q1["points_possible"] == 0  # survey default
         q2 = json.loads(transport.requests[2].content)["question"]
         assert q2["answers"] == [

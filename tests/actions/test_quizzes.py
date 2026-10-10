@@ -11,10 +11,14 @@ import pytest
 
 from cass.actions.quizzes import (
     AnswerSpec,
+    GroupSpec,
     QuestionSpec,
     QuizSpec,
     dump_quiz_file,
+    file_layout,
+    group_members,
     load_quiz_file,
+    question_form_fields,
     quiz_form_fields,
     quiz_settings_diff,
     quiz_spec_from_canvas,
@@ -116,6 +120,38 @@ class TestLoadQuizFile:
                 '[[questions]]\ntext = "x"\nponts = 1\n',
                 "unknown key 'ponts'",
             ),
+            (
+                'title = "Q"\ntype = "assignment"\n[[groups]]\npick_count = 1\n',
+                "missing required key 'name' in group 1",
+            ),
+            (
+                'title = "Q"\ntype = "assignment"\n'
+                '[[groups]]\nname = "A"\n[[groups]]\nname = "A"\n',
+                "two [[groups]] are named 'A'",
+            ),
+            (
+                'title = "Q"\ntype = "assignment"\n'
+                '[[questions]]\ntext = "x"\ngroup = "Z"\n',
+                "group 'Z' in question 1 is not declared in [[groups]]",
+            ),
+            (
+                'title = "Q"\ntype = "assignment"\n'
+                '[[groups]]\nname = "A"\n'
+                '[[questions]]\ntext = "x"\ngroup = "A"\n'
+                '[[questions]]\ntext = "y"\n'
+                '[[questions]]\ntext = "z"\ngroup = "A"\n',
+                "questions in group 'A' must be contiguous (question 3)",
+            ),
+            (
+                'title = "Q"\ntype = "assignment"\n'
+                '[[questions]]\ntext = "x"\nid = 5\n'
+                '[[questions]]\ntext = "y"\nid = 5\n',
+                "id 5 appears on two questions (question 2)",
+            ),
+            (
+                'title = "Q"\ntype = "assignment"\n[[groups]]\nname = "A"\n',
+                "group 'A' has no questions",
+            ),
         ],
         ids=[
             "no-title",
@@ -128,6 +164,12 @@ class TestLoadQuizFile:
             "no-answers",
             "two-correct",
             "q-typo",
+            "no-group-name",
+            "dup-group",
+            "undeclared",
+            "noncontiguous",
+            "dup-id",
+            "empty-group",
         ],
     )
     def test_validation(self, tmp_path, toml, message):
@@ -137,8 +179,80 @@ class TestLoadQuizFile:
         assert str(path) in str(exc.value)
         assert message in str(exc.value)
 
+    def test_loads_groups_and_ids(self, tmp_path):
+        toml = (
+            'title = "Q"\ntype = "survey"\n'
+            '[[groups]]\nname = "Pair"\npick_count = 1\n'
+            '[[questions]]\ntext = "a"\nid = 11\n'
+            '[[questions]]\ntext = "b"\ngroup = "Pair"\n'
+            '[[questions]]\ntext = "c"\ngroup = "Pair"\nid = 12\n'
+            '[[questions]]\ntext = "d"\n'
+        )
+        spec = load_quiz_file(_write(tmp_path, toml))
+        assert spec.groups == [GroupSpec("Pair", 1, None)]
+        assert [q.group for q in spec.questions] == ["", "Pair", "Pair", ""]
+        assert [q.id for q in spec.questions] == [11, None, 12, None]
+
+    def test_default_names_load_empty(self, tmp_path):
+        toml = 'title = "Q"\ntype = "survey"\n' + "".join(
+            f'[[questions]]\ntext = "x"\nname = "{n}"\n'
+            for n in ("Question", "Question 3", "Question one", "Intro")
+        )
+        spec = load_quiz_file(_write(tmp_path, toml))
+        assert [q.name for q in spec.questions] == ["", "", "Question one", "Intro"]
+
+    def test_file_without_groups_unchanged(self, tmp_path):
+        spec = load_quiz_file(_write(tmp_path, SURVEY_TOML))
+        assert spec.groups == []
+        assert all(q.group == "" for q in spec.questions)
+        assert all(q.id is None for q in spec.questions)
+
+    def test_file_layout_and_members(self):
+        def q(group=""):
+            return QuestionSpec(text="x", group=group)
+
+        spec = QuizSpec(
+            title="Q",
+            quiz_type="survey",
+            groups=[GroupSpec("Pair")],
+            questions=[q(), q("Pair"), q("Pair"), q()],
+        )
+        assert file_layout(spec) == [
+            ("question", 0),
+            ("group", "Pair"),
+            ("question", 3),
+        ]
+        assert group_members(spec) == {"Pair": [1, 2]}
+
+
+def test_question_form_fields():
+    fields = question_form_fields(QuestionSpec(text="x"), "survey")
+    assert fields == {
+        "question_name": "Question",
+        "question_text": "x",
+        "question_type": "essay_question",
+        "points_possible": 0,
+    }
+
 
 class TestDumpQuizFile:
+    def test_dump_round_trips_groups_and_ids(self, tmp_path):
+        spec = QuizSpec(
+            title="Q",
+            quiz_type="survey",
+            groups=[GroupSpec("Pair", 2, 1.5), GroupSpec("Solo")],
+            questions=[
+                QuestionSpec(text="a", id=7, name="Intro"),
+                QuestionSpec(text="b", group="Pair", id=8),
+                QuestionSpec(text="c", group="Pair"),
+                QuestionSpec(text="d", group="Solo"),
+            ],
+        )
+        text = dump_quiz_file(spec, None)
+        again = load_quiz_file(_write(tmp_path, text))
+        assert again.groups == spec.groups
+        assert again.questions == spec.questions
+
     def test_round_trip(self, tmp_path):
         spec = load_quiz_file(_write(tmp_path, SURVEY_TOML))
         text = dump_quiz_file(spec, None)
