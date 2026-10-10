@@ -874,11 +874,13 @@ class TestCanvasClient:
 
     def test_start_quiz_preview(self, mock_client):
         client, transport = mock_client
-        transport.add(json_data={"quiz_submissions": [{"id": 77, "user_id": 1}]})
+        # Canvas reports a preview attempt with a null user_id
+        transport.add(json_data={"quiz_submissions": [{"id": 77, "user_id": None}]})
 
         sub = client.start_quiz_preview(20)
 
         assert sub.id == 77
+        assert sub.user_id is None
         request = transport.requests[0]
         assert request.method == "POST"
         assert request.url.path == "/api/v1/courses/1/quizzes/20/submissions"
@@ -985,17 +987,18 @@ class TestCanvasClient:
         client.update_quiz(20, {"allowed_attempts": 2})
         assert transport.requests[0].content.decode() == "quiz%5Ballowed_attempts%5D=2"
 
-    def test_list_quiz_questions(self, mock_client):
+    def test_list_quiz_questions_keeps_api_list_order(self, mock_client):
+        # Canvas lists questions in stored order but reports position as null
         client, transport = mock_client
         transport.add(
             json_data=[
-                {"id": 2, "position": 2, "question_type": "essay_question"},
-                {"id": 1, "position": 1, "question_type": "essay_question"},
+                {"id": 2, "position": None, "question_type": "essay_question"},
+                {"id": 1, "position": None, "question_type": "essay_question"},
             ]
         )
         questions, fallback = client.list_quiz_questions(20)
         assert fallback is False
-        assert [q.id for q in questions] == [1, 2]
+        assert [q.id for q in questions] == [2, 1]
 
     def test_list_quiz_questions_falls_back_to_statistics_on_403(self, mock_client):
         client, transport = mock_client

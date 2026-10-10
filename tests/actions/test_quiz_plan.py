@@ -46,7 +46,6 @@ ANSWER_MARKER = "(answers replaced: existing responses may lose their answer lin
 
 def _live(
     qid: int,
-    position: int,
     *,
     name: str = "Question",
     group_id: int | None = None,
@@ -59,7 +58,6 @@ def _live(
         question_text=f"<p>{qid}</p>",
         question_type=question_type,
         points_possible=0.0,
-        position=position,
         answers=answers or [],
         quiz_group_id=group_id,
     )
@@ -105,7 +103,7 @@ def _live_ids(plan) -> list[int | None]:
 
 
 def test_matches_by_id():
-    state = _state([_live(11, 1), _live(12, 2)])
+    state = _state([_live(11), _live(12)])
     spec = _spec(
         [QuestionSpec(text="<p>12</p>", id=12), QuestionSpec(text="changed", id=11)]
     )
@@ -117,7 +115,7 @@ def test_matches_by_id():
 
 
 def test_renamed_question_matched_by_id():
-    state = _state([_live(11, 1, name="First"), _live(12, 2, name="Old")])
+    state = _state([_live(11, name="First"), _live(12, name="Old")])
     spec = _spec(
         [
             QuestionSpec(text="<p>11</p>", name="First", id=11),
@@ -130,7 +128,7 @@ def test_renamed_question_matched_by_id():
 
 
 def test_unknown_id_raises():
-    state = _state([_live(11, 1)])
+    state = _state([_live(11)])
     spec = _spec([QuestionSpec(text="x", id=999)])
     with pytest.raises(RuntimeError, match="id 999"):
         plan_quiz_questions(spec, state, prune=False)
@@ -139,9 +137,9 @@ def test_unknown_id_raises():
 def test_matches_by_unique_name():
     state = _state(
         [
-            _live(11, 1, name="Intro"),
-            _live(12, 2, name="Question 2"),
-            _live(13, 3, name="Outro"),
+            _live(11, name="Intro"),
+            _live(12, name="Question 2"),
+            _live(13, name="Outro"),
         ]
     )
     spec = _spec(
@@ -158,7 +156,7 @@ def test_matches_by_unique_name():
 
 
 def test_duplicate_names_fall_back_to_order():
-    state = _state([_live(11, 1, name="Same"), _live(12, 2, name="Same")])
+    state = _state([_live(11, name="Same"), _live(12, name="Same")])
     spec = _spec(
         [
             QuestionSpec(text="<p>12</p>", name="Same"),
@@ -172,7 +170,7 @@ def test_duplicate_names_fall_back_to_order():
 
 
 def test_matches_remaining_by_relative_order_and_leftovers():
-    state = _state([_live(11, 1), _live(12, 2)])
+    state = _state([_live(11), _live(12)])
     spec = _spec(
         [
             QuestionSpec(text="<p>11</p>"),
@@ -184,7 +182,7 @@ def test_matches_remaining_by_relative_order_and_leftovers():
     assert _actions(plan) == ["keep", "keep", "add"]
     assert _live_ids(plan) == [11, 12, None]
 
-    state = _state([_live(11, 1), _live(12, 2), _live(13, 3)])
+    state = _state([_live(11), _live(12), _live(13)])
     spec = _spec([QuestionSpec(text="<p>11</p>"), QuestionSpec(text="<p>12</p>")])
     plan = plan_quiz_questions(spec, state, prune=False)
     assert _actions(plan) == ["keep", "keep", "extra"]
@@ -195,7 +193,7 @@ def test_matches_remaining_by_relative_order_and_leftovers():
 
 
 def test_insert_in_middle_with_ids_is_one_add():
-    state = _state([_live(11, 1), _live(12, 2), _live(13, 3)])
+    state = _state([_live(11), _live(12), _live(13)])
     spec = quiz_spec_from_canvas(QUIZ, state.questions, "", LA)
     spec.questions.insert(1, QuestionSpec(text="new"))
     plan = plan_quiz_questions(spec, state, prune=False)
@@ -212,12 +210,11 @@ def test_exported_file_plans_all_keep(tmp_path):
         id=5, quiz_id=20, name="Pair", pick_count=1, question_points=2.0, position=2
     )
     questions = [
-        _live(11, 1, name="Intro"),
-        _live(13, 2, group_id=5),
-        _live(12, 1, group_id=5),
+        _live(11, name="Intro"),
+        _live(12, group_id=5),
+        _live(13, group_id=5),
         _live(
             14,
-            3,
             question_type="multiple_choice_question",
             answers=choice_answers,
         ),
@@ -236,7 +233,7 @@ def test_exported_file_plans_all_keep(tmp_path):
 
 
 def test_group_add_and_move():
-    state = _state([_live(11, 1), _live(12, 2), _live(13, 3)])
+    state = _state([_live(11), _live(12), _live(13)])
     spec = _spec(
         [
             QuestionSpec(text="<p>11</p>", id=11),
@@ -258,7 +255,7 @@ def test_group_add_and_move():
 def _paired_state() -> QuizState:
     """Q11 (pos 1), then group 5 "Pair" (pos 2) holding Q12 and Q13."""
     return _state(
-        [_live(11, 1), _live(12, 1, group_id=5), _live(13, 2, group_id=5)],
+        [_live(11), _live(12, group_id=5), _live(13, group_id=5)],
         [_group(5, "Pair", 2)],
     )
 
@@ -334,7 +331,7 @@ def test_group_settings_change():
 
 def test_duplicate_live_group_names_raise():
     state = _state(
-        [_live(11, 1, group_id=5), _live(12, 1, group_id=6)],
+        [_live(11, group_id=5), _live(12, group_id=6)],
         [_group(5, "Pair", 1), _group(6, "Pair", 2)],
     )
     spec = _spec([QuestionSpec(text="x")])
@@ -346,9 +343,9 @@ def test_leaving_a_group_forces_quiz_reorder():
     # 12 moves from group A to group B; the top-level layout [A, B] is unchanged.
     state = _state(
         [
-            _live(12, 1, group_id=5),
-            _live(13, 2, group_id=5),
-            _live(14, 1, group_id=6),
+            _live(12, group_id=5),
+            _live(13, group_id=5),
+            _live(14, group_id=6),
         ],
         [_group(5, "A", 1), _group(6, "B", 2)],
     )
@@ -377,7 +374,7 @@ def test_question_leaving_pruned_group_is_top_level_in_order():
 
 
 def test_settings_only_file_marks_everything_extra():
-    state = _state([_live(11, 1), _live(12, 2)])
+    state = _state([_live(11), _live(12)])
     plan = plan_quiz_questions(_spec([]), state, prune=False)
     assert _actions(plan) == ["extra", "extra"]
     assert plan.order_changed is False
@@ -386,7 +383,7 @@ def test_settings_only_file_marks_everything_extra():
 
 
 def test_empty_file_name_never_reported():
-    state = _state([_live(11, 1, name="Question 4"), _live(12, 2, name="Custom")])
+    state = _state([_live(11, name="Question 4"), _live(12, name="Custom")])
     spec = _spec(
         [QuestionSpec(text="<p>11</p>", id=11), QuestionSpec(text="<p>12</p>", id=12)]
     )
@@ -396,7 +393,7 @@ def test_empty_file_name_never_reported():
 
 
 def test_default_file_name_built_in_code_is_not_a_change():
-    state = _state([_live(11, 1, name="Custom")])
+    state = _state([_live(11, name="Custom")])
     spec = _spec([QuestionSpec(text="<p>11</p>", id=11, name="Question 2")])
     plan = plan_quiz_questions(spec, state, prune=False)
     assert _actions(plan) == ["keep"]
@@ -405,7 +402,6 @@ def test_default_file_name_built_in_code_is_not_a_change():
 def test_unchanged_partial_weight_answers_keep():
     live = _live(
         11,
-        1,
         question_type="multiple_answers_question",
         answers=[
             CanvasQuizAnswer(id=1, text="A", weight=50.0),
@@ -434,7 +430,6 @@ def test_unchanged_partial_weight_answers_keep():
 def _answer_change(student_attempts: int):
     live = _live(
         11,
-        1,
         question_type="multiple_choice_question",
         answers=[
             CanvasQuizAnswer(id=1, text="A", weight=100.0),
@@ -548,7 +543,7 @@ def _apply_client(fail_path: str | None = None):
 
 def _pair_plan():
     """Update 11, move 12 and a new question into new group "Pair", delete 13."""
-    state = _state([_live(11, 1), _live(12, 2)])
+    state = _state([_live(11), _live(12)])
     spec = _spec(
         [
             QuestionSpec(text="<p>new 11</p>", id=11),
@@ -560,7 +555,7 @@ def _pair_plan():
     plan = plan_quiz_questions(spec, state, prune=True)
     # A file question always claims a leftover live one, so a plan never holds
     # an add and a delete together; append the delete to cover both.
-    plan.questions.append(QuestionChange("delete", None, _live(13, 3)))
+    plan.questions.append(QuestionChange("delete", None, _live(13)))
     return plan
 
 
@@ -588,9 +583,15 @@ def test_apply_request_sequence():
         "re-save quiz",
     ]
     assert json.loads(requests[1].content) == {
-        "question": {"question_text": "<p>new 11</p>"}
+        "question": {
+            "question_text": "<p>new 11</p>",
+            "question_name": "Question",
+            "question_type": "essay_question",
+            "points_possible": 0,
+            "answers": [],
+        }
     }
-    assert json.loads(requests[2].content) == {"question": {"quiz_group_id": 50}}
+    assert json.loads(requests[2].content)["question"]["quiz_group_id"] == 50
     assert json.loads(requests[3].content)["question"]["quiz_group_id"] == 50
     reorder = parse_qsl(requests[5].content.decode())
     assert ("order[][type]", "group") in reorder
@@ -628,7 +629,7 @@ def test_apply_failure_before_any_change_says_so():
 
 
 def test_apply_all_keep_sends_nothing(tmp_path):
-    question = _live(11, 1, name="Intro")
+    question = _live(11, name="Intro")
     state = _state([question])
     spec = quiz_spec_from_canvas(QUIZ, [question], "", LA)
     path = tmp_path / "quiz.toml"
@@ -647,11 +648,11 @@ def test_apply_moves_questions_out_before_deleting_groups():
     """
     state = _state(
         [
-            _live(11, 1),
-            _live(12, 1, group_id=5),
-            _live(13, 2, group_id=5),
-            _live(14, 1, group_id=6),
-            _live(15, 2, group_id=6),
+            _live(11),
+            _live(12, group_id=5),
+            _live(13, group_id=5),
+            _live(14, group_id=6),
+            _live(15, group_id=6),
         ],
         [_group(5, "Pair", 2), _group(6, "Other", 3)],
     )
@@ -715,7 +716,7 @@ def test_apply_missing_group_id_raises():
         _spec(
             [QuestionSpec(text="<p>11</p>", id=11, group="Pair")], [GroupSpec("Pair")]
         ),
-        _state([_live(11, 1)]),
+        _state([_live(11)]),
         prune=False,
     )
     plan.groups.clear()  # "Pair" is never created, so it has no Canvas id
@@ -725,23 +726,115 @@ def test_apply_missing_group_id_raises():
     assert requests == []
 
 
-def test_update_fields_leave_group_sends_null():
+def test_update_fields_leave_group_sends_no_group():
+    # Canvas ignores quiz_group_id: null; the quiz reorder takes it out instead
     change = QuestionChange(
         "update",
-        QuestionSpec(text="<p>x</p>", id=11),
-        _live(11, 1, group_id=5),
+        QuestionSpec(text="<p>11</p>", id=11),
+        _live(11, group_id=5),
         changed=["group"],
     )
-    assert question_update_fields(change, "survey", None) == {"quiz_group_id": None}
+    assert "quiz_group_id" not in question_update_fields(change, "survey", None)
+
+
+def test_update_fields_move_into_group_sends_group_id():
+    change = QuestionChange(
+        "update",
+        QuestionSpec(text="<p>11</p>", id=11, group="Pair"),
+        _live(11),
+        group="Pair",
+        changed=["group"],
+    )
+    assert question_update_fields(change, "survey", 50)["quiz_group_id"] == 50
 
 
 def test_update_fields_never_sends_empty_name():
     change = QuestionChange(
         "update",
         QuestionSpec(text="<p>x</p>", name="", id=11),
-        _live(11, 1),
+        _live(11, name="Live name"),
         changed=["text"],
     )
     assert question_update_fields(change, "survey", None) == {
-        "question_text": "<p>x</p>"
+        "question_text": "<p>x</p>",
+        "question_name": "Live name",
+        "question_type": "essay_question",
+        "points_possible": 0,
+        "answers": [],
     }
+
+
+def test_update_fields_default_file_name_keeps_live_name():
+    change = QuestionChange(
+        "update",
+        QuestionSpec(text="<p>x</p>", name="Question 2", id=11),
+        _live(11, name="Custom"),
+        changed=["text"],
+    )
+    assert question_update_fields(change, "survey", None)["question_name"] == "Custom"
+
+
+def test_update_fields_resend_unchanged_answers_with_ids():
+    live = _live(
+        11,
+        question_type="multiple_choice_question",
+        answers=[
+            CanvasQuizAnswer(id=7, text="A", weight=100.0, comments="Right"),
+            CanvasQuizAnswer(id=8, text="B", weight=0.0, html="<b>B</b>"),
+        ],
+    )
+    spec = QuestionSpec(
+        text="<p>new</p>",
+        name="Pick",
+        id=11,
+        type="multiple_choice_question",
+        points=2.0,
+        answers=[AnswerSpec("A", correct=True), AnswerSpec("B")],
+    )
+    change = QuestionChange("update", spec, live, changed=["text", "name", "points"])
+    assert question_update_fields(change, "assignment", None) == {
+        "question_text": "<p>new</p>",
+        "question_name": "Pick",
+        "question_type": "multiple_choice_question",
+        "points_possible": 2,
+        "answers": [
+            {
+                "id": 7,
+                "answer_text": "A",
+                "answer_weight": 100.0,
+                "answer_comment": "Right",
+            },
+            {
+                "id": 8,
+                "answer_text": "B",
+                "answer_weight": 0.0,
+                "answer_html": "<b>B</b>",
+            },
+        ],
+    }
+
+
+def test_update_fields_changed_answers_reuse_ids_by_text():
+    plan = _answer_change(student_attempts=0)
+    change = plan.questions[0]
+    change.spec.answers.append(AnswerSpec("C"))
+    fields = question_update_fields(change, "survey", None)
+    assert fields["answers"] == [
+        {"id": 1, "answer_text": "A", "answer_weight": 0},
+        {"id": 2, "answer_text": "B", "answer_weight": 100},
+        {"answer_text": "C", "answer_weight": 0},
+    ]
+
+
+def test_apply_reorders_even_when_layout_is_unchanged():
+    state = _state([_live(11), _live(12)])
+    spec = _spec(
+        [QuestionSpec(text="<p>new</p>", id=11), QuestionSpec(text="<p>12</p>", id=12)]
+    )
+    plan = plan_quiz_questions(spec, state, prune=False)
+    assert plan.order_changed is False
+    client, requests = _apply_client()
+    applied = apply_question_plan(client, 20, plan)
+    assert applied == ["update question 11 (text)", "reorder quiz", "re-save quiz"]
+    reorder = parse_qsl(requests[1].content.decode())
+    assert [v for k, v in reorder if k == "order[][id]"] == ["11", "12"]

@@ -138,7 +138,11 @@ class QuizzesMixin(BaseClient):
     def list_quiz_questions(
         self, quiz_id: int
     ) -> tuple[list[CanvasQuizQuestion], bool]:
-        """List a quiz's questions in position order.
+        """List a quiz's questions in the order the questions API returns them.
+
+        That order follows Canvas's stored positions, but each question's
+        ``position`` field is null for API-created questions; see
+        ``canvas_layout`` for rebuilding the quiz order.
 
         Concluded courses return 403 from the questions endpoint; then the
         questions are rebuilt from ``/statistics``, which carries text and
@@ -154,7 +158,7 @@ class QuizzesMixin(BaseClient):
                 raise
         else:
             questions = msgspec.convert(data, list[CanvasQuizQuestion], strict=False)
-            return sorted(questions, key=lambda q: q.position or 0), False
+            return questions, False
 
         resp = self._client.get(self._course(f"/quizzes/{quiz_id}/statistics"))
         stats = resp.json().get("quiz_statistics") or []
@@ -298,8 +302,7 @@ class QuizzesMixin(BaseClient):
     def resave_quiz(self, quiz_id: int, *, published: bool | None = None) -> None:
         """Re-save a quiz without notifying students (one call).
 
-        Classic quizzes recount questions and points, and fill in question
-        positions, only after a re-save.
+        Classic quizzes recount questions and points only after a re-save.
 
         Args:
             quiz_id: Canvas quiz ID.

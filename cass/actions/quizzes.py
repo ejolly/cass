@@ -183,11 +183,16 @@ def question_form_fields(question: QuestionSpec, quiz_type: str) -> dict[str, ob
         "points_possible": _number(points),
     }
     if question.answers:
-        fields["answers"] = [
-            {"answer_text": a.text, "answer_weight": 100 if a.correct else 0}
-            for a in question.answers
-        ]
+        fields["answers"] = answer_form_fields(question.answers)
     return fields
+
+
+def answer_form_fields(answers: list[AnswerSpec]) -> list[dict[str, object]]:
+    """Canvas answer fields for *answers*; a correct answer gets weight 100."""
+    return [
+        {"answer_text": a.text, "answer_weight": 100 if a.correct else 0}
+        for a in answers
+    ]
 
 
 def group_form_fields(group: GroupSpec, quiz_type: str) -> dict[str, object]:
@@ -420,31 +425,70 @@ def canvas_layout(
 ) -> list[tuple[str, int]]:
     """Top-level quiz entries in Canvas order.
 
-    Ungrouped questions and groups share one position sequence; grouped
-    questions' positions are within their group. Ties sort questions first,
-    then by id.
+    The questions API reports every question's ``position`` as null, so the
+    order is rebuilt from what Canvas does report: *questions* in API list
+    order, and each group's ``position`` from the group endpoint.
+
+    With n top-level entries (ungrouped questions plus groups), each group
+    takes its position clamped to 1..n, in (position, id) order; a group whose
+    slot is taken moves to the next free one. Groups with a null position go
+    last. Ungrouped questions fill the remaining slots in list order. The
+    result is exact when top-level positions run 1..n, which every cass apply
+    leaves.
+
+    Args:
+        questions: Questions in the order the questions API lists them.
+        groups: The quiz's question groups.
     """
-    entries: list[tuple[int, int, int, str]] = [
-        (q.position or 0, 0, q.id, "question")
-        for q in questions
-        if q.quiz_group_id is None
+    ungrouped = [q.id for q in questions if q.quiz_group_id is None]
+    slot_count = len(ungrouped) + len(groups)
+    slots: list[tuple[str, int] | None] = [None] * slot_count
+
+    positioned = sorted(
+        (g for g in groups if g.position is not None),
+        key=lambda g: (g.position or 0, g.id),
+    )
+    for group in positioned:
+        wanted = min(max(group.position or 1, 1), slot_count) - 1
+        slots[_free_slot(slots, wanted)] = ("group", group.id)
+
+    unpositioned = sorted((g for g in groups if g.position is None), key=lambda g: g.id)
+    if unpositioned:
+        free = [i for i, entry in enumerate(slots) if entry is None]
+        for group, slot in zip(unpositioned, free[-len(unpositioned) :], strict=True):
+            slots[slot] = ("group", group.id)
+
+    remaining = iter(ungrouped)
+    return [
+        entry if entry is not None else ("question", next(remaining)) for entry in slots
     ]
-    entries += [(g.position or 0, 1, g.id, "group") for g in groups]
-    return [(kind, entry_id) for _, _, entry_id, kind in sorted(entries)]
+
+
+def _free_slot(slots: list[tuple[str, int] | None], wanted: int) -> int:
+    """First free index at or after *wanted*, else the last free one before it."""
+    for index in range(wanted, len(slots)):
+        if slots[index] is None:
+            return index
+    return max(i for i in range(wanted) if slots[i] is None)
 
 
 def ordered_questions(
     questions: list[CanvasQuizQuestion], groups: list[CanvasQuizGroup]
 ) -> list[CanvasQuizQuestion]:
-    """All questions in quiz order, each group expanded in place."""
+    """All questions in quiz order, each group expanded in place.
+
+    Args:
+        questions: Questions in the order the questions API lists them; a
+            group's members keep that order.
+        groups: The quiz's question groups.
+    """
     by_id = {q.id: q for q in questions}
     ordered: list[CanvasQuizQuestion] = []
     for kind, entry_id in canvas_layout(questions, groups):
         if kind == "question":
             ordered.append(by_id[entry_id])
             continue
-        members = [q for q in questions if q.quiz_group_id == entry_id]
-        ordered += sorted(members, key=lambda q: (q.position or 0, q.id))
+        ordered += [q for q in questions if q.quiz_group_id == entry_id]
     return ordered
 
 

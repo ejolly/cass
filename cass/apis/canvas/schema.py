@@ -206,6 +206,9 @@ class CanvasQuizAnswer(msgspec.Struct):
     id: int = 0
     text: str = ""
     weight: float = 0.0
+    html: str = ""
+    comments: str = ""
+    comments_html: str = ""
 
 
 class CanvasQuizQuestion(msgspec.Struct):
@@ -216,7 +219,7 @@ class CanvasQuizQuestion(msgspec.Struct):
     question_text: str = ""
     question_type: str = ""
     points_possible: float | None = None  # null on a freshly posted question
-    position: int | None = None  # null until the quiz is re-saved
+    position: int | None = None  # null for API-created questions; see canvas_layout
     answers: list[CanvasQuizAnswer] = []
     quiz_group_id: int | None = None
 
@@ -257,7 +260,7 @@ class CanvasQuizSubmission(msgspec.Struct):
     """A student's latest classic quiz attempt (``/quizzes/:id/submissions``)."""
 
     id: int
-    user_id: int
+    user_id: int | None = None  # null on a teacher preview attempt
     attempt: int | None = None
     started_at: str | None = None
     finished_at: str | None = None

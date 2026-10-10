@@ -465,30 +465,36 @@ def test_strip_html():
 
 
 def _ordered_quiz():
-    """Q11 (pos 1), group 5 "Pair" (pos 2) holding Q13/Q12, Q14 (pos 3)."""
+    """Q11, group 5 "Pair" (position 2) holding Q12 then Q13, Q14.
+
+    Questions come in Canvas's list order with null positions, as the
+    questions API returns them.
+    """
     quiz = CanvasQuiz(id=20, title="T", quiz_type="assignment")
     group = CanvasQuizGroup(
         id=5, quiz_id=20, name="Pair", pick_count=1, question_points=2.0, position=2
     )
 
-    def question(qid, position, group_id=None, name="Question"):
+    def question(qid, group_id=None, name="Question"):
         return CanvasQuizQuestion(
             id=qid,
             question_name=name,
             question_text=f"<p>{qid}</p>",
             question_type="essay_question",
             points_possible=1.0,
-            position=position,
             quiz_group_id=group_id,
         )
 
-    questions = [
-        question(11, 1),
-        question(13, 2, 5),
-        question(12, 1, 5),
-        question(14, 3),
-    ]
+    questions = [question(11), question(12, 5), question(13, 5), question(14)]
     return quiz, group, questions
+
+
+def _layout_group(gid, position):
+    return CanvasQuizGroup(id=gid, quiz_id=20, name=f"G{gid}", position=position)
+
+
+def _layout_question(qid, group_id=None):
+    return CanvasQuizQuestion(id=qid, quiz_group_id=group_id)
 
 
 class TestQuizState:
@@ -500,6 +506,69 @@ class TestQuizState:
             ("question", 14),
         ]
         assert [q.id for q in ordered_questions(questions, [group])] == [11, 12, 13, 14]
+
+    def test_canvas_layout_from_probe(self):
+        # Live probe after reordering to [C, Pair(First, Added), B, D]: the API
+        # lists First, C, Added, B, D, every position null; the group GET says 2.
+        first, c, added, b, d = 1, 2, 3, 4, 5
+        pair = _layout_group(9, 2)
+        questions = [
+            _layout_question(first, 9),
+            _layout_question(c),
+            _layout_question(added, 9),
+            _layout_question(b),
+            _layout_question(d),
+        ]
+        assert canvas_layout(questions, [pair]) == [
+            ("question", c),
+            ("group", 9),
+            ("question", b),
+            ("question", d),
+        ]
+        assert [q.id for q in ordered_questions(questions, [pair])] == [
+            c,
+            first,
+            added,
+            b,
+            d,
+        ]
+
+    def test_canvas_layout_ignores_question_positions(self):
+        questions = [
+            CanvasQuizQuestion(id=1, position=3),
+            CanvasQuizQuestion(id=2, position=1),
+        ]
+        assert canvas_layout(questions, []) == [("question", 1), ("question", 2)]
+
+    def test_canvas_layout_clamps_and_resolves_group_collisions(self):
+        questions = [
+            _layout_question(1),
+            _layout_question(10, 7),
+            _layout_question(11, 8),
+        ]
+        # Both groups claim position 9 (past the 3 slots): clamp to 3, then the
+        # later id takes the nearest free slot before it.
+        groups = [_layout_group(8, 9), _layout_group(7, 9)]
+        assert canvas_layout(questions, groups) == [
+            ("question", 1),
+            ("group", 8),
+            ("group", 7),
+        ]
+        # Same position: lower id first, the other moves to the next free slot.
+        groups = [_layout_group(8, 1), _layout_group(7, 1)]
+        assert canvas_layout(questions, groups) == [
+            ("group", 7),
+            ("group", 8),
+            ("question", 1),
+        ]
+
+    def test_canvas_layout_puts_null_position_group_last(self):
+        questions = [_layout_question(10, 7), _layout_question(1), _layout_question(2)]
+        assert canvas_layout(questions, [_layout_group(7, None)]) == [
+            ("question", 1),
+            ("question", 2),
+            ("group", 7),
+        ]
 
     def test_export_writes_ids_groups_in_order(self):
         quiz, group, questions = _ordered_quiz()

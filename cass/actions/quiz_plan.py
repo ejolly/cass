@@ -19,6 +19,7 @@ from .quizzes import (
     QuestionSpec,
     QuizSpec,
     QuizState,
+    answer_form_fields,
     canvas_layout,
     default_question_points,
     file_layout,
@@ -33,7 +34,11 @@ from .quizzes import (
 
 if TYPE_CHECKING:
     from ..apis.canvas.client import CanvasClient
-    from ..apis.canvas.schema import CanvasQuizGroup, CanvasQuizQuestion
+    from ..apis.canvas.schema import (
+        CanvasQuizAnswer,
+        CanvasQuizGroup,
+        CanvasQuizQuestion,
+    )
 
 QUESTION_FIELDS = ("text", "name", "type", "points", "answers", "group")
 GROUP_FIELDS = ("pick_count", "points_per_item")
@@ -506,34 +511,72 @@ class QuestionApplyError(RuntimeError):
 def question_update_fields(
     change: QuestionChange, quiz_type: str, group_id: int | None
 ) -> dict[str, object]:
-    """Canvas fields to send for an "update" change: only what changed.
+    """Canvas fields to send for an "update" change: the whole question.
+
+    Canvas fills every field an update leaves out from a copy of the question
+    saved when it was created, so a partial update would undo earlier edits.
+    Each update therefore sends text, name, type, points and answers.
+
+    Answers keep their Canvas ids: unchanged answers go back as the live
+    answers; changed ones are the file's answers, each reusing the id of a
+    live answer with the same text.
 
     Args:
         change: An update change; its spec holds the desired values.
         quiz_type: Canvas quiz type, which decides default points.
-        group_id: Canvas id of the desired group, or None for no group.
-            Canvas ignores None (null); the quiz-level reorder in
-            ``apply_question_plan`` takes the question out of its group.
+        group_id: Canvas id of the desired group, or None for no group. Sent
+            only when the question moves into a group; Canvas ignores
+            ``quiz_group_id: null``, so the quiz-level reorder in
+            ``apply_question_plan`` takes a question out of its group.
     """
     assert change.spec is not None
+    assert change.live is not None
     form = question_form_fields(change.spec, quiz_type)
-    fields: dict[str, object] = {}
-    for name in change.changed:
-        if name == "text":
-            fields["question_text"] = form["question_text"]
-        elif name == "name":
-            fields["question_name"] = form["question_name"]
-        elif name == "type":
-            fields["question_type"] = form["question_type"]
-            if "answers" in form:
-                fields["answers"] = form["answers"]
-        elif name == "points":
-            fields["points_possible"] = form["points_possible"]
-        elif name == "answers":
-            fields["answers"] = form["answers"]
-        elif name == "group":
-            fields["quiz_group_id"] = group_id
+    name = change.spec.name if _match_name(change.spec.name) else ""
+    fields: dict[str, object] = {
+        "question_text": form["question_text"],
+        "question_name": name or change.live.question_name,
+        "question_type": form["question_type"],
+        "points_possible": form["points_possible"],
+    }
+    if "answers" in change.changed:
+        file_answers = answer_form_fields(change.spec.answers)
+        fields["answers"] = _answers_with_live_ids(file_answers, change.live)
+    else:
+        fields["answers"] = [_live_answer_fields(a) for a in change.live.answers]
+    if "group" in change.changed and group_id is not None:
+        fields["quiz_group_id"] = group_id
     return fields
+
+
+def _live_answer_fields(answer: CanvasQuizAnswer) -> dict[str, object]:
+    """A live answer as Canvas update fields, so resending it changes nothing."""
+    fields: dict[str, object] = {
+        "id": answer.id,
+        "answer_text": answer.text,
+        "answer_weight": answer.weight,
+    }
+    if answer.html:
+        fields["answer_html"] = answer.html
+    if answer.comments:
+        fields["answer_comment"] = answer.comments
+    if answer.comments_html:
+        fields["answer_comment_html"] = answer.comments_html
+    return fields
+
+
+def _answers_with_live_ids(
+    file_answers: list[dict[str, object]], live: CanvasQuizQuestion
+) -> list[dict[str, object]]:
+    """*file_answers*, each with the id of an unused live answer of the same text."""
+    unused_ids: dict[str, list[int]] = {}
+    for answer in live.answers:
+        unused_ids.setdefault(answer.text, []).append(answer.id)
+    with_ids: list[dict[str, object]] = []
+    for answer in file_answers:
+        ids = unused_ids.get(str(answer["answer_text"]))
+        with_ids.append({"id": ids.pop(0), **answer} if ids else answer)
+    return with_ids
 
 
 def apply_question_plan(
@@ -546,8 +589,10 @@ def apply_question_plan(
     1. Create groups.
     2. Add, update and delete questions.
     3. Update groups.
-    4. Reorder the quiz. This also takes questions out of groups, since
-       Canvas ignores ``quiz_group_id: null`` on update.
+    4. Reorder the quiz, whenever the plan changes anything. This keeps
+       top-level positions contiguous, which ``canvas_layout`` relies on, and
+       takes questions out of groups, since Canvas ignores
+       ``quiz_group_id: null`` on update.
     5. Reorder groups.
     6. Delete groups. Canvas deletes a group's questions with the group, so
        the questions the file keeps must already be out of it.
@@ -630,7 +675,9 @@ def _apply_steps(
             applied.append(f"update group {group.name!r}")
 
     # 4. Top-level order (also takes questions out of groups)
-    if plan.order_changed:
+    # Sent on every apply, not only when the layout changes: Canvas reports no
+    # question positions, and contiguous positions keep canvas_layout exact.
+    if plan.has_changes:
         items: list[tuple[str, int]] = []
         for kind, entry in plan.order:
             if kind == "question":

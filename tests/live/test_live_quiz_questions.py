@@ -108,6 +108,10 @@ def test_question_editing_round_trip(
     quiz_id = practice.resolve_quiz(title).id
 
     try:
+        # Answer ids before any edit, by answer text
+        start_rows = {r["question_name"]: r for r in _question_rows(quiz_id)}
+        answer_ids = {a["text"]: a["id"] for a in start_rows["D"]["answers"]}
+
         # Edit 1: reorder, rename, add a question, and group two of them.
         exported = _export(quiz_id, tmp_path / "exported.toml")
         by_name = {q.name: q for q in exported.questions}
@@ -138,11 +142,12 @@ def test_question_editing_round_trip(
         # lag (the spec's open risk): report it rather than toggling publish.
         assert count == 4, f"question_count is {count}, expected 4 (stale count?)"
 
-        # Edit 2: ungroup First, drop Added with --prune. Canvas deletes a
-        # group's questions with the group, so the quiz reorder must take First
-        # out of Pair before Pair is deleted.
+        # Edit 2: ungroup First, drop Added with --prune, reword D's third
+        # answer. Canvas deletes a group's questions with the group, so the quiz
+        # reorder must take First out of Pair before Pair is deleted.
         exported = _export(quiz_id, tmp_path / "exported2.toml")
         by_name = {q.name: q for q in exported.questions}
+        reworded = [*by_name["D"].answers[:2], AnswerSpec("Third, reworded")]
         edit2 = dataclasses.replace(
             exported,
             groups=[],
@@ -150,7 +155,7 @@ def test_question_editing_round_trip(
                 by_name["C"],
                 dataclasses.replace(by_name["First"], group=""),
                 by_name["B"],
-                by_name["D"],
+                dataclasses.replace(by_name["D"], answers=reworded),
             ],
         )
         edit2_path = tmp_path / "edit2.toml"
@@ -160,6 +165,13 @@ def test_question_editing_round_trip(
         rows = _question_rows(quiz_id)
         assert [r["question_name"] for r in rows] == ["C", "First", "B", "D"]
         assert all(r["quiz_group_id"] is None for r in rows)
+        # Updates resend the whole question: earlier edits survive, and answers
+        # whose text is unchanged keep their ids.
+        d_row = rows[3]
+        assert d_row["question_text"] == "<p>Pick one</p>"
+        assert [a["text"] for a in d_row["answers"]][2] == "Third, reworded"
+        for answer in d_row["answers"][:2]:
+            assert answer["id"] == answer_ids[answer["text"]], d_row["answers"]
         count = practice.get_quiz(quiz_id).question_count
         assert count == 4, f"question_count is {count}, expected 4 (stale count?)"
 
