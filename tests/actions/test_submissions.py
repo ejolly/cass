@@ -61,14 +61,41 @@ def test_excuse_skips_graded():
 
 
 def test_missing_policy_score_is_not_protected():
-    (change,) = plan_excuse([target(score=0.0, grade="0", missing=True)])
+    policy_zero = target(score=0.0, grade="0", missing=True, grader_id=None)
+    (change,) = plan_excuse([policy_zero])
     assert change.action == "excuse"
+
+
+def test_teacher_partial_credit_on_missing_is_protected():
+    partial = target(score=4.0, grade="4", missing=True, grader_id=99)
+    (change,) = plan_excuse([partial])
+    assert change.action == "skip"
+    assert change.reason.startswith("graded (4)")
+    (forced,) = plan_excuse([partial], include_graded=True)
+    assert forced.action == "excuse"
+
+
+def test_teacher_zero_is_protected():
+    (change,) = plan_excuse([target(score=0.0, grade="0", missing=False, grader_id=99)])
+    assert change.action == "skip"
+    assert change.reason.startswith("graded (0)")
+
+
+def test_include_graded_still_skips_excused():
+    (change,) = plan_excuse([target(excused=True, score=None)], include_graded=True)
+    assert (change.action, change.reason) == ("skip", "already excused")
 
 
 def test_clear_late_plans_late_only():
     late, on_time = plan_clear_late([target(late=True), target(late=False)])
     assert late.action == "clear-late"
     assert (on_time.action, on_time.reason) == ("skip", "not late")
+
+
+@pytest.mark.parametrize("status", ["none", "missing"])
+def test_clear_late_skips_non_late_status(status):
+    (change,) = plan_clear_late([target(late=False, late_policy_status=status)])
+    assert (change.action, change.reason) == ("skip", "not late")
 
 
 def test_clear_late_skips_excused():
@@ -111,6 +138,17 @@ def test_change_rows():
     assert change_rows([change, skip], "America/Los_Angeles") == [
         ("excuse", "HW1", "Ann (5)", "due 2026-09-29 23:59, enrolled 2026-10-02 10:00"),
         ("skip", "HW1", "Ann (5)", "already excused"),
+    ]
+
+
+def test_change_rows_without_due_date_or_enrollment():
+    no_due = SubmissionChange("excuse", target())
+    due_only = SubmissionChange(
+        "excuse", target(cached_due_date="2026-09-30T06:59:00Z")
+    )
+    assert change_rows([no_due, due_only], "UTC") == [
+        ("excuse", "HW1", "Ann (5)", ""),
+        ("excuse", "HW1", "Ann (5)", "due 2026-09-30 06:59"),
     ]
 
 

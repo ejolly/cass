@@ -39,12 +39,15 @@ class SubmissionChange:
 
 
 def is_protected_grade(sub: CanvasSubmissionResponse) -> bool:
-    """Whether the submission holds a real grade.
+    """Whether the submission holds a score a teacher could have entered.
 
-    Canvas's missing-submission policy writes zeros with ``missing`` set; those
-    are not real grades, and are what late enrollees need excused.
+    Canvas's missing-submission policy writes its score with ``missing`` set
+    and no ``grader_id``; those are what late enrollees need excused. A
+    teacher's grade, including partial credit on a missing submission, has a
+    grader and stays protected.
     """
-    return sub.score is not None and not sub.missing
+    is_policy_score = sub.missing and sub.grader_id is None
+    return sub.score is not None and not is_policy_score
 
 
 def due_before_enrollment(sub: CanvasSubmissionResponse, enrolled_at: str) -> bool:
@@ -121,8 +124,9 @@ def change_rows(
         if change.action == "skip":
             detail = change.reason
         else:
-            detail = f"due {format_when(item.submission.cached_due_date, tz)}"
-            if item.enrolled_at:
+            due = item.submission.cached_due_date
+            detail = f"due {format_when(due, tz)}" if due else ""
+            if due and item.enrolled_at:
                 detail += f", enrolled {format_when(item.enrolled_at, tz)}"
         student = f"{item.student_name} ({item.submission.user_id})"
         rows.append((change.action, item.assignment.name, student, detail))

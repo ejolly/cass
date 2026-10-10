@@ -388,6 +388,7 @@ class CanvasSubmissionResponse(msgspec.Struct):
     excused: bool | None = None
     late_policy_status: str | None = None
     points_deducted: float | None = None
+    grader_id: int | None = None  # null for Canvas's automatic missing-policy score
     user: CanvasStudentResponse | None = None
 
 
