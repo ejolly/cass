@@ -113,6 +113,10 @@ DRY_RUN_COMMANDS = [
     (("canvas", "assignments", "groups", "delete"), ["Labs"]),
     (("canvas", "quizzes", "create"), ["Quiz B"]),
     (("canvas", "quizzes", "update"), ["Quiz A", "--from", "quizzes/q.toml"]),
+    (
+        ("canvas", "quizzes", "update"),
+        ["Quiz A", "--from", "quizzes/q.toml", "--questions"],
+    ),
     (("canvas", "quizzes", "publish"), ["Quiz A"]),
     (("canvas", "quizzes", "unpublish"), ["Quiz A"]),
     (("canvas", "quizzes", "delete"), ["Quiz A"]),

@@ -320,8 +320,35 @@ def quizzes_update(
         ..., "--from", help="Quiz file with the desired settings"
     ),
     dry_run: bool = _common.dry_run_option(),
+    questions: bool = typer.Option(
+        False,
+        "--questions",
+        help="Also reconcile questions and question groups (dry run unless --apply)",
+    ),
+    apply: bool = typer.Option(
+        False, "--apply", help="Send the question changes (with --questions)"
+    ),
+    prune: bool = typer.Option(
+        False,
+        "--prune",
+        help="Delete questions and groups not in the file (with --questions)",
+    ),
 ) -> None:
-    """Update a quiz's settings from a quiz file (questions are not touched)."""
+    """Update a quiz's settings from a quiz file.
+
+    Questions are untouched unless --questions is given, which previews the
+    question changes; add --apply to send them.
+    """
+    import click
+
+    if (apply or prune) and not questions:
+        raise click.UsageError("--apply and --prune need --questions.")
+    if apply and dry_run:
+        raise click.UsageError("--apply and --dry-run cannot be combined.")
+    if questions:
+        _update_with_questions(id_or_name, from_file, apply=apply, prune=prune)
+        return
+
     from pathlib import Path
 
     from ...actions.quizzes import load_quiz_file, quiz_settings_diff
@@ -341,6 +368,54 @@ def quizzes_update(
         _common.print_plan(c)
         return
     console.print(f"[green]Updated:[/green] {q.title} ({detail})")
+
+
+def _update_with_questions(
+    id_or_name: str, from_file: str, *, apply: bool, prune: bool
+) -> None:
+    """Settings plus question reconciliation; a dry run unless *apply*."""
+    from pathlib import Path
+
+    from ...actions.quiz_plan import (
+        apply_question_plan,
+        format_question_plan,
+        plan_quiz_questions,
+        plan_summary,
+        question_plan_warning,
+    )
+    from ...actions.quizzes import (
+        fetch_quiz_state,
+        load_quiz_file,
+        quiz_settings_diff,
+    )
+
+    _common.require_canvas()
+    spec = load_quiz_file(Path(from_file))
+    with _common.client(dry_run=not apply) as c:
+        q = c.resolve_quiz(id_or_name)
+        state = fetch_quiz_state(c, q.id, include_submissions=True)
+        plan = plan_quiz_questions(spec, state, prune=prune)
+        group_id = _common.group_id_for(c, spec.group, create=False)
+        changes = quiz_settings_diff(spec, q, c.time_zone, group_id=group_id)
+
+        warning = question_plan_warning(plan)
+        if warning:
+            err_console.print(warning, markup=False)
+        if changes:
+            detail = ", ".join(f"{k}: {v!r}" for k, v in changes.items())
+            console.print(f"update  settings  ({detail})", markup=False)
+        for line in format_question_plan(plan):
+            console.print(line, markup=False)
+
+        if changes:
+            c.update_quiz(q.id, changes)
+        apply_question_plan(c, q.id, plan)
+    if not apply:
+        _common.print_plan(c)
+        if c.planned_requests:
+            err_console.print("Dry run — use --apply to send these changes.")
+        return
+    console.print(f"[green]Updated:[/green] {q.title} ({plan_summary(plan)})")
 
 
 @quizzes_app.command(name="publish")
