@@ -799,3 +799,116 @@ def _set_positions(
             raise RuntimeError(f"no module item for {item_label(change)}")
         client.update_module_item(module_id, item.id, position=slot)
         applied.append(f"move {item_label(change)} to {slot}")
+
+
+# --- sync ---------------------------------------------------------------------
+
+# Item actions the sync summary line counts beyond create / update / skip.
+SYNC_SUMMARY_ACTIONS = ("upload", "move", "remove", "extra")
+
+
+@dataclass
+class ModuleSyncPlan:
+    """One module's item plan within a sync."""
+
+    name: str
+    module_id: int  # a dry-run placeholder (< 0) for a module this sync creates
+    plan: ModuleItemPlan
+
+
+@dataclass
+class SyncItemsPlan:
+    """Item plans for every module that declares ``items``, in config order."""
+
+    index: ContentIndex
+    modules: list[ModuleSyncPlan]
+    rows: list[tuple[str, str, str]]  # from item_plan_rows, module by module
+    counts: dict[str, int]  # rows per action in SYNC_SUMMARY_ACTIONS
+
+    @property
+    def has_changes(self) -> bool:
+        """True when applying would send any request."""
+        return any(module.plan.has_changes for module in self.modules)
+
+
+def plan_sync_items(
+    client: CanvasClient,
+    modules: list[CanvasModuleSpec],
+    module_ids: dict[str, int],
+    *,
+    created_assignments: list[CanvasAssignmentResponse],
+    created_quizzes: list[CanvasQuiz],
+    prune: bool,
+) -> SyncItemsPlan | None:
+    """Plan the items of every module that declares them, before any write.
+
+    Fetches the content index once, makes the assignments and quizzes this
+    sync created resolvable by title, then plans each module in config order.
+
+    Args:
+        modules: Module specs from cass.toml.
+        module_ids: Canvas id for each module name (placeholders in a dry run).
+        created_assignments: Assignments this sync created.
+        created_quizzes: Quizzes this sync created.
+        prune: Remove undeclared items instead of keeping them as extras.
+
+    Returns:
+        The plan, or None (with no requests sent) when no module declares
+        ``items``.
+
+    Raises:
+        RuntimeError: Listing the lookup problems of every module at once.
+    """
+    declared = [module for module in modules if module.items is not None]
+    if not declared:
+        return None
+
+    sources = [
+        item.source
+        for module in declared
+        for item in module.items or []
+        if item.source is not None
+    ]
+    index = fetch_content_index(client, sources=sources)
+    for assignment in created_assignments:
+        index.add_created("Assignment", assignment.id, assignment.name)
+    for quiz in created_quizzes:
+        index.add_created("Quiz", quiz.id, quiz.title)
+
+    planned: list[ModuleSyncPlan] = []
+    problems: list[str] = []
+    for module in declared:
+        module_id = module_ids[module.name]
+        try:
+            plan = plan_module_items(
+                module.items or [],
+                client.list_module_items(module_id),
+                index,
+                prune=prune,
+                module_name=module.name,
+            )
+        except RuntimeError as exc:
+            problems.append(str(exc))
+            continue
+        planned.append(ModuleSyncPlan(module.name, module_id, plan))
+    if problems:
+        raise RuntimeError("\n".join(problems))
+
+    rows = [
+        row for module in planned for row in item_plan_rows(module.name, module.plan)
+    ]
+    counts = {
+        action: sum(1 for row in rows if row[0] == action)
+        for action in SYNC_SUMMARY_ACTIONS
+    }
+    return SyncItemsPlan(index=index, modules=planned, rows=rows, counts=counts)
+
+
+def apply_sync_items(client: CanvasClient, plan: SyncItemsPlan) -> None:
+    """Apply each module's item plan in config order; stop at the first failure.
+
+    Raises:
+        ModuleItemApplyError: When a request fails.
+    """
+    for module in plan.modules:
+        apply_module_item_plan(client, module.module_id, module.plan, plan.index)

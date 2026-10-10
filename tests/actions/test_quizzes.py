@@ -425,6 +425,20 @@ class TestSyncQuizzes:
         client.create_quiz.assert_called_once_with(specs[0], assignment_group_id=9)
         client.update_quiz.assert_called_once_with(1, {"allowed_attempts": 2})
 
+    def test_sync_quizzes_reports_created(self):
+        new_quiz = CanvasQuiz(id=-1, title="New")
+        client = MagicMock()
+        client.list_quizzes.return_value = []
+        client.create_quiz.return_value = new_quiz
+        created: list[CanvasQuiz] = []
+
+        rows = sync_quizzes(
+            client, [QuizSpec(title="New", quiz_type="survey")], {}, LA, created=created
+        )
+
+        assert [r[0] for r in rows] == ["create"]
+        assert created == [new_quiz]
+
     def test_sync_create_ignores_ids(self):
         import httpx
 

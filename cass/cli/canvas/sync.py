@@ -9,6 +9,17 @@ import typer
 from . import _common
 from ._common import canvas_app, console, err_console
 
+ACTION_COLORS = {
+    "create": "green",
+    "upload": "green",
+    "update": "yellow",
+    "move": "yellow",
+    "remove": "red",
+    "skip": "dim",
+    "keep": "dim",
+    "extra": "dim",
+}
+
 
 @canvas_app.command(rich_help_panel="Manage")
 def sync(
@@ -22,6 +33,11 @@ def sync(
         "--create-groups",
         help="Create assignment groups that are missing on Canvas",
     ),
+    prune: bool = typer.Option(
+        False,
+        "--prune",
+        help="Remove module items not declared in cass.toml (modules with items only)",
+    ),
 ) -> None:
     """Sync cass.toml declarations to Canvas (modules, assignments, quizzes).
 
@@ -31,10 +47,15 @@ def sync(
 
     Quizzes match by title. Questions on an existing quiz are never compared
     or modified; only settings are updated.
+
+    Modules that declare [[canvas.modules.items]] also get their items
+    reconciled: every such module is planned before any item is written.
+    Undeclared items are reported as extra; --prune removes them.
     """
     from rich.table import Table
 
     from ...actions.config import get_config
+    from ...actions.module_items import apply_sync_items, plan_sync_items
     from ...actions.quizzes import load_quiz_file, sync_quizzes
     from ...apis.canvas.sync import push_assignments, resolve_group_ids
     from ...apis.canvas.times import parse_when, same_instant
@@ -57,6 +78,9 @@ def sync(
     with _common.client(dry_run=dry_run) as c:
         tz = c.time_zone
         actions: list[tuple[str, str, str]] = []  # (action, type, name)
+        module_ids: dict[str, int] = {}
+        created_assignments = []
+        created_quizzes = []
 
         # --- Assignment groups ---
         group_ids: dict[str, int] = {}
@@ -81,6 +105,7 @@ def sync(
                 key = spec.name.lower()
                 if key in live_by_name:
                     live = live_by_name[key]
+                    module_ids[spec.name] = live.id
                     if live.published != spec.published:
                         actions.append(
                             (
@@ -98,6 +123,7 @@ def sync(
                 else:
                     actions.append(("create", "module", spec.name))
                     mod = c.create_module(spec.name)
+                    module_ids[spec.name] = mod.id
                     if spec.published:
                         c.publish("modules", mod.id)
 
@@ -131,7 +157,7 @@ def sync(
                 else:
                     actions.append(("create", "assignment", spec.name))
                     group_id = group_ids.get(spec.group.lower()) if spec.group else None
-                    c.create_assignment(
+                    new_assignment = c.create_assignment(
                         spec.name,
                         points_possible=spec.points,
                         due_at=wanted_due or None,
@@ -139,13 +165,33 @@ def sync(
                         published=spec.published,
                         assignment_group_id=group_id,
                     )
+                    created_assignments.append(new_assignment)
 
             if updates_by_id:
                 push_assignments(c, updates_by_id)
 
         # --- Quizzes ---
         if quiz_specs:
-            actions.extend(sync_quizzes(c, quiz_specs, group_ids, tz))
+            actions.extend(
+                sync_quizzes(c, quiz_specs, group_ids, tz, created=created_quizzes)
+            )
+
+        # --- Module items ---
+        try:
+            items_plan = plan_sync_items(
+                c,
+                cfg.canvas_modules,
+                module_ids,
+                created_assignments=created_assignments,
+                created_quizzes=created_quizzes,
+                prune=prune,
+            )
+            if items_plan is not None:
+                actions.extend(items_plan.rows)
+                apply_sync_items(c, items_plan)
+        except RuntimeError as exc:
+            err_console.print(f"Error: {exc}", style="red", markup=False)
+            raise typer.Exit(code=1) from exc
 
         plan_client = c
 
@@ -160,7 +206,7 @@ def sync(
     table.add_column("Name")
 
     for action, rtype, name in actions:
-        color = {"create": "green", "update": "yellow", "skip": "dim"}.get(action, "")
+        color = ACTION_COLORS.get(action, "")
         table.add_row(f"[{color}]{action}[/{color}]", rtype, name)
 
     console.print()
@@ -170,12 +216,18 @@ def sync(
     creates = sum(1 for a, _, _ in actions if a == "create")
     updates = sum(1 for a, _, _ in actions if a == "update")
     skips = sum(1 for a, _, _ in actions if a == "skip")
-    console.print(f"  {creates} create, {updates} update, {skips} skip")
+    summary = f"  {creates} create, {updates} update, {skips} skip"
+    if items_plan is not None:
+        summary += "".join(
+            f", {count} {action}" for action, count in items_plan.counts.items()
+        )
+    console.print(summary)
 
     if dry_run:
         _common.print_plan(plan_client)
 
-    if dry_run and (creates or updates):
+    item_changes = items_plan is not None and items_plan.has_changes
+    if dry_run and (creates or updates or item_changes):
         err_console.print(
             "\n  [yellow]Dry run — no changes made. Use --apply to sync.[/yellow]"
         )

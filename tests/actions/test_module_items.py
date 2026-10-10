@@ -17,10 +17,12 @@ from cass.actions.module_items import (
     ContentIndex,
     ModuleItemApplyError,
     apply_module_item_plan,
+    apply_sync_items,
     fetch_content_index,
     item_plan_rows,
     plan_module_items,
     plan_module_spec_items,
+    plan_sync_items,
     resolve_content,
 )
 from cass.apis.canvas.client import CanvasClient
@@ -1017,3 +1019,137 @@ def test_reorder_with_gapped_positions_ends_in_declared_order(monkeypatch):
 
     assert [item["title"] for item in fake.ordered()] == ["A", "C", "B"]
     assert [entry[1] for entry in log] == [f"{ITEMS}/{i}" for i in (31, 33, 32)]
+
+
+# --- sync orchestration -------------------------------------------------------
+
+
+def sync_client(live_items: dict[int, list[CanvasModuleItem]]) -> MagicMock:
+    """A mock client with empty course content and *live_items* per module id."""
+    client = MagicMock()
+    client.list_assignments.return_value = [CanvasAssignmentResponse(id=7, name="HW1")]
+    client.list_quizzes.return_value = []
+    client.list_pages.return_value = []
+    client.list_folders.return_value = [
+        CanvasFolder(id=2, name="course files", full_name="course files")
+    ]
+    client.list_files.return_value = []
+    client.list_module_items.side_effect = lambda module_id: live_items[module_id]
+    return client
+
+
+def test_plan_sync_items_without_items_fetches_nothing():
+    client = sync_client({})
+    modules = [CanvasModuleSpec(name="Week 1")]
+
+    plan = plan_sync_items(
+        client,
+        modules,
+        {"Week 1": 5},
+        created_assignments=[],
+        created_quizzes=[],
+        prune=False,
+    )
+
+    assert plan is None
+    client.list_assignments.assert_not_called()
+    client.list_module_items.assert_not_called()
+
+
+def test_plan_sync_items_plans_declared_modules_in_order(tmp_path):
+    source = tmp_path / "w1.pdf"
+    source.write_bytes(b"1234")
+    client = sync_client({5: [live_site(item_id=33, title="Old")], -1: []})
+    modules = [
+        CanvasModuleSpec(
+            name="Week 2", items=[ModuleItemSpec(type="Quiz", title="Q1")]
+        ),
+        CanvasModuleSpec(name="No items"),
+        CanvasModuleSpec(
+            name="Week 1",
+            items=[
+                ModuleItemSpec(type="Assignment", title="HW2"),
+                ModuleItemSpec(type="File", file="w1.pdf", source=source),
+            ],
+        ),
+    ]
+
+    plan = plan_sync_items(
+        client,
+        modules,
+        {"Week 2": -1, "No items": 6, "Week 1": 5},
+        created_assignments=[CanvasAssignmentResponse(id=-2, name="HW2")],
+        created_quizzes=[CanvasQuiz(id=-3, title="Q1")],
+        prune=True,
+    )
+
+    assert plan is not None
+    assert [(m.name, m.module_id) for m in plan.modules] == [
+        ("Week 2", -1),
+        ("Week 1", 5),
+    ]
+    assert [c.ref.content_id for c in plan.modules[0].plan.items if c.ref] == [-3]
+    assert plan.index.local_sizes == {source: 4}
+    assert [row[0] for row in plan.rows] == [
+        "create",
+        "create",
+        "upload",
+        "create",
+        "remove",
+    ]
+    assert plan.counts == {"upload": 1, "move": 0, "remove": 1, "extra": 0}
+    assert plan.has_changes is True
+    assert [c.args for c in client.list_module_items.call_args_list] == [(-1,), (5,)]
+
+
+def test_plan_sync_items_collects_errors_from_every_module():
+    client = sync_client({5: [], 6: []})
+    modules = [
+        CanvasModuleSpec(
+            name="Week 1", items=[ModuleItemSpec(type="Assignment", title="Nope")]
+        ),
+        CanvasModuleSpec(
+            name="Week 2", items=[ModuleItemSpec(type="Quiz", title="Gone")]
+        ),
+    ]
+
+    with pytest.raises(RuntimeError) as caught:
+        plan_sync_items(
+            client,
+            modules,
+            {"Week 1": 5, "Week 2": 6},
+            created_assignments=[],
+            created_quizzes=[],
+            prune=False,
+        )
+
+    message = str(caught.value)
+    for expected in ("'Week 1'", "'Nope'", "'Week 2'", "'Gone'"):
+        assert expected in message
+
+
+def test_apply_sync_items_applies_each_module():
+    client = sync_client({5: [], 6: [live_header(item_id=40)]})
+    client.create_module_item.side_effect = [
+        CanvasModuleItem(id=50, title="HW1", type="Assignment", content_id=7),
+    ]
+    modules = [
+        CanvasModuleSpec(name="Week 1", items=[HW1]),
+        CanvasModuleSpec(name="Week 2", items=[HEADER]),
+    ]
+    plan = plan_sync_items(
+        client,
+        modules,
+        {"Week 1": 5, "Week 2": 6},
+        created_assignments=[],
+        created_quizzes=[],
+        prune=False,
+    )
+    assert plan is not None
+    assert plan.has_changes is True
+
+    apply_sync_items(client, plan)
+
+    client.create_module_item.assert_called_once()
+    assert client.create_module_item.call_args.args == (5,)
+    client.delete_module_item.assert_not_called()

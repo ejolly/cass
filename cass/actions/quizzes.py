@@ -744,11 +744,16 @@ def sync_quizzes(
     specs: list[QuizSpec],
     group_ids: dict[str, int],
     tz: str,
+    *,
+    created: list[CanvasQuiz] | None = None,
 ) -> list[tuple[str, str, str]]:
     """Reconcile quiz specs against live quizzes, matched by title.
 
     Questions on an existing quiz are never compared or modified. Writes
     always go through ``client``; dry runs pass a dry-run client.
+
+    Args:
+        created: When given, each quiz this call creates is appended to it.
 
     Returns:
         ``(action, "quiz", name)`` rows: create, update (with the changed
@@ -761,7 +766,9 @@ def sync_quizzes(
         live = live_by_title.get(spec.title.lower())
         if live is None:
             rows.append(("create", "quiz", spec.title))
-            client.create_quiz(spec, assignment_group_id=group_id)
+            new_quiz = client.create_quiz(spec, assignment_group_id=group_id)
+            if created is not None:
+                created.append(new_quiz)
             continue
         changes = quiz_settings_diff(spec, live, tz, group_id=group_id)
         if not changes:
