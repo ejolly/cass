@@ -26,6 +26,10 @@ cass canvas announcements list
 cass canvas tabs list            # navigation tabs; tabs show / tabs hide change visibility
 cass canvas modules list         # also show / create / publish / delete
 cass canvas modules show "Week 1"
+cass canvas modules items add "Week 1" --type Assignment --content-id 123 --indent 1
+cass canvas modules items update "Week 1" "Reading 1" --title "Reading 1 (revised)" --publish
+cass canvas modules items move "Week 1" "Reading 1" --position 1
+cass canvas modules items remove "Week 1" "Reading 1" --yes   # the linked content stays
 cass canvas assignments list     # also show / create / publish / delete; assignments groups list
 cass canvas quizzes list         # see the Quizzes guide for authoring
 cass canvas quizzes show "Survey 1"
@@ -36,11 +40,13 @@ cass canvas files mv file.pdf readings/week2   # also files rename / publish / u
 cass canvas files folders list   # also folders create / delete
 cass canvas announcements create "Title" -m "Body"   # also update / delete
 cass canvas tabs hide "Grades"   # also tabs show
-cass canvas sync [--apply]       # reconcile [[canvas.*]] declarations in cass.toml
+cass canvas sync [--apply] [--prune]   # reconcile [[canvas.*]] declarations; --prune removes undeclared module items
 cass canvas login --from-chrome  # browser-session auth, see Canvas authentication
 cass canvas api GET /courses/{course}/modules --all     # raw API request
 cass canvas api PUT /courses/{course}/modules/5 --data 'module[name]=Week1'
 ```
+
+`modules items add` takes `--type` Assignment, Quiz, File, Page, ExternalUrl or SubHeader, plus the matching reference: `--content-id` (Assignment, Quiz, File), `--page-url` (Page), or `--url` and `--title` (ExternalUrl); SubHeader needs `--title`. No other item types are supported. To manage a module's items from `cass.toml`, see [Module items](configuration.md#module-items).
 
 Folder paths are relative to the course files root (no `course files/` prefix). `files upload --folder` and `files mv` create missing folders. `--unpublished` locks new uploads so students cannot see them. `files upload --on-duplicate` defaults to `overwrite`, which replaces a same-named file in place (same ID, links intact). `rename` keeps both files. `skip` skips the upload when a file with the same name and size is already there, and overwrites when only the name matches. `files mv` and `files rename` accept `--on-duplicate rename|overwrite`; without it, a name clash fails in Canvas. `files list --folder` takes a folder ID or path. `files folders delete --force` deletes non-empty folders.
 

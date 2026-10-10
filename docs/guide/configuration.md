@@ -14,7 +14,84 @@ time_zone = "America/Los_Angeles"   # written by `cass init`; times you type are
 file = "quizzes/09-25-participation.toml"   # relative to this file
 ```
 
-`[[canvas.modules]]`, `[[canvas.assignments]]`, and `[[canvas.quizzes]]` tables declare course content. `cass canvas sync` previews what differs from Canvas; `cass canvas sync --apply` creates what is missing and updates settings that differ. See [Quizzes](quizzes.md) for the quiz file format.
+`[[canvas.modules]]`, `[[canvas.assignments]]`, and `[[canvas.quizzes]]` tables declare course content. `cass canvas sync` previews what differs from Canvas; `cass canvas sync --apply` creates what is missing and updates settings that differ. See [Module items](#module-items) and [Quizzes](quizzes.md) for the quiz file format.
+
+## Module items
+
+A `[[canvas.modules]]` table that has `[[canvas.modules.items]]` entries also controls what the module contains. `sync` reconciles the items; a module without `items` is never touched.
+
+```toml
+[[canvas.modules]]
+name = "Week 1"
+published = true
+
+[[canvas.modules.items]]
+type = "SubHeader"
+title = "Readings"
+
+[[canvas.modules.items]]
+type = "File"
+file = "readings/week1/intro.pdf"      # path below the course files root
+source = "materials/intro.pdf"         # local file, relative to this file
+published = true                       # unlocked for students
+indent = 1
+
+[[canvas.modules.items]]
+type = "Page"
+title = "Welcome"
+
+[[canvas.modules.items]]
+type = "Assignment"
+title = "Reading response 1"
+
+[[canvas.modules.items]]
+type = "ExternalUrl"
+title = "Course site"
+url = "https://example.com/course"
+```
+
+`type` is one of `Assignment`, `Quiz`, `Page`, `File`, `ExternalUrl`, `SubHeader` (case-insensitive). `indent` (default 0) and `published` are allowed on every type. Unknown keys are errors.
+
+| Type | Required | Optional |
+|---|---|---|
+| `Assignment`, `Quiz`, `Page` | `title`: the content's title | |
+| `File` | `file`: path below the course files root | `title`, `source` |
+| `ExternalUrl` | `url`, `title` | |
+| `SubHeader` | `title` | |
+
+Titles match case-insensitively. Assignment, Quiz and Page items show the content's own title. Assignments and quizzes declared in the same file, or created by the same `sync`, can be referenced. Only plain assignments match, not quiz or discussion assignments. `file` paths start below the root: `readings/w1.pdf`, not `course files/readings/w1.pdf`.
+
+### Matching and outcomes
+
+A declared item matches a live item by what it points at: the content ID, the page, the URL, or the file. SubHeaders have no content, so they pair by order. Duplicates pair in order too.
+
+Each item gets one outcome in the `sync` table:
+
+| Outcome | Meaning |
+|---|---|
+| `create` | No live item matches; one is added. |
+| `update` | The item matches, but its title, indent or published state differs. |
+| `move` | The item matches and only its position differs. |
+| `keep` | Nothing to change. Shown as one count per module. |
+| `extra` | A live item that is not declared. Left alone, and placed after the declared items. |
+| `remove` | An undeclared item, deleted because of `--prune`. The linked content is untouched. |
+| `upload` | A `File` source is uploaded (see below). Listed before the item's own row. |
+
+The target order is the declared items in file order, then any extras in their current order. If the order differs, `--apply` sets the position of every item, so gaps in Canvas's numbering do not matter.
+
+If an item cannot be found or is ambiguous, `sync` lists every such item across all modules and writes no module items. Under `--apply`, modules, assignments and quizzes were already written by then; the error says so.
+
+### Files
+
+A `File` item with a `source` uploads the local file when the path does not exist on Canvas or the size differs. A same-size edit is not detected; replace it with `cass canvas files upload --on-duplicate overwrite`. An upload over an existing file replaces it in place, so the file ID and the item's link stay the same. Without `source`, the file must already exist.
+
+For a `File`, `published` is the file's lock, not the item's: `true` unlocks the file, `false` locks it. A new upload is locked unless `published = true`. An overwrite with `published` omitted keeps the file's current lock.
+
+### Canvas quirks
+
+- Canvas answers `403 item can't be unpublished` to a `published` value even when it is unchanged. cass sends `published` only when it changes.
+- Items are read per module. `include[]=items` on the module list truncates long modules.
+- `--prune` and `extra` only apply to modules that declare `items`. `items = []` declares an empty module.
 
 ## Times
 

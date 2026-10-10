@@ -50,3 +50,18 @@ def real_course(practice: CanvasClient) -> Iterator[CanvasClient]:
     base_url = get_config().canvas_base_url
     with CanvasClient(base_url, course_id=int(course_id), auth=practice.auth) as client:
         yield client
+
+
+@pytest.fixture
+def practice_cli_client(practice: CanvasClient, monkeypatch: pytest.MonkeyPatch):
+    """Point the CLI at the practice course using the ``practice`` credentials."""
+    monkeypatch.setattr(
+        "cass.cli.canvas._common.client",
+        lambda dry_run=False: CanvasClient(
+            get_config().canvas_base_url,
+            course_id=practice.course_id,
+            auth=practice.auth,
+            time_zone=practice.time_zone,
+            dry_run=dry_run,
+        ),
+    )
