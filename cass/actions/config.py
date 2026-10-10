@@ -203,8 +203,46 @@ def config_file_path() -> Path | None:
     return path if path.exists() else None
 
 
+def _check_item(entry: dict[str, Any], where: str) -> str:
+    """Validate one declared module item and return its canonical type.
+
+    Raises:
+        SystemExit: On the first problem, prefixed with *where*.
+    """
+    if "type" not in entry:
+        raise SystemExit(f"{where}: missing 'type'")
+    item_type = canonical_item_type(str(entry["type"]))
+    if item_type is None:
+        raise SystemExit(
+            f"{where}: unknown type {entry['type']!r} "
+            f"(expected one of: {', '.join(MODULE_ITEM_TYPES)})"
+        )
+    where = f"{where} ({item_type})"
+    required = _ITEM_REQUIRED_KEYS[item_type]
+    allowed = _ITEM_COMMON_KEYS + required + _ITEM_OPTIONAL_KEYS.get(item_type, ())
+    for key in required:
+        if key not in entry:
+            raise SystemExit(f"{where}: missing required key {key!r}")
+    for key in entry:
+        if key not in allowed:
+            raise SystemExit(f"{where}: unknown key {key!r}")
+    for key in ("title", "file", "url", "source"):
+        if key in entry and not (isinstance(entry[key], str) and entry[key].strip()):
+            raise SystemExit(f"{where}: {key} must be a non-empty string")
+    url = entry.get("url", "").strip().lower()
+    if item_type == "ExternalUrl" and not url.startswith(("http://", "https://")):
+        raise SystemExit(f"{where}: url must start with http:// or https://")
+    indent = entry.get("indent", 0)
+    if isinstance(indent, bool) or not isinstance(indent, int) or indent < 0:
+        raise SystemExit(f"{where}: indent must be a whole number ≥ 0")
+    published = entry.get("published")
+    if published is not None and not isinstance(published, bool):
+        raise SystemExit(f"{where}: published must be true or false")
+    return item_type
+
+
 def _load_module_items(
-    raw_items: list[dict[str, Any]], module_name: str, root: Path, path: Path
+    raw_items: Any, module_name: str, root: Path, path: Path
 ) -> list[ModuleItemSpec]:
     """Validate and build the items declared for one module.
 
@@ -213,32 +251,17 @@ def _load_module_items(
     """
     from cass.apis.canvas.client.files import normalize_folder_path
 
+    if not isinstance(raw_items, list):
+        raise SystemExit(
+            f"Invalid config: {path}: module {module_name!r}: items must be "
+            "a list of [[canvas.modules.items]] tables"
+        )
     specs: list[ModuleItemSpec] = []
     for number, entry in enumerate(raw_items, start=1):
         where = f"Invalid config: {path}: module {module_name!r} item {number}"
-        if "type" not in entry:
-            raise SystemExit(f"{where}: missing 'type'")
-        item_type = canonical_item_type(str(entry["type"]))
-        if item_type is None:
-            raise SystemExit(
-                f"{where}: unknown type {entry['type']!r} "
-                f"(expected one of: {', '.join(MODULE_ITEM_TYPES)})"
-            )
-        where = f"{where} ({item_type})"
-        required = _ITEM_REQUIRED_KEYS[item_type]
-        allowed = _ITEM_COMMON_KEYS + required + _ITEM_OPTIONAL_KEYS.get(item_type, ())
-        for key in required:
-            if key not in entry:
-                raise SystemExit(f"{where}: missing required key {key!r}")
-        for key in entry:
-            if key not in allowed:
-                raise SystemExit(f"{where}: unknown key {key!r}")
-        indent = entry.get("indent", 0)
-        if isinstance(indent, bool) or not isinstance(indent, int) or indent < 0:
-            raise SystemExit(f"{where}: indent must be a whole number ≥ 0")
-        published = entry.get("published")
-        if published is not None and not isinstance(published, bool):
-            raise SystemExit(f"{where}: published must be true or false")
+        if not isinstance(entry, dict):
+            raise SystemExit(f"{where}: must be a table with a 'type' key")
+        item_type = _check_item(entry, where)
         source = entry.get("source")
         specs.append(
             ModuleItemSpec(
@@ -247,8 +270,8 @@ def _load_module_items(
                 file=normalize_folder_path(entry.get("file", "")),
                 source=(root / source).resolve() if source else None,
                 url=entry.get("url", ""),
-                indent=indent,
-                published=published,
+                indent=entry.get("indent", 0),
+                published=entry.get("published"),
             )
         )
     return specs

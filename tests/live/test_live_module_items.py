@@ -6,7 +6,6 @@ __docformat__ = "google"
 
 import contextlib
 import re
-import warnings
 from pathlib import Path
 from uuid import uuid4
 
@@ -56,6 +55,7 @@ def _layout(practice: CanvasClient, module_id: int) -> list[tuple[str, str, int]
 def test_module_items_sync_round_trip(practice: CanvasClient, tmp_path: Path):
     tag = uuid4().hex[:8]
     module_name = f"cass-live items {tag}"
+    second_module_name = f"cass-live items {tag} b"
     folder_path = f"cass-live-items-{tag}"
     assignment_name = f"cass-live items {tag}"
     file_path = f"{folder_path}/reading.txt"
@@ -78,7 +78,7 @@ title = "Readings"
 [[canvas.modules.items]]
 type = "ExternalUrl"
 title = "Course site"
-url = "https://example.com/cass-live"
+url = "https://example.com/cass-live/café"
 
 [[canvas.modules.items]]
 type = "Assignment"
@@ -110,13 +110,12 @@ indent = 1
         assert file_item.content_id == file.id
         assert file_item.published is True
         assert file.locked is False
+        # Canvas stores the URL percent-encoded; it must still match.
+        assert items[1].external_url == "https://example.com/cass-live/caf%C3%A9"
+        assert not _has_row(_sync(toml), "create")
 
         # 2. Reorder, retitle and drop an item with --prune.
-        _write_config(
-            toml,
-            practice,
-            module_name,
-            f"""
+        step_2_items = f"""
 [[canvas.modules.items]]
 type = "File"
 file = "{file_path}"
@@ -131,8 +130,8 @@ title = "Week 1 readings"
 [[canvas.modules.items]]
 type = "Assignment"
 title = "{assignment_name}"
-""",
-        )
+"""
+        _write_config(toml, practice, module_name, step_2_items)
         _sync(toml, "--apply", "--prune")
 
         items = practice.list_module_items(module.id)
@@ -144,7 +143,8 @@ title = "{assignment_name}"
         assert [i.position for i in items] == [1, 2, 3]
         assert all(i.type != "ExternalUrl" for i in items)
 
-        # 3. A changed source size overwrites the file; the item stays linked.
+        # 3. A changed source size overwrites the file. Canvas makes a new
+        # file (new id) and re-points the item to it.
         item_id = items[0].id
         source.write_bytes(b"v1\nmore text\n")
         dry_run = _sync(toml)
@@ -157,11 +157,6 @@ title = "{assignment_name}"
         file_item = practice.list_module_items(module.id)[0]
         assert file_item.id == item_id
         assert file_item.content_id == file_after.id
-        if file_after.id != file.id:
-            warnings.warn(
-                "Canvas gave the overwritten file a new id; the item followed it",
-                stacklevel=1,
-            )
 
         # 4. Nothing left to do.
         settled = _sync(toml)
@@ -170,11 +165,42 @@ title = "{assignment_name}"
         assert _has_row(settled, "keep")
         assert "kept" in settled
         assert "no Canvas writes needed" in settled
+
+        # 5. Overwrite the file and link it from a new module in one sync:
+        # the create must use the new file's id.
+        source.write_bytes(b"v1\nmore text\nand more\n")
+        _write_config(
+            toml,
+            practice,
+            module_name,
+            step_2_items
+            + f"""
+[[canvas.modules]]
+name = "{second_module_name}"
+
+[[canvas.modules.items]]
+type = "File"
+file = "{file_path}"
+source = "reading.txt"
+""",
+        )
+        _sync(toml, "--apply")
+        (file_now,) = practice.list_files(folder.id)
+        assert file_now.size == source.stat().st_size
+        second = next(
+            m for m in practice.list_modules() if m.name == second_module_name
+        )
+        (second_item,) = practice.list_module_items(second.id)
+        assert second_item.content_id == file_now.id
+        assert practice.list_module_items(module.id)[0].content_id == file_now.id
+        settled = _sync(toml)
+        for action in ("create", "upload"):
+            assert not _has_row(settled, action)
     finally:
         # Each cleanup step runs even if an earlier one fails
         with contextlib.suppress(Exception):
             for module in practice.list_modules():
-                if module.name == module_name:
+                if module.name in (module_name, second_module_name):
                     practice.delete_module(module.id)
         with contextlib.suppress(Exception):
             folder = practice.find_folder(folder_path)

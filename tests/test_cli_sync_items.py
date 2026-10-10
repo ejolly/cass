@@ -118,6 +118,7 @@ def sync_course(tmp_path, monkeypatch) -> FakeCourse:
         "/courses/1/modules/5/items": WEEK_1_LIVE,
         "/courses/1/modules/6/items": [],
         **{f"/courses/1/modules/5/items/{i['id']}": i for i in WEEK_1_LIVE},
+        **{f"/courses/1/modules/{m['id']}": m for m in MODULES},
     }
     new_ids = itertools.count(100)
 
@@ -125,7 +126,13 @@ def sync_course(tmp_path, monkeypatch) -> FakeCourse:
         course.requests.append(request)
         path = request.url.path.removeprefix(API)
         if request.method == "GET":
-            return httpx.Response(200, json=routes.get(path, []))
+            # Unknown paths 404 so a missing route fails where it is used;
+            # only item lists of modules this sync creates default to empty.
+            if path in routes:
+                return httpx.Response(200, json=routes[path])
+            if re.fullmatch(r"/courses/1/modules/\d+/items", path):
+                return httpx.Response(200, json=[])
+            return httpx.Response(404, json={"errors": [{"message": "no route"}]})
         if path in course.fail_writes:
             return httpx.Response(400, json={"message": "rejected"})
         if request.method == "POST" and path == "/courses/1/files":
@@ -313,6 +320,18 @@ def test_lookup_error_sends_no_item_writes(sync_course):
     # Week 2's unpublish went out before planning failed; no item writes did.
     sent = [(r.method, r.url.path) for r in sync_course.writes()]
     assert ("PUT", f"{API}/courses/1/modules/6") in sent
+    assert item_or_file_writes(sync_course) == []
+
+
+def test_missing_source_under_apply_has_applied_note(sync_course):
+    write_toml(WEEK_1_ITEMS.replace('source = "w1.pdf"', 'source = "gone.pdf"'))
+
+    result = runner.invoke(app, ["canvas", "sync", "--apply"])
+
+    assert result.exit_code == 1, result.output
+    assert isinstance(result.exception, ModuleItemLookupError)
+    assert "gone.pdf" in str(result.exception)
+    assert APPLIED_NOTE in str(result.exception)
     assert item_or_file_writes(sync_course) == []
 
 

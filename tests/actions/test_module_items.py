@@ -21,6 +21,7 @@ from cass.actions.module_items import (
     apply_sync_items,
     fetch_content_index,
     item_plan_rows,
+    normalize_url,
     plan_module_items,
     plan_module_spec_items,
     plan_sync_items,
@@ -159,9 +160,43 @@ def test_fetch_content_index_reads_each_list_once(tmp_path):
         method.assert_called_once_with()
     assert index.local_sizes[source] == 5
 
+
+def test_missing_source_is_a_lookup_error_before_any_fetch(tmp_path):
+    client = MagicMock()
     missing = tmp_path / "gone.pdf"
-    with pytest.raises(RuntimeError, match=r"gone\.pdf"):
+
+    with pytest.raises(ModuleItemLookupError, match=r"gone\.pdf"):
         fetch_content_index(client, sources=[missing])
+    assert client.method_calls == []
+
+
+def test_titles_with_surrounding_spaces_on_canvas_match(index):
+    index.assignments.append(CanvasAssignmentResponse(id=12, name=" Essay 1 "))
+    ref = resolve_content(ModuleItemSpec(type="Assignment", title="essay 1"), index)
+    assert ref.content_id == 12
+
+
+def test_normalize_url_encodes_only_non_ascii():
+    assert normalize_url(" https://x.org/a b?q=1 ") == "https://x.org/a b?q=1"
+    assert normalize_url("https://x.org/ä/") == "https://x.org/%C3%A4"
+    # Decomposed "a" + combining diaeresis is composed first, as Canvas does.
+    assert normalize_url("https://x.org/a\u0308") == "https://x.org/%C3%A4"
+
+
+def test_non_ascii_url_matches_canvas_encoded_form(index):
+    declared = [
+        ModuleItemSpec(type="ExternalUrl", title="Café", url="https://x.org/café")
+    ]
+    live = [
+        CanvasModuleItem(
+            id=4,
+            title="Café",
+            type="ExternalUrl",
+            external_url="https://x.org/caf%C3%A9",
+        )
+    ]
+    plan = plan_module_items(declared, live, index, prune=False)
+    assert actions(plan) == ["keep"]
 
 
 # --- planning -----------------------------------------------------------------
@@ -821,6 +856,31 @@ def test_two_request_update_lists_the_first_request(monkeypatch):
     assert raised.value.applied == ["update File readings/w1.pdf (title)"]
 
 
+def test_created_item_without_published_in_response_counts_as_unpublished(
+    monkeypatch,
+):
+    """A dry run's create response has no ``published``; false needs no PUT."""
+    index = apply_index()
+    declared = [ModuleItemSpec(type="SubHeader", title="Week 1", published=False)]
+    plan = plan_module_items(declared, [], index, prune=False)
+    log: list = []
+    client = make_client(
+        lambda request: httpx.Response(
+            200, json={"id": 900, "title": "Week 1", "type": "SubHeader"}
+        ),
+        log,
+        monkeypatch,
+    )
+
+    apply_module_item_plan(client, 5, plan, index)
+
+    assert [entry[:2] for entry in log] == [
+        ("POST", ITEMS),
+        ("PUT", f"{ITEMS}/900"),  # the position PUT only
+    ]
+    assert log[1][2] == {"module_item[position]": "1"}
+
+
 def test_created_subheader_published_is_set_after_create(monkeypatch):
     index = apply_index()
     declared = [ModuleItemSpec(type="SubHeader", title="Week 1", published=True)]
@@ -850,7 +910,11 @@ class FakeModuleCanvas:
       at ``p`` or above moves up by one, then the item takes ``p``.
     - A create is appended after the highest position, unpublished, and is
       titled after its content unless a title is sent.
-    - Uploads (through the test's stub) add a file to the course files.
+    - ``upload`` (patched over ``client.upload_file``) works like Canvas's
+      overwrite: an upload whose folder already holds a file of exactly that
+      name (case-sensitive) becomes a new file with a new id; the old file
+      is deleted and every item that linked to it now links to the new one.
+      Any other upload adds a file. New file ids start at 500.
     """
 
     def __init__(
@@ -866,13 +930,43 @@ class FakeModuleCanvas:
             item["position"] = position
         self.index = index
         self.next_id = 900
+        self.next_file_id = 500
 
     def ordered(self) -> list[dict]:
         """Items in list order: sorted by position."""
         return sorted(self.items, key=lambda item: item["position"])
 
-    def add_uploaded(self, file: CanvasFile) -> None:
-        self.index.files = [f for f in self.index.files if f.id != file.id] + [file]
+    def upload(
+        self, local_path, *, folder="", name=None, on_duplicate, locked
+    ) -> CanvasFile:
+        """Upload *local_path* into *folder* as Canvas would (see class docstring)."""
+        assert on_duplicate == "overwrite"
+        folder_id = next(
+            f.id
+            for f in self.index.folders
+            if (f.parent_folder_id is None and folder == "")
+            or (f.parent_folder_id is not None and f.name.lower() == folder.lower())
+        )
+        new = CanvasFile(
+            id=self.next_file_id,
+            display_name=name or Path(local_path).name,
+            folder_id=folder_id,
+            size=Path(local_path).stat().st_size,
+            locked=locked,
+        )
+        self.next_file_id += 1
+        replaced = [
+            f
+            for f in self.index.files
+            if f.folder_id == folder_id and f.display_name == new.display_name
+        ]
+        for old in replaced:
+            self.index.files.remove(old)
+            for item in self.items:
+                if item["type"] == "File" and item["content_id"] == old.id:
+                    item["content_id"] = new.id
+        self.index.files.append(new)
+        return new
 
     def _content_title(self, item_type: str, content_id: int) -> str:
         if item_type == "Assignment":
@@ -961,34 +1055,39 @@ class FakeModuleCanvas:
         return item
 
 
+def fake_client(fake: FakeModuleCanvas, log: list, monkeypatch) -> CanvasClient:
+    """A client for *fake* whose uploads go to ``fake.upload``."""
+    client = make_client(fake, log, monkeypatch)
+    monkeypatch.setattr(client, "upload_file", fake.upload)
+    return client
+
+
+def sync_once(client: CanvasClient, declared, source: Path, *, prune: bool):
+    """Fetch, plan and apply module 5's items, as one ``sync --apply`` does."""
+    index = fetch_content_index(client, sources=[source])
+    plan = plan_module_items(declared, client.list_module_items(5), index, prune=prune)
+    apply_module_item_plan(client, 5, plan, index)
+    return plan
+
+
+def replan(client: CanvasClient, declared, source: Path, *, prune: bool):
+    index = fetch_content_index(client, sources=[source])
+    return plan_module_items(declared, client.list_module_items(5), index, prune=prune)
+
+
 def test_replan_after_apply_is_all_keep(tmp_path, monkeypatch):
     source = tmp_path / "w1.pdf"
     source.write_bytes(b"twelve bytes")
-    assert len(source.read_bytes()) == 12  # the upload stub reports size=12
     declared = sequence_declared(source)
     fake = FakeModuleCanvas(SEQUENCE_LIVE, apply_index())
     log: list = []
-    client = make_client(fake, log, monkeypatch)
-    stub_upload = client.upload_file
+    client = fake_client(fake, log, monkeypatch)
 
-    def upload_into_fake(local_path, **kwargs) -> CanvasFile:
-        file = stub_upload(local_path, **kwargs)
-        fake.add_uploaded(file)
-        return file
+    sync_once(client, declared, source, prune=True)
+    again = replan(client, declared, source, prune=True)
 
-    monkeypatch.setattr(client, "upload_file", upload_into_fake)
-
-    index = fetch_content_index(client, sources=[source])
-    live = client.list_module_items(5)
-    plan = plan_module_items(declared, live, index, prune=True)
-    apply_module_item_plan(client, 5, plan, index)
-
-    index = fetch_content_index(client, sources=[source])
-    live = client.list_module_items(5)
-    replan = plan_module_items(declared, live, index, prune=True)
-
-    assert actions(replan) == ["keep"] * 4
-    assert replan.has_changes is False
+    assert actions(again) == ["keep"] * 4
+    assert again.has_changes is False
     assert [item["title"] for item in fake.ordered()] == [
         "Week 1 readings",
         "w1.pdf",
@@ -1020,6 +1119,94 @@ def test_reorder_with_gapped_positions_ends_in_declared_order(monkeypatch):
 
     assert [item["title"] for item in fake.ordered()] == ["A", "C", "B"]
     assert [entry[1] for entry in log] == [f"{ITEMS}/{i}" for i in (31, 33, 32)]
+
+
+def index_with_reading(*, size: int, name: str = "w1.pdf") -> ContentIndex:
+    """The apply index plus file 77 in the readings folder."""
+    index = apply_index()
+    index.files = [CanvasFile(id=77, display_name=name, folder_id=3, size=size)]
+    return index
+
+
+def twelve_byte_source(tmp_path: Path) -> Path:
+    source = tmp_path / "w1.pdf"
+    source.write_bytes(b"twelve bytes")
+    return source
+
+
+def test_create_after_overwrite_links_the_new_file(tmp_path, monkeypatch):
+    source = twelve_byte_source(tmp_path)
+    fake = FakeModuleCanvas([], index_with_reading(size=10))
+    client = fake_client(fake, [], monkeypatch)
+    declared = [ModuleItemSpec(type="File", file="readings/w1.pdf", source=source)]
+
+    plan = sync_once(client, declared, source, prune=False)
+
+    assert actions(plan) == ["create"]
+    assert plan.items[0].upload is not None
+    [file] = fake.index.files
+    assert file.id == 500  # the overwrite made a new file; 77 is gone
+    assert [item["content_id"] for item in fake.ordered()] == [500]
+    assert actions(replan(client, declared, source, prune=False)) == ["keep"]
+
+
+def test_create_in_second_module_after_overwrite_uses_new_file(tmp_path, monkeypatch):
+    """Both modules are planned before any upload, so both refs hold file 77."""
+    source = twelve_byte_source(tmp_path)
+    index = index_with_reading(size=10)
+    index.local_sizes[source] = 12
+    declared = [ModuleItemSpec(type="File", file="readings/w1.pdf", source=source)]
+    plan_5 = plan_module_items(declared, [], index, prune=False)
+    plan_6 = plan_module_items(declared, [], index, prune=False)
+    log: list = []
+    client = make_client(ScriptedCanvas([]), log, monkeypatch)
+    new_file = CanvasFile(id=88, display_name="w1.pdf", folder_id=3, size=12)
+    monkeypatch.setattr(client, "upload_file", lambda path, **kwargs: new_file)
+
+    apply_module_item_plan(client, 5, plan_5, index)
+    apply_module_item_plan(client, 6, plan_6, index)
+
+    creates = [entry for entry in log if entry[0] == "POST"]
+    assert [c[1] for c in creates] == [ITEMS, "/api/v1/courses/1/modules/6/items"]
+    assert [c[2]["module_item[content_id]"] for c in creates] == ["88", "88"]
+
+
+def test_kept_item_after_overwrite_replans_as_keep(tmp_path, monkeypatch):
+    source = twelve_byte_source(tmp_path)
+    live = [CanvasModuleItem(id=40, title="w1.pdf", type="File", content_id=77)]
+    fake = FakeModuleCanvas(live, index_with_reading(size=10))
+    client = fake_client(fake, [], monkeypatch)
+    declared = [ModuleItemSpec(type="File", file="readings/w1.pdf", source=source)]
+
+    plan = sync_once(client, declared, source, prune=False)
+
+    assert actions(plan) == ["keep"]
+    assert plan.items[0].upload is not None
+    assert [item["content_id"] for item in fake.ordered()] == [500]
+    again = replan(client, declared, source, prune=False)
+    assert actions(again) == ["keep"]
+    assert again.has_changes is False
+
+
+def test_case_only_path_mismatch_overwrites_the_existing_file(tmp_path, monkeypatch):
+    source = twelve_byte_source(tmp_path)
+    live = [CanvasModuleItem(id=40, title="w1.pdf", type="File", content_id=77)]
+    fake = FakeModuleCanvas(live, index_with_reading(size=10))
+    log: list = []
+    client = fake_client(fake, log, monkeypatch)
+    uploads: list = []
+    monkeypatch.setattr(
+        client,
+        "upload_file",
+        lambda path, **kwargs: uploads.append(kwargs) or fake.upload(path, **kwargs),
+    )
+    declared = [ModuleItemSpec(type="File", file="Readings/W1.pdf", source=source)]
+
+    sync_once(client, declared, source, prune=False)
+
+    assert (uploads[0]["folder"], uploads[0]["name"]) == ("readings", "w1.pdf")
+    assert [(f.id, f.display_name) for f in fake.index.files] == [(500, "w1.pdf")]
+    assert actions(replan(client, declared, source, prune=False)) == ["keep"]
 
 
 # --- sync orchestration -------------------------------------------------------

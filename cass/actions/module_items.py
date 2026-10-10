@@ -5,10 +5,12 @@ from __future__ import annotations
 __docformat__ = "google"
 
 import os
+import unicodedata
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar
+from urllib.parse import quote
 
 from ..apis.canvas.client.files import folder_paths, normalize_folder_path
 from .config import MODULE_ITEM_TYPES, ModuleItemSpec, canonical_item_type
@@ -78,6 +80,38 @@ def check_item_add_args(
     return canonical
 
 
+def check_item_update_args(
+    *, title: str | None, indent: int | None, published: bool | None
+) -> None:
+    """Check that ``items update`` was given something to change.
+
+    Raises:
+        ValueError: If no option is given.
+    """
+    if title is None and indent is None and published is None:
+        raise ValueError("Give --title, --indent, --publish or --unpublish.")
+
+
+def normalize_url(url: str) -> str:
+    """An ExternalUrl in the form Canvas stores it, for comparing URLs.
+
+    Canvas percent-encodes a URL that holds non-ASCII characters (and drops
+    a trailing ``/`` from it). An ASCII URL is stored as given, apart from
+    surrounding whitespace.
+    """
+    url = url.strip()
+    if url.isascii():
+        return url
+    composed = unicodedata.normalize("NFC", url)
+    # Encode only the non-ASCII characters; keep every ASCII character as is.
+    encoded = "".join(char if char.isascii() else quote(char) for char in composed)
+    return encoded.removesuffix("/")
+
+
+class ModuleItemLookupError(RuntimeError):
+    """Declared module items could not be planned; no item request was sent."""
+
+
 @dataclass
 class ContentIndex:
     """Course content a module item can point at, fetched once per run."""
@@ -129,24 +163,25 @@ class ContentRef:
 def fetch_content_index(
     client: CanvasClient, *, sources: Iterable[Path] = ()
 ) -> ContentIndex:
-    """Fetch the course content once and read the sizes of local *sources*.
+    """Read the sizes of local *sources*, then fetch the course content once.
 
     Raises:
-        RuntimeError: If a source file does not exist.
+        ModuleItemLookupError: If a source is missing or is not a file;
+            nothing has been fetched by then.
     """
-    index = ContentIndex(
+    local_sizes: dict[Path, int] = {}
+    for path in sources:
+        if not path.is_file():
+            raise ModuleItemLookupError(f"Source file not found: {path}")
+        local_sizes[path] = os.path.getsize(path)
+    return ContentIndex(
         assignments=client.list_assignments(),
         quizzes=client.list_quizzes(),
         pages=client.list_pages(),
         folders=client.list_folders(),
         files=client.list_files(),
+        local_sizes=local_sizes,
     )
-    for path in sources:
-        try:
-            index.local_sizes[path] = os.path.getsize(path)
-        except OSError as exc:
-            raise RuntimeError(f"Source file not found: {path}") from exc
-    return index
 
 
 _T = TypeVar("_T")
@@ -216,16 +251,16 @@ def resolve_content(spec: ModuleItemSpec, index: ContentIndex) -> ContentRef:
             a
             for a in index.assignments
             if not _NON_PLAIN_ASSIGNMENT_TYPES & set(a.submission_types)
-            and a.name.lower() == title
+            and a.name.strip().lower() == title
         ]
         found = _single_match(plain, "assignment", [a.id for a in plain])
         return ContentRef(item_type, found.id, title=found.name)
     if item_type == "Quiz":
-        quizzes = [q for q in index.quizzes if q.title.lower() == title]
+        quizzes = [q for q in index.quizzes if q.title.strip().lower() == title]
         quiz = _single_match(quizzes, "quiz", [q.id for q in quizzes])
         return ContentRef(item_type, quiz.id, title=quiz.title)
     if item_type == "Page":
-        pages = [p for p in index.pages if p.title.lower() == title]
+        pages = [p for p in index.pages if p.title.strip().lower() == title]
         page = _single_match(pages, "page", [p.page_id for p in pages])
         return ContentRef(item_type, page.page_id, page_url=page.url, title=page.title)
     if item_type == "File":
@@ -327,7 +362,7 @@ def _declared_identity(ref: ContentRef) -> tuple[str, object] | None:
     if ref.item_type == "Page":
         return ("Page", ref.page_url)
     if ref.item_type == "ExternalUrl":
-        return ("ExternalUrl", ref.external_url)
+        return ("ExternalUrl", normalize_url(ref.external_url))
     if ref.item_type == "SubHeader":
         return ("SubHeader", None)  # SubHeaders pair by their order
     if ref.content_id is None:
@@ -340,7 +375,7 @@ def _live_identity(item: CanvasModuleItem) -> tuple[str, object]:
     if item.type == "Page":
         return ("Page", item.page_url)
     if item.type == "ExternalUrl":
-        return ("ExternalUrl", item.external_url)
+        return ("ExternalUrl", normalize_url(item.external_url))
     if item.type == "SubHeader":
         return ("SubHeader", None)
     return (item.type, item.content_id)
@@ -395,7 +430,7 @@ def _upload_for(
     """Plan an upload when a File's source is new or differs in size."""
     if ref.item_type != "File" or spec.source is None:
         return None
-    local_size = index.local_sizes.get(spec.source, 0)
+    local_size = index.local_sizes[spec.source]  # fetch_content_index read it
     if ref.file is not None and ref.file.size == local_size:
         return None
     return FileUploadPlan(
@@ -583,10 +618,6 @@ def item_plan_rows(
 # --- applying -----------------------------------------------------------------
 
 
-class ModuleItemLookupError(RuntimeError):
-    """Declared module items could not be planned; no item request was sent."""
-
-
 class ModuleItemApplyError(RuntimeError):
     """A request failed while applying a module item plan.
 
@@ -626,7 +657,7 @@ def apply_module_item_plan(
     try:
         _upload_files(client, plan, index, applied)
         created = _create_items(client, module_id, plan, index, applied)
-        _update_items(client, module_id, plan, created, applied)
+        _update_items(client, module_id, plan, created, index, applied)
         removed_ids = _remove_items(client, module_id, plan, applied)
         needs_positions = plan.order_changed or bool(created) or bool(removed_ids)
         if needs_positions:
@@ -648,12 +679,19 @@ def _upload_lock(upload: FileUploadPlan) -> bool:
 def _upload_files(
     client: CanvasClient, plan: ModuleItemPlan, index: ContentIndex, applied: list[str]
 ) -> None:
-    """Step 1: upload each planned file once per run."""
+    """Step 1: upload each planned file once per run.
+
+    An upload over an existing file uses that file's exact folder and name:
+    paths match case-insensitively, but Canvas only overwrites a file whose
+    name matches exactly. Canvas gives the new upload a new file id, deletes
+    the old file and re-points its module items to the new one.
+    """
     for change in plan.items:
         upload = change.upload
         if upload is None or upload.path.lower() in index.uploaded:
             continue
-        folder, _, name = upload.path.rpartition("/")
+        target = index.file_path(upload.existing) if upload.existing else upload.path
+        folder, _, name = target.rpartition("/")
         file = client.upload_file(
             str(upload.source),
             folder=folder,
@@ -688,8 +726,8 @@ def _create_items(
             continue
         ref, spec = change.ref, change.spec
         content_id = ref.content_id
-        if content_id is None and ref.item_type == "File":
-            content_id = index.uploaded[ref.file_path.lower()].id
+        if ref.item_type == "File":
+            content_id = _current_file_id(ref, index)
         titled = ref.item_type in ("ExternalUrl", "SubHeader", "File")
         new = client.create_module_item(
             module_id,
@@ -705,18 +743,33 @@ def _create_items(
     return created
 
 
+def _current_file_id(ref: ContentRef, index: ContentIndex) -> int:
+    """The id of the file at *ref*'s path now.
+
+    An upload this run replaces the file with a new one (new id), so the id
+    from planning time is stale for any path in ``index.uploaded``.
+    """
+    uploaded = index.uploaded.get(ref.file_path.lower())
+    if uploaded is not None:
+        return uploaded.id
+    if ref.content_id is None:
+        raise RuntimeError(f"no file for {ref.file_path}")
+    return ref.content_id
+
+
 def _update_items(
     client: CanvasClient,
     module_id: int,
     plan: ModuleItemPlan,
     created: list[tuple[ItemChange, CanvasModuleItem]],
+    index: ContentIndex,
     applied: list[str],
 ) -> None:
     """Step 3: update changed fields, then publish state of created items."""
     for change in plan.items:
         if change.action != "update":
             continue
-        _update_item(client, module_id, change, applied)
+        _update_item(client, module_id, change, index, applied)
 
     for change, new in created:
         if change.spec is None or change.ref is None:
@@ -724,7 +777,9 @@ def _update_items(
         published = change.spec.published
         if change.ref.item_type == "File" or published is None:
             continue
-        if published != new.published:
+        # A create response without `published` (a dry run's) counts as
+        # unpublished: new ExternalUrl and SubHeader items start that way.
+        if published != bool(new.published):
             client.update_module_item(
                 module_id, new.id, published=published, current=new
             )
@@ -732,7 +787,11 @@ def _update_items(
 
 
 def _update_item(
-    client: CanvasClient, module_id: int, change: ItemChange, applied: list[str]
+    client: CanvasClient,
+    module_id: int,
+    change: ItemChange,
+    index: ContentIndex,
+    applied: list[str],
 ) -> None:
     """Send one update change: item fields in one PUT, a File's lock separately.
 
@@ -756,8 +815,8 @@ def _update_item(
             current=live,
         )
         applied.append(f"update {label} ({', '.join(item_fields)})")
-    if is_file and "published" in change.changed and ref.file is not None:
-        client.update_file(ref.file.id, locked=not spec.published)
+    if is_file and "published" in change.changed:
+        client.update_file(_current_file_id(ref, index), locked=not spec.published)
         applied.append(f"update {label} (published)")
 
 
@@ -827,7 +886,7 @@ class SyncItemsPlan:
     index: ContentIndex
     modules: list[ModuleSyncPlan]
     rows: list[tuple[str, str, str]]  # from item_plan_rows, module by module
-    counts: dict[str, int]  # rows per action in SYNC_SUMMARY_ACTIONS
+    counts: dict[str, int]  # item changes per action in SYNC_SUMMARY_ACTIONS
 
     @property
     def has_changes(self) -> bool:
@@ -903,10 +962,13 @@ def plan_sync_items(
     rows = [
         row for module in planned for row in item_plan_rows(module.name, module.plan)
     ]
-    counts = {
-        action: sum(1 for row in rows if row[0] == action)
-        for action in SYNC_SUMMARY_ACTIONS
-    }
+    counts = dict.fromkeys(SYNC_SUMMARY_ACTIONS, 0)
+    for module in planned:
+        for change in module.plan.items:
+            if change.upload is not None:
+                counts["upload"] += 1
+            if change.action in counts:
+                counts[change.action] += 1
     return SyncItemsPlan(index=index, modules=planned, rows=rows, counts=counts)
 
 

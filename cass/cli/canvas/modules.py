@@ -13,7 +13,7 @@ from ._common import console, err_console, pub
 modules_app = typer.Typer(
     invoke_without_command=True,
     no_args_is_help=False,
-    help="Course modules — list, show, create, publish, delete.",
+    help="Course modules — list, show, create, publish, delete, items.",
 )
 
 
@@ -212,7 +212,7 @@ def items_add(
     title: str | None = typer.Option(
         None, "--title", help="Item title (defaults to the content's name)"
     ),
-    indent: int | None = typer.Option(None, "--indent", help="Indent level"),
+    indent: int | None = typer.Option(None, "--indent", min=0, help="Indent level"),
     dry_run: bool = _common.dry_run_option(),
 ) -> None:
     """Add an item to a module."""
@@ -251,13 +251,17 @@ def items_update(
     id_or_name: str = typer.Argument(..., help="Module ID or name"),
     item: str = typer.Argument(..., help="Item ID or title"),
     title: str | None = typer.Option(None, "--title", help="New title"),
-    indent: int | None = typer.Option(None, "--indent", help="New indent level"),
+    indent: int | None = typer.Option(None, "--indent", min=0, help="New indent level"),
     published: bool | None = typer.Option(None, "--publish/--unpublish"),
     dry_run: bool = _common.dry_run_option(),
 ) -> None:
     """Change an item's title, indent or published state."""
-    if title is None and indent is None and published is None:
-        raise click.UsageError("Give --title, --indent, --publish or --unpublish.")
+    from ...actions.module_items import check_item_update_args
+
+    try:
+        check_item_update_args(title=title, indent=indent, published=published)
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
     _common.require_canvas()
     with _common.client(dry_run=dry_run) as c:
         mod = c.resolve_module(id_or_name)
@@ -272,6 +276,9 @@ def items_update(
         )
     if dry_run:
         _common.print_plan(c)
+        return
+    if updated is current:  # the client sent nothing: published already matched
+        console.print(f"No changes: {current.title}")
         return
     console.print(f"[green]Updated:[/green] {updated.title}")
 

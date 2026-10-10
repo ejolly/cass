@@ -24,7 +24,7 @@ class ModulesMixin(BaseClient):
 
     def get_module(self, module_id: int) -> CanvasModule:
         """Get a single module by ID."""
-        resp = self._client.get(self._course(f"/modules/{module_id}"))
+        resp = self.request("GET", self._course(f"/modules/{module_id}"))
         return msgspec.convert(resp.json(), CanvasModule, strict=False)
 
     def list_module_items(self, module_id: int) -> list[CanvasModuleItem]:
@@ -52,7 +52,7 @@ class ModulesMixin(BaseClient):
         params: dict[str, object] = {"module[name]": name}
         if position is not None:
             params["module[position]"] = position
-        resp = self._client.post(self._course("/modules"), data=params)
+        resp = self.request("POST", self._course("/modules"), data=params)
         return msgspec.convert(resp.json(), CanvasModule, strict=False)
 
     def update_module(self, module_id: int, **kwargs: object) -> CanvasModule:
@@ -66,12 +66,12 @@ class ModulesMixin(BaseClient):
             The updated module.
         """
         params = {f"module[{k}]": v for k, v in kwargs.items()}
-        resp = self._client.put(self._course(f"/modules/{module_id}"), data=params)
+        resp = self.request("PUT", self._course(f"/modules/{module_id}"), data=params)
         return msgspec.convert(resp.json(), CanvasModule, strict=False)
 
     def delete_module(self, module_id: int) -> None:
         """Delete a module."""
-        self._client.delete(self._course(f"/modules/{module_id}"))
+        self.request("DELETE", self._course(f"/modules/{module_id}"))
 
     def create_module_item(
         self,
@@ -157,14 +157,13 @@ class ModulesMixin(BaseClient):
             raise ValueError("update_module_item needs at least one field")
         if current is not None and published == current.published:
             given["published"] = None
+            if all(value is None for value in given.values()):
+                return current  # only an unchanged published was given
         params = {
             f"module_item[{name}]": value
             for name, value in given.items()
             if value is not None
         }
-        if not params:
-            assert current is not None  # only an unchanged published gets here
-            return current
         resp = self.request(
             "PUT", self._course(f"/modules/{module_id}/items/{item_id}"), data=params
         )

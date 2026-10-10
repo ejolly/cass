@@ -124,8 +124,9 @@ def files_upload(
             "--on-duplicate",
             case_sensitive=False,
             help=(
-                "If the name exists: overwrite (default, replaces the file in "
-                "place), rename (keep both), or skip (same name and size)"
+                "If the name exists: overwrite (default; replaces the file, "
+                "which gets a new ID), rename (keep both), or skip (same name "
+                "and size)"
             ),
         ),
     ] = OnDuplicate.OVERWRITE,

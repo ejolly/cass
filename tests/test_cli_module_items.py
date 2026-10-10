@@ -173,6 +173,30 @@ def test_items_update_without_options_exits_2(sent):
     assert _writes(sent) == []
 
 
+def test_items_update_publish_when_already_published_says_no_changes(sent):
+    result = runner.invoke(
+        app,
+        ["canvas", "modules", "items", "update", "Week 1", "Reading", "--publish"],
+    )
+    assert result.exit_code == 0, result.output
+    assert _writes(sent) == []
+    assert "No changes: Reading" in result.stdout
+    assert "Updated" not in result.stdout
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("add", "Week 1", "--type", "SubHeader", "--title", "X", "--indent", "-1"),
+        ("update", "Week 1", "Reading", "--indent", "-1"),
+    ],
+)
+def test_items_negative_indent_exits_2(sent, args):
+    result = runner.invoke(app, ["canvas", "modules", "items", *args])
+    assert result.exit_code == 2, result.output
+    assert _writes(sent) == []
+
+
 def test_items_update_ambiguous_title_exits_1(sent, monkeypatch, capsys):
     from cass.cli import run
 

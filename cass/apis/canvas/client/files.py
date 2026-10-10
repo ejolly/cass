@@ -224,8 +224,10 @@ class FilesMixin(BaseClient):
             folder: Destination folder path relative to the course files root
                 (e.g. ``slides``); created if missing. ``""`` is the root.
             name: Name in Canvas; defaults to the local file name.
-            on_duplicate: ``"overwrite"`` (default) replaces the existing file
-                of that name in place; ``"rename"`` keeps both files.
+            on_duplicate: ``"overwrite"`` (default) replaces the file of that
+                exact name: Canvas stores the upload as a new file (new id),
+                deletes the old one and re-points its module items and
+                links to the new one. ``"rename"`` keeps both files.
             locked: Lock the file after uploading.
 
         Returns:

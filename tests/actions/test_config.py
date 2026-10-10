@@ -447,6 +447,20 @@ title = "Extras"
                 'type = "Page"\ntitle = "t"\npublished = "yes"',
                 " (Page): published must be true or false",
             ),
+            ('type = "File"\nfile = ""', " (File): file must be a non-empty string"),
+            ('type = "Page"\ntitle = 5', " (Page): title must be a non-empty string"),
+            (
+                'type = "File"\nfile = "a.pdf"\nsource = ""',
+                " (File): source must be a non-empty string",
+            ),
+            (
+                'type = "ExternalUrl"\ntitle = "t"\nurl = "example.com/x"',
+                " (ExternalUrl): url must start with http:// or https://",
+            ),
+            (
+                'type = "ExternalUrl"\ntitle = "t"\nurl = "ftp://example.com"',
+                " (ExternalUrl): url must start with http:// or https://",
+            ),
         ],
     )
     def test_invalid_item_fails_naming_module_and_index(
@@ -463,3 +477,13 @@ title = "Extras"
         text = str(exc.value)
         assert "module 'Week 1' item 2" in text
         assert message in text
+
+    def test_items_that_are_not_tables_fail_naming_the_item(self, tmp_path):
+        path = _write(tmp_path, '[[canvas.modules]]\nname = "W"\nitems = [1]\n')
+        with pytest.raises(SystemExit, match=r"module 'W' item 1: must be a table"):
+            load_config(path)
+
+    def test_items_that_are_not_a_list_fail(self, tmp_path):
+        path = _write(tmp_path, '[[canvas.modules]]\nname = "W"\nitems = "x"\n')
+        with pytest.raises(SystemExit, match=r"module 'W': items must be a list"):
+            load_config(path)

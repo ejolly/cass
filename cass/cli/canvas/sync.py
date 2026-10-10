@@ -66,6 +66,7 @@ def sync(
         apply_sync_items,
         plan_sync_items,
     )
+    from ...actions.modules import sync_modules
     from ...actions.quizzes import load_quiz_file, sync_quizzes
     from ...apis.canvas.sync import push_assignments, resolve_group_ids
     from ...apis.canvas.times import parse_when, same_instant
@@ -108,34 +109,8 @@ def sync(
 
         # --- Modules ---
         if cfg.canvas_modules:
-            live_modules = c.list_modules()
-            live_by_name = {m.name.lower(): m for m in live_modules}
-
-            for spec in cfg.canvas_modules:
-                key = spec.name.lower()
-                if key in live_by_name:
-                    live = live_by_name[key]
-                    module_ids[spec.name] = live.id
-                    if live.published != spec.published:
-                        actions.append(
-                            (
-                                "update",
-                                "module",
-                                f"{spec.name} (published: {spec.published})",
-                            )
-                        )
-                        if spec.published:
-                            c.publish("modules", live.id)
-                        else:
-                            c.unpublish("modules", live.id)
-                    else:
-                        actions.append(("skip", "module", spec.name))
-                else:
-                    actions.append(("create", "module", spec.name))
-                    mod = c.create_module(spec.name)
-                    module_ids[spec.name] = mod.id
-                    if spec.published:
-                        c.publish("modules", mod.id)
+            module_rows, module_ids = sync_modules(c, cfg.canvas_modules)
+            actions.extend(module_rows)
 
         # --- Assignments ---
         if cfg.canvas_assignments:
