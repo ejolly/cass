@@ -13,6 +13,10 @@ import msgspec
 from ....actions.quizzes import (
     QuestionSpec,
     QuizSpec,
+    _number,
+    default_question_points,
+    file_layout,
+    group_members,
     question_form_fields,
     quiz_form_fields,
 )
@@ -49,8 +53,10 @@ class QuizzesMixin(BaseClient):
     ) -> CanvasQuiz:
         """Create a quiz with its questions.
 
-        Posts the quiz unpublished, posts each question in order, then re-saves
-        the quiz (applying ``spec.published``) so Canvas recomputes
+        Posts the quiz unpublished, creates the declared question groups, posts
+        each question in file order (into its group), orders groups and entries
+        when there are groups, then re-saves the quiz (applying
+        ``spec.published``) so Canvas recomputes
         ``question_count`` and ``points_possible``. If a question post fails
         the partial quiz is deleted and the error re-raised.
 
@@ -68,16 +74,59 @@ class QuizzesMixin(BaseClient):
         resp = self._client.post(self._course("/quizzes"), data=_quiz_form(fields))
         quiz = msgspec.convert(resp.json(), CanvasQuiz, strict=False)
         try:
+            group_ids = {
+                group.name: self.create_question_group(
+                    quiz.id,
+                    {
+                        "name": group.name,
+                        "pick_count": group.pick_count,
+                        "question_points": _number(
+                            group.points_per_item
+                            if group.points_per_item is not None
+                            else default_question_points(spec.quiz_type)
+                        ),
+                    },
+                ).id
+                for group in spec.groups
+            }
+            question_ids: list[int] = []
             for position, question in enumerate(spec.questions, 1):
-                self.create_quiz_question(
-                    quiz.id, question, position, quiz_type=spec.quiz_type
+                created = self.create_quiz_question(
+                    quiz.id,
+                    question,
+                    position,
+                    quiz_type=spec.quiz_type,
+                    quiz_group_id=group_ids[question.group] if question.group else None,
                 )
+                question_ids.append(created.id)
+            if spec.groups:
+                self._order_created_quiz(quiz.id, spec, group_ids, question_ids)
             # Classic quizzes recount questions and points only after a re-save.
             self.resave_quiz(quiz.id, published=spec.published)
         except Exception:
             self.delete_quiz(quiz.id)
             raise
         return self.get_quiz(quiz.id)
+
+    def _order_created_quiz(
+        self,
+        quiz_id: int,
+        spec: QuizSpec,
+        group_ids: dict[str, int],
+        question_ids: list[int],
+    ) -> None:
+        """Put a freshly created quiz's entries and group members in file order."""
+        top_level: list[tuple[str, int]] = []
+        for kind, key in file_layout(spec):
+            if kind == "group":
+                top_level.append(("group", group_ids[str(key)]))
+            else:
+                top_level.append(("question", question_ids[int(key)]))
+        self.reorder_quiz(quiz_id, top_level)
+        for name, indices in group_members(spec).items():
+            self.reorder_question_group(
+                quiz_id, group_ids[name], [question_ids[i] for i in indices]
+            )
 
     def update_quiz(self, quiz_id: int, changes: dict[str, object]) -> CanvasQuiz:
         """Update quiz settings.

@@ -414,6 +414,18 @@ class TestSyncQuizzes:
         client.create_quiz.assert_called_once_with(specs[0], assignment_group_id=9)
         client.update_quiz.assert_called_once_with(1, {"allowed_attempts": 2})
 
+    def test_sync_create_ignores_ids(self):
+        client = MagicMock()
+        client.list_quizzes.return_value = []
+        spec = QuizSpec(
+            title="New",
+            quiz_type="survey",
+            questions=[QuestionSpec(text="a", id=99)],
+        )
+        sync_quizzes(client, [spec], {}, LA)
+        client.create_quiz.assert_called_once()
+        assert "id" not in question_form_fields(spec.questions[0], spec.quiz_type)
+
 
 def test_strip_html():
     assert strip_html("<p>What &amp; why?</p>\n<ul><li>a</li></ul>") == "What & why? a"

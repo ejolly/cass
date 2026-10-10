@@ -3,7 +3,7 @@
 import httpx
 import pytest
 
-from cass.actions.quizzes import QuestionSpec, QuizSpec
+from cass.actions.quizzes import GroupSpec, QuestionSpec, QuizSpec
 from cass.apis.canvas.client import CanvasAPIError, CanvasClient
 from cass.apis.canvas.dry_run import PlannedRequest, format_plan
 from cass.apis.canvas.schema import CanvasQuiz, CanvasQuizGroup
@@ -106,6 +106,42 @@ def test_create_quiz_records_chain(dry):
     assert quiz.id == -1
     assert writes(sent) == []
     assert not any("/-1" in str(r.url) for r in sent)
+
+
+def test_create_quiz_with_groups_records_chain(dry):
+    client, sent = dry
+    spec = QuizSpec(
+        title="Week 1",
+        quiz_type="survey",
+        groups=[GroupSpec(name="Pair")],
+        questions=[
+            QuestionSpec(text="a", id=99),
+            QuestionSpec(text="P1", group="Pair"),
+            QuestionSpec(text="P2", group="Pair"),
+            QuestionSpec(text="b"),
+        ],
+    )
+    client.create_quiz(spec)
+    planned = client.planned_requests
+    assert [(r.method, r.path) for r in planned] == [
+        ("POST", "/courses/1/quizzes"),
+        ("POST", "/courses/1/quizzes/-1/groups"),
+        *[("POST", "/courses/1/quizzes/-1/questions")] * 4,
+        ("POST", "/courses/1/quizzes/-1/reorder"),
+        ("POST", "/courses/1/quizzes/-1/groups/-2/reorder"),
+        ("PUT", "/courses/1/quizzes/-1"),
+    ]
+    bodies = [r.body for r in planned[2:6]]
+    assert [b["question"].get("quiz_group_id") for b in bodies] == [None, -2, -2, None]
+    assert all(
+        "id" not in b["question"] and 99 not in b["question"].values() for b in bodies
+    )
+    assert planned[6].body["order"] == [
+        {"id": "-3", "type": "question"},
+        {"id": "-2", "type": "group"},
+        {"id": "-6", "type": "question"},
+    ]
+    assert writes(sent) == []
 
 
 def test_question_group_create_unwraps_envelope(dry):
