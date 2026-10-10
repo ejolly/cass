@@ -1499,6 +1499,112 @@ class TestCanvasTabsAndFiles:
             "context_external_tool_5826", hidden=False
         )
 
+    def test_upload_options_reach_action(self, fake_client, monkeypatch, tmp_path):
+        from cass.actions.files import FileUpload, OnDuplicate
+        from cass.apis.canvas.schema import CanvasFile
+
+        (tmp_path / "notes.txt").write_text("hi")
+        monkeypatch.chdir(tmp_path)
+        action = MagicMock(
+            return_value=FileUpload(CanvasFile(id=9, display_name="w1.txt"), False)
+        )
+        monkeypatch.setattr("cass.actions.files.upload_course_file", action)
+
+        result = runner.invoke(
+            app,
+            [
+                *("canvas", "files", "upload", "notes.txt"),
+                *("--folder", "readings", "--name", "w1.txt"),
+                *("--on-duplicate", "skip", "--unpublished"),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert action.call_args.kwargs == {
+            "folder": "readings",
+            "name": "w1.txt",
+            "on_duplicate": OnDuplicate.SKIP,
+            "unpublished": True,
+        }
+
+    def test_upload_skip_message(self, fake_client, monkeypatch, tmp_path):
+        from cass.actions.files import FileUpload
+        from cass.apis.canvas.schema import CanvasFile
+
+        (tmp_path / "notes.txt").write_text("hi")
+        monkeypatch.chdir(tmp_path)
+        skipped = FileUpload(CanvasFile(id=7, display_name="w1.txt"), skipped=True)
+        monkeypatch.setattr(
+            "cass.actions.files.upload_course_file", MagicMock(return_value=skipped)
+        )
+
+        result = runner.invoke(app, ["canvas", "files", "upload", "notes.txt"])
+
+        assert result.exit_code == 0, result.output
+        assert "Skipped: w1.txt (id=7)" in result.stdout
+
+    def test_upload_bad_on_duplicate_is_usage_error(
+        self, fake_client, monkeypatch, tmp_path
+    ):
+        (tmp_path / "notes.txt").write_text("hi")
+        monkeypatch.chdir(tmp_path)
+
+        result = runner.invoke(
+            app, ["canvas", "files", "upload", "notes.txt", "--on-duplicate", "keep"]
+        )
+
+        assert result.exit_code == 2
+
+    def _folder_listing(self, fake_client):
+        from cass.apis.canvas.schema import CanvasFile, CanvasFolder
+
+        root = CanvasFolder(id=1, name="course files", full_name="course files")
+        readings = CanvasFolder(
+            id=3, name="readings", full_name="course files/readings"
+        )
+        slides = CanvasFolder(id=4, name="slides", full_name="course files/slides")
+        fake_client.list_folders.return_value = [root, readings, slides]
+        fake_client.list_files.return_value = [
+            CanvasFile(id=30, display_name="a.pdf", folder_id=3),
+            CanvasFile(id=40, display_name="b.pdf", folder_id=4),
+        ]
+        fake_client.resolve_folder.return_value = readings
+
+    def test_files_list_folder_filters(self, fake_client):
+        self._folder_listing(fake_client)
+
+        result = runner.invoke(app, ["canvas", "files", "list", "--folder", "readings"])
+        assert result.exit_code == 0, result.output
+        assert "a.pdf" in result.stdout
+        assert "b.pdf" not in result.stdout
+
+        result = runner.invoke(
+            app, ["canvas", "files", "list", "--folder", "readings", "--json"]
+        )
+        assert result.exit_code == 0, result.output
+        records = [json.loads(line) for line in result.stdout.splitlines()]
+        assert sorted(r["id"] for r in records) == [3, 30]
+
+    def test_files_list_unknown_folder_exits_1(self, fake_client, monkeypatch, capsys):
+        import sys
+
+        from cass.apis.canvas.errors import CanvasNotFoundError
+        from cass.cli import run
+
+        fake_client.resolve_folder.side_effect = CanvasNotFoundError(
+            "Folder not found: nope"
+        )
+        monkeypatch.setenv("CASS_DEBUG", "")
+        monkeypatch.setattr(
+            sys, "argv", ["cass", "canvas", "files", "list", "--folder", "nope"]
+        )
+
+        with pytest.raises(SystemExit) as info:
+            run()
+
+        assert info.value.code == 1
+        assert "Folder not found: nope" in capsys.readouterr().err
+
     def test_files_tree_shows_ids(self, fake_client):
         result = runner.invoke(app, ["canvas", "files"])
         assert result.exit_code == 0, result.output

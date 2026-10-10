@@ -71,6 +71,21 @@ GET_ROUTES: dict[str, object] = {
     "/calendar_events/11": {"id": 11, "title": "Office hours"},
     "/courses/1/discussion_topics/13": {"id": 13, "title": "Welcome"},
     "/files/15": {"id": 15, "display_name": "notes.txt"},
+    "/courses/1/folders": [
+        {
+            "id": 2,
+            "name": "course files",
+            "full_name": "course files",
+            "parent_folder_id": None,
+        },
+        {
+            "id": 3,
+            "name": "readings",
+            "full_name": "course files/readings",
+            "parent_folder_id": 2,
+        },
+    ],
+    "/folders/3/files": [{"id": 15, "display_name": "notes.txt", "size": 6}],
     "/courses/1/files": [{"id": 15, "display_name": "notes.txt"}],
     "/courses/1/discussion_topics": [{"id": 13, "title": "Welcome"}],
 }
@@ -99,6 +114,14 @@ DRY_RUN_COMMANDS = [
     (("canvas", "calendar", "update"), ["11", "--title", "Review session"]),
     (("canvas", "calendar", "delete"), ["11"]),
     (("canvas", "files", "upload"), ["notes.txt"]),
+    (
+        ("canvas", "files", "upload"),
+        ["notes.txt", "--folder", "new/sub", "--name", "n.txt", "--unpublished"],
+    ),
+    (
+        ("canvas", "files", "upload"),
+        ["notes.txt", "--folder", "readings", "--on-duplicate", "overwrite"],
+    ),
     (("canvas", "files", "delete"), ["notes.txt"]),
     (("canvas", "announcements", "create"), ["Hello", "--message", "Hi"]),
     (("canvas", "announcements", "update"), ["Welcome", "--title", "Hello again"]),

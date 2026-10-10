@@ -4,8 +4,11 @@ from __future__ import annotations
 
 __docformat__ = "google"
 
+from typing import Annotated
+
 import typer
 
+from ...actions.files import OnDuplicate
 from . import _common
 from ._common import console, due, err_console, size
 
@@ -20,11 +23,14 @@ files_app = typer.Typer(
 def files_callback(ctx: typer.Context) -> None:
     """Course files; bare ``files`` runs ``files list``."""
     if ctx.invoked_subcommand is None:
-        files_list(csv_out="", save="", as_json=False)
+        files_list(folder="", csv_out="", save="", as_json=False)
 
 
 @files_app.command(name="list")
 def files_list(
+    folder: str = typer.Option(
+        "", "--folder", help="Only this folder (ID or path) and its subfolders"
+    ),
     csv_out: str = typer.Option("", "--csv", help="Export as CSV file"),
     save: str = typer.Option("", "--save", help="Save output as markdown file"),
     as_json: bool = _common.json_option(),
@@ -33,6 +39,7 @@ def files_list(
     from rich.tree import Tree
 
     from ...actions.canvas_records import file_tree_records
+    from ...actions.files import folder_subtree
     from .. import report
 
     _common.reject_json_with_files(as_json, csv_out, save)
@@ -41,6 +48,10 @@ def files_list(
         tz = c.time_zone
         folders = c.list_folders()
         all_files = c.list_files()
+        if folder:
+            folders, all_files = folder_subtree(
+                folders, all_files, c.resolve_folder(folder)
+            )
 
     if as_json:
         _common.emit_json_lines(file_tree_records(folders, all_files))
@@ -94,11 +105,29 @@ def files_list(
 @files_app.command(name="upload")
 def files_upload(
     path: str = typer.Argument(..., help="Local file path to upload"),
-    folder: str = typer.Option("", "--folder", help="Destination folder in Canvas"),
+    folder: str = typer.Option(
+        "", "--folder", help="Destination folder in Canvas (created if missing)"
+    ),
+    name: str | None = typer.Option(
+        None, "--name", help="Name in Canvas (default: local file name)"
+    ),
+    on_duplicate: Annotated[
+        OnDuplicate,
+        typer.Option(
+            "--on-duplicate",
+            case_sensitive=False,
+            help="If the name exists: rename, overwrite, or skip (same name and size)",
+        ),
+    ] = OnDuplicate.RENAME,
+    unpublished: bool = typer.Option(
+        False, "--unpublished", help="Lock the file so students cannot see it"
+    ),
     dry_run: bool = _common.dry_run_option(),
 ) -> None:
     """Upload a file to the course."""
     import os
+
+    from ...actions.files import upload_course_file
 
     _common.require_canvas()
     if not os.path.isfile(path):
@@ -106,7 +135,18 @@ def files_upload(
         raise typer.Exit(code=1)
 
     with _common.client(dry_run=dry_run) as c:
-        f = c.upload_file(path, folder=folder)
+        result = upload_course_file(
+            c,
+            path,
+            folder=folder,
+            name=name,
+            on_duplicate=on_duplicate,
+            unpublished=unpublished,
+        )
+    f = result.file
+    if result.skipped:
+        console.print(f"[yellow]Skipped:[/yellow] {f.display_name} (id={f.id})")
+        return
     if dry_run:
         _common.print_plan(c)
         return
