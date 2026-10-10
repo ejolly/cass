@@ -1360,3 +1360,95 @@ class TestResolveRules:
         )
         with pytest.raises(RuntimeError, match="matching IDs: 15, 16"):
             client.resolve_file("notes.txt")
+
+
+FOLDER_LIST = [
+    {
+        "id": 1,
+        "name": "course files",
+        "full_name": "course files",
+        "parent_folder_id": None,
+    },
+    {
+        "id": 2,
+        "name": "readings",
+        "full_name": "course files/readings",
+        "parent_folder_id": 1,
+    },
+]
+
+
+class TestFolders:
+    def test_normalize_folder_path(self):
+        from cass.apis.canvas.client.files import normalize_folder_path
+
+        assert normalize_folder_path("/a//b/") == "a/b"
+        assert normalize_folder_path("  ") == ""
+
+    def test_folder_paths_relative_to_root(self):
+        import msgspec
+
+        from cass.apis.canvas.client.files import folder_paths
+        from cass.apis.canvas.schema import CanvasFolder
+
+        folders = msgspec.convert(FOLDER_LIST, list[CanvasFolder], strict=False)
+        assert folder_paths(folders) == {1: "", 2: "readings"}
+
+    def test_create_folder_creates_missing_segments(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data=FOLDER_LIST)
+        transport.add(json_data={"id": 3, "name": "week1"})
+        transport.add(json_data={"id": 4, "name": "pdfs"})
+        assert client.create_folder("readings/week1/pdfs").id == 4
+        second, third = transport.requests[1], transport.requests[2]
+        assert (second.method, second.url.path) == (
+            "POST",
+            "/api/v1/folders/2/folders",
+        )
+        assert b"name=week1" in second.content
+        assert (third.method, third.url.path) == ("POST", "/api/v1/folders/3/folders")
+        assert b"name=pdfs" in third.content
+
+    def test_create_folder_existing_is_case_insensitive_noop(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data=FOLDER_LIST)
+        assert client.create_folder("Readings").id == 2
+        assert [r.method for r in transport.requests] == ["GET"]
+
+    def test_create_folder_without_parents_raises(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data=FOLDER_LIST)
+        with pytest.raises(RuntimeError, match="Parent folder not found: x"):
+            client.create_folder("x/y", parents=False)
+        assert all(r.method == "GET" for r in transport.requests)
+
+    def test_folder_path_with_root_prefix_is_rejected(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data=FOLDER_LIST)
+        transport.add(json_data=FOLDER_LIST)
+        with pytest.raises(RuntimeError, match="drop the 'course files/' prefix"):
+            client.create_folder("course files/slides")
+        with pytest.raises(RuntimeError, match="drop the 'course files/' prefix"):
+            client.find_folder("course files/slides")
+
+    def test_resolve_folder_by_id_and_path(self, mock_client):
+        from cass.apis.canvas.errors import CanvasNotFoundError
+
+        client, transport = mock_client
+        for _ in range(3):
+            transport.add(json_data=FOLDER_LIST)
+        assert client.resolve_folder("2").id == 2
+        assert client.resolve_folder("/readings/").id == 2
+        with pytest.raises(CanvasNotFoundError):
+            client.resolve_folder("nope")
+
+    def test_delete_folder_force_param(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data={})
+        transport.add(json_data={})
+        client.delete_folder(2)
+        client.delete_folder(2, force=True)
+        first, second = transport.requests
+        assert (first.method, first.url.path) == ("DELETE", "/api/v1/folders/2")
+        assert "force" not in first.url.params
+        assert second.url.params["force"] == "true"
