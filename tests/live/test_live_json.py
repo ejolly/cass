@@ -42,6 +42,7 @@ def practice_cli_client(practice: CanvasClient, monkeypatch: pytest.MonkeyPatch)
         ("quizzes",),
         ("calendar",),
         ("files",),
+        ("files", "folders"),
         ("announcements",),
         ("tabs",),
     ],

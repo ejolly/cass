@@ -31,7 +31,9 @@ cass canvas quizzes list         # see the Quizzes guide for authoring
 cass canvas quizzes show "Survey 1"
 cass canvas quizzes responses "Survey 1" --csv out.csv   # every student's answers
 cass canvas calendar list        # also create / update / delete, by event ID
-cass canvas files upload file.pdf   # also files delete
+cass canvas files upload file.pdf --folder readings/week1 --unpublished
+cass canvas files mv file.pdf readings/week2   # also files rename / publish / unpublish / delete
+cass canvas files folders list   # also folders create / delete
 cass canvas announcements create "Title" -m "Body"   # also update / delete
 cass canvas tabs hide "Grades"   # also tabs show
 cass canvas sync [--apply]       # reconcile [[canvas.*]] declarations in cass.toml
@@ -39,6 +41,8 @@ cass canvas login --from-chrome  # browser-session auth, see Canvas authenticati
 cass canvas api GET /courses/{course}/modules --all     # raw API request
 cass canvas api PUT /courses/{course}/modules/5 --data 'module[name]=Week1'
 ```
+
+Folder paths are relative to the course files root (no `course files/` prefix). `files upload --folder` and `files mv` create missing folders. `--unpublished` locks new uploads so students cannot see them. `--on-duplicate skip` skips an upload when a file with the same name and size is already there, and overwrites when only the name matches. `files folders delete --force` deletes non-empty folders.
 
 `cass canvas api` prints the response body as JSON. `{course}` expands to the configured course ID; `--param KEY=VALUE` adds query parameters and `--json-body` sends a JSON body. To call the API from Python, see the [Python API guide](python-api.md).
 
