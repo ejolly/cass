@@ -505,6 +505,9 @@ def pull(
 @app.command()
 def push(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Show the push preview without pushing"
+    ),
 ) -> None:
     """Preview and push pending Canvas-managed changes."""
     from .. import db
@@ -525,6 +528,10 @@ def push(
         return
 
     _render_push_preview(preview)
+
+    if dry_run:
+        console.print("Dry run: nothing pushed; pending changes stay pending.")
+        return
 
     confirm("Push these changes to Canvas?", yes=yes, default=False)
 

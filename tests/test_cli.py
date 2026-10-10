@@ -230,6 +230,46 @@ class TestPush:
         assert "Canvas Push Preview" in result.stdout
         apply_mock.assert_not_called()
 
+    def test_push_dry_run_keeps_pending(self, project_dir, monkeypatch):
+        monkeypatch.chdir(project_dir)
+        sdb = sqlite_utils.Database(str(project_dir / "cass.db"))
+        db.init_schema(sdb)
+        monkeypatch.setattr("cass.db.core._db", sdb)
+        sdb["canvas_assignments"].insert(
+            {"canvas_id": 7, "name": "HW1", "points_possible": 10, "published": 1}
+        )
+        db.snapshot_canvas_synced(sdb)
+        sdb.execute("UPDATE canvas_assignments SET name = 'HW 1'")
+        before = db.get_pending_changes(sdb)
+        assert before
+        monkeypatch.setattr(
+            "cass.db.canvas_preview",
+            lambda conn, pending: {
+                "ok": True,
+                "changes": [
+                    {
+                        "table": "canvas_assignments",
+                        "name": "Assignment",
+                        "column": "name",
+                        "baseline": "HW1",
+                        "current": "HW 1",
+                        "live": "HW1",
+                    }
+                ],
+                "has_conflicts": False,
+                "has_errors": False,
+            },
+        )
+        apply_mock = MagicMock(return_value={"ok": True, "results": []})
+        monkeypatch.setattr("cass.db.canvas_apply", apply_mock)
+
+        result = runner.invoke(app, ["push", "--dry-run"])
+        assert result.exit_code == 0
+        assert "Canvas Push Preview" in result.stdout
+        assert "Dry run" in result.stdout
+        apply_mock.assert_not_called()
+        assert db.get_pending_changes(sdb) == before
+
     def test_push_yes_bypasses_confirmation(self, project_db, monkeypatch):
         canvas_id = _sample_assignment_id(project_db)
         project_db.execute(
