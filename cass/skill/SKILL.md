@@ -16,11 +16,12 @@ cass is a CLI over the Canvas REST API for one course, set by `cass.toml`. `--he
 
 ## Safety rules
 
-- **Dry run every write first.** Every Canvas write takes `--dry-run`, which prints the exact requests and sends none. Reconcile commands are dry runs unless you pass `--apply`: `cass canvas sync`, `cass canvas quizzes update QUIZ --from FILE --questions`, `cass canvas submissions excuse` and `cass canvas submissions clear-late`.
+- **Dry run every write first.** Every Canvas write takes `--dry-run`, which prints the exact requests and sends none. The one exception is `cass canvas quizzes preview`, which leaves a teacher preview attempt on Canvas. Reconcile commands are dry runs unless you pass `--apply`: `cass canvas sync`, `cass canvas quizzes update QUIZ --from FILE --questions`, `cass canvas submissions excuse` and `cass canvas submissions clear-late`.
 - **Show the plan and wait.** Paste the dry-run output to the user. Run the real command, or add `--apply`, only after they agree.
 - **Deletes need `--yes`.** You have no TTY, so a prompting command exits 1 without it. Pass `--yes` only after the user approved that dry run.
-- **Never publish unless asked.** Don't pass `--publish`, don't run `publish` verbs, and don't write `published = true` unless the user asked. `cass canvas files upload` makes the file visible to students unless you pass `--unpublished`, so pass it by default.
-- **Watch for silent unpublishing.** Declarations in `cass.toml` and quiz files default to `published = false`, so `sync` or `quizzes update --from` unpublishes live content that a file leaves undeclared. Start from `cass canvas quizzes export` and keep `published` explicit.
+- **Never publish unless asked.** Don't pass `--publish` or run `publish` verbs unless the user asked. `cass canvas files upload` makes the file visible to students unless you pass `--unpublished`, so pass it by default. Announcements and calendar events are visible to students as soon as they're created; there is no unpublished state.
+- **Never unpublish by accident.** A module, assignment or quiz that `cass.toml` or a quiz file declares without `published` counts as `published = false`. `sync --apply` or `quizzes update --from` then unpublishes it if it's live and published. Content the file doesn't declare is never touched. Set `published` to the current live value (check `cass canvas modules list --json` or `cass canvas quizzes show QUIZ --json`) and change it only when asked.
+- **`quizzes update --from` without `--questions` has no `--apply` gate.** It sends at once and resets every quiz setting the file leaves out to its default. Start from `cass canvas quizzes export QUIZ -o FILE`, which writes every setting with its live value, and run with `--dry-run` first.
 - **Use the public API only.** In Python, use `CanvasClient` public methods. Never `_client`.
 
 ## Task → command
@@ -28,7 +29,7 @@ cass is a CLI over the Canvas REST API for one course, set by `cass.toml`. `--he
 | Task | Command |
 |---|---|
 | Course overview | `cass canvas` |
-| List or inspect anything | `cass canvas assignments list --json`; `show` for one item, by ID or name |
+| List or inspect anything | `cass canvas assignments list --json`; `show` for one module, assignment or quiz, by ID or name |
 | Roster, enrollment dates | `cass canvas people list --json` (`--state completed`, `--enrolled-after DATE`) |
 | Module contents | `cass canvas modules show "Week 1" --json` |
 | Add, edit, reorder or remove module items | `cass canvas modules items add`, `update`, `move`, `remove` |
@@ -48,7 +49,7 @@ cass is a CLI over the Canvas REST API for one course, set by `cass.toml`. `--he
 | Announcements | `cass canvas announcements create "Title" -m "<p>Body</p>" --dry-run` |
 | Calendar | `cass canvas calendar create "Review" --start "2026-10-20 10:00" --dry-run` |
 | Navigation tabs | `cass canvas tabs list`; `cass canvas tabs hide Grades --dry-run` |
-| Read grades | `cass pull`, then `cass query gradebook --where "score < 50"` |
+| Read grades | `cass pull`, then `cass query submissions --where "score < 50"`; `cass query gradebook` for the student × assignment matrix |
 | Push grade edits made in `cass view` | `cass push --dry-run`, then `cass push --yes` |
 | Anything else | `cass canvas api` (see below) |
 

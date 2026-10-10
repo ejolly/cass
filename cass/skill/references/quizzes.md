@@ -30,7 +30,7 @@ points = 2                      # graded_survey only
 unlock_at = "2026-09-25 14:15"  # course time zone unless an offset is given
 due_at = "2026-09-25 17:00"
 attempts = 1                    # -1 = unlimited
-published = false               # omitted means false, and update or sync unpublishes
+published = false               # omitted counts as false; set the live value (export writes it)
 
 [[questions]]
 type = "essay"
@@ -43,7 +43,7 @@ points = 1
 answers = [{ text = "A", correct = true }, { text = "B" }]
 ```
 
-- `title` and `type` are required. Other settings are `description`, `lock_at`, `time_limit`, `hide_results`, `scoring_policy`, `shuffle_answers` and `one_question_at_a_time`. Each omitted setting is sent as its default, so `update --from` with a partial file resets the rest.
+- `title` and `type` are required. Other settings are `description`, `lock_at`, `time_limit`, `hide_results`, `scoring_policy`, `shuffle_answers` and `one_question_at_a_time`. `update --from` sends immediately and resets each omitted setting, `published` included, to its default; only an omitted `group` or `points` is left alone. Start from an export.
 - Question types: `essay`, `multiple_choice`, `multiple_answers`, `true_false`, `short_answer`, `numerical` and `text_only`. Other Canvas type names pass through.
 - Question `points` default to 0 on surveys and 1 elsewhere. `answers` are required for choice and true/false questions.
 - Question groups draw `pick_count` questions from a pool on each attempt. Declare `[[groups]]` with `name`, `pick_count` and `points_per_item`, and set `group = "Pool"` on each question in it. Grouped questions must sit next to each other. Inside `[[questions]]`, `group` names a question group. At the top level, it names the assignment group.
@@ -51,7 +51,7 @@ answers = [{ text = "A", correct = true }, { text = "B" }]
 
 ## Editing questions
 
-1. Run `cass canvas quizzes export QUIZ -o FILE`. The export carries question and answer IDs and the current `published` value.
+1. Run `cass canvas quizzes export QUIZ -o FILE`. The export carries question IDs (answers are matched by text) and every setting with its live value, `published` included.
 2. Edit FILE. Reordering the questions reorders the quiz.
 3. Run `cass canvas quizzes update QUIZ --from FILE --questions`. It prints a `keep`, `add`, `update`, `delete` or `extra` line for each question and group. Show the plan to the user.
 4. Add `--apply` once they agree. Add `--prune` only to delete the `extra` questions and groups the file doesn't have.
@@ -72,5 +72,5 @@ cass canvas quizzes responses "Survey 1" --wide --csv report.csv              # 
 
 - The report takes about 30 seconds, and it works on concluded courses. `cass pull --submissions` syncs scores only, not answers.
 - The long CSV has one row per student, attempt and question, with the columns `student`, `user_id`, `sis_id`, `section`, `attempt`, `submitted_at`, `due_at` (the student's own), `late`, `started_at`, `auto_submitted`, `question_id`, `position`, `question`, `answer` and `score`. Times are ISO 8601 in course time.
-- `auto_submitted = true` means Canvas closed the attempt itself, either because a time limit ran out or because the course concluded on an attempt the student never submitted. Treat those as non-submissions.
+- `auto_submitted = true` means Canvas closed the attempt itself: a time limit ran out, or the course concluded on an attempt the student never submitted. The flag alone doesn't tell them apart. A timed-out attempt holds real answers; keep it. An attempt stamped at the term end is the conclusion case and is not a real submission.
 - The Test Student never appears. Calculated questions don't show the randomized values the student saw.

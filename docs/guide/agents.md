@@ -1,6 +1,6 @@
 # Agent skill
 
-cass ships a Claude Code skill. It tells an agent which cass command fits a Canvas task, how to preview writes safely, and which Canvas quirks to expect. It installs with the cass version you have, so it describes that version's commands.
+cass ships a Claude Code skill. It tells an agent which cass command fits a Canvas task, how to preview writes safely, and which Canvas quirks to expect. The skill is bundled with cass, so it describes the commands of the version you have installed.
 
 ## Install
 
@@ -10,11 +10,11 @@ cass skill install --dir .claude/skills # project-level instead
 cass skill install --yes                # replace an existing copy without asking
 ```
 
-Rerun it after upgrading cass to pick up the new skill.
+Rerun it after upgrading cass to get the new skill.
 
 ## Contents
 
-The skill is `SKILL.md`, reproduced below, plus reference files the agent reads only when it needs them:
+The skill is `SKILL.md`, reproduced below, plus reference files the agent reads on demand:
 
 | File | Covers |
 | --- | --- |
@@ -23,7 +23,7 @@ The skill is `SKILL.md`, reproduced below, plus reference files the agent reads 
 | `references/quizzes.md` | Quiz file format, question editing, previews, responses |
 | `references/late-enrollments.md` | Finding late-enrolled students, `excuse` and `clear-late` |
 
-The sources live in `cass/skill/` in the repository. A test checks that every `cass …` command they mention exists, with the options used.
+The sources are in `cass/skill/` in the repository. A test checks that every `cass …` command they mention exists and accepts the options shown.
 
 ## The skill
 

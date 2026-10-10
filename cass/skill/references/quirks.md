@@ -6,7 +6,8 @@ Canvas behaviors that `--help` won't tell you. Each one is documented in the cas
 
 - `cass canvas files upload` leaves the file visible to students, which is Canvas's default for uploads. `--unpublished` locks it with a second request right after the upload. Pass `--unpublished` unless the user asked to publish.
 - A `sync` File item works the other way. A new upload stays locked unless the item declares `published = true`. An overwrite with `published` omitted keeps the file's current lock.
-- Declarations default to `published = false`, in `[[canvas.modules]]`, `[[canvas.assignments]]` and quiz files alike. `cass canvas sync --apply` and `cass canvas quizzes update QUIZ --from FILE` unpublish live content that a file leaves undeclared. Every other quiz setting the file omits is reset to its default too, so start from `cass canvas quizzes export`.
+- A declared `[[canvas.modules]]` or `[[canvas.assignments]]` entry, or a quiz file, without a `published` key counts as `published = false`. If the matching live content is published, `cass canvas sync --apply` and `cass canvas quizzes update QUIZ --from FILE` unpublish it. Undeclared content is never touched, and module items without `published` are left as they are. Set `published` to the live value; `cass canvas quizzes export` writes it.
+- `quizzes update --from` without `--questions` sends immediately (no `--apply` gate). It also resets the quiz settings the file omits (description, dates, attempts, time limit, hide_results, scoring policy, shuffle and one-question-at-a-time) to their defaults. An omitted `group` or `points` is left alone.
 - New `ExternalUrl` and `SubHeader` module items start unpublished. Other new items take their content's published state.
 - An Assignment, Quiz or Page item's `published` also publishes or unpublishes the content itself. If it disagrees with the assignment's `[[canvas.assignments]] published`, each `sync` flips it back and forth, so declare one value in both places.
 - Canvas answers an item unpublish with `403 item can't be unpublished` when its content can't be unpublished, such as an assignment with submissions or the front page. Canvas checks even when the item is already unpublished. cass sends `published` only when it differs, but a declared `false` on such an item fails every `--apply`. Leave `published` out.
@@ -30,7 +31,7 @@ Canvas behaviors that `--help` won't tell you. Each one is documented in the cas
 - When a question update leaves a field out, Canvas refills it from a copy saved at creation, which can undo earlier edits. cass resends text, name, type, points, answers and feedback on every update. Raw updates must do the same.
 - Updating a question with `quiz_group_id: null` leaves it in its group. Only reordering the quiz takes it out. Deleting a group deletes the questions in it.
 - An answer sent without an ID gets a new one, and a new ID can unlink earlier student responses. cass reuses the IDs of answers whose text is unchanged.
-- In concluded courses, the questions endpoint returns 403. `quizzes show`, `questions` and `export` fall back to `/statistics`, which has no names or answer weights. `questions` and `export` warn about it, and `quizzes show --json` sets `questions_source` to `statistics`. `quizzes update --questions` refuses such quizzes. `quizzes responses` still works, because it uses the report.
+- In concluded courses, the questions endpoint returns 403. `quizzes show`, `questions` and `export` fall back to `/statistics`, which has no names or answer weights. `quizzes show`, `questions` and `export` warn about it on stderr, and `quizzes show --json` also sets `questions_source` to `statistics`. `quizzes update --questions` refuses such quizzes. `quizzes responses` still works, because it uses the report.
 - Canvas wraps question text in theme CSS and JS unless you ask for the stored HTML. cass asks for it.
 
 ## Quiz responses and attempts
@@ -38,7 +39,7 @@ Canvas behaviors that `--help` won't tell you. Each one is documented in the cas
 - `quizzes responses` asks Canvas to generate a student analysis report and waits for it, which takes about 30 seconds.
 - Canvas leaves the Test Student out of quiz reports and statistics.
 - An attempt with essay questions ends in `pending_review`, not `complete`. Count both as finished.
-- When a course concludes, Canvas force-submits attempts that were opened but never submitted, and stamps them with the term end date. `auto_submitted` in the responses CSV flags these. Don't read them as real submissions made on that date.
+- When a course concludes, Canvas force-submits attempts that were opened but never submitted, and stamps them with the term end date. `auto_submitted` in the responses CSV flags these, but it also flags attempts that ran out of time, which hold real answers. An auto-submitted attempt stamped at the term end is the conclusion case. Don't read those as submissions made on that date.
 - `started_at` and `auto_submitted` cover only each student's latest attempt.
 
 ## Enrollments and submissions

@@ -46,7 +46,7 @@ For a whole week or a whole term, declare the items and let `sync` reconcile the
 ```toml
 [[canvas.modules]]
 name = "Week 1"
-published = true                # omitted means false, and sync unpublishes the module
+published = true                # set the live value: omitted counts as false and sync unpublishes a published module
 
 [[canvas.modules.items]]
 type = "SubHeader"
