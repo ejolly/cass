@@ -1,4 +1,4 @@
-"""``cass canvas files list`` / ``upload`` / ``delete-file``."""
+"""``cass canvas files`` — list, upload, delete."""
 
 from __future__ import annotations
 
@@ -7,12 +7,12 @@ __docformat__ = "google"
 import typer
 
 from . import _common
-from ._common import canvas_app, console, due, err_console, size
+from ._common import console, due, err_console, size
 
 files_app = typer.Typer(
     invoke_without_command=True,
     no_args_is_help=False,
-    help="Course files — list.",
+    help="Course files — list, upload, delete.",
 )
 
 
@@ -84,7 +84,7 @@ def files_list(
     console.print()
 
 
-@canvas_app.command(name="upload", rich_help_panel="Manage")
+@files_app.command(name="upload")
 def files_upload(
     path: str = typer.Argument(..., help="Local file path to upload"),
     folder: str = typer.Option("", "--folder", help="Destination folder in Canvas"),
@@ -106,20 +106,21 @@ def files_upload(
     console.print(f"[green]Uploaded:[/green] {f.display_name} (id={f.id})")
 
 
-@canvas_app.command(name="delete-file", rich_help_panel="Manage")
+@files_app.command(name="delete")
 def files_delete(
-    file_id: int = typer.Argument(..., help="Canvas file ID"),
+    id_or_name: str = typer.Argument(..., help="File ID or name"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
     dry_run: bool = _common.dry_run_option(),
 ) -> None:
     """Delete a file from the course."""
-    _common.require_canvas()
     from ..prompts import confirm
 
-    confirm(f"Delete file {file_id}?", yes=yes, dry_run=dry_run)
+    _common.require_canvas()
     with _common.client(dry_run=dry_run) as c:
-        c.delete_file(file_id)
+        f = c.resolve_file(id_or_name)
+        confirm(f"Delete file '{f.display_name}'?", yes=yes, dry_run=dry_run)
+        c.delete_file(f.id)
     if dry_run:
         _common.print_plan(c)
         return
-    console.print(f"[red]Deleted file {file_id}[/red]")
+    console.print(f"[red]Deleted file:[/red] {f.display_name}")

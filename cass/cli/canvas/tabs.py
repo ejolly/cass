@@ -1,4 +1,4 @@
-"""``cass canvas tabs list`` / ``show-tab`` / ``hide-tab``."""
+"""``cass canvas tabs`` — list, show, hide."""
 
 from __future__ import annotations
 
@@ -7,12 +7,12 @@ __docformat__ = "google"
 import typer
 
 from . import _common
-from ._common import canvas_app, console
+from ._common import console
 
 tabs_app = typer.Typer(
     invoke_without_command=True,
     no_args_is_help=False,
-    help="Navigation tabs — list.",
+    help="Navigation tabs — list, show, hide.",
 )
 
 
@@ -55,7 +55,7 @@ def tabs_list(
         report.render_list(headers, rows, title="Tabs")
 
 
-@canvas_app.command(name="show-tab", rich_help_panel="Manage")
+@tabs_app.command(name="show")
 def tabs_show(
     id_or_label: str = typer.Argument(..., help="Tab ID or label"),
     dry_run: bool = _common.dry_run_option(),
@@ -71,7 +71,7 @@ def tabs_show(
     console.print(f"[green]Visible:[/green] {t.label}")
 
 
-@canvas_app.command(name="hide-tab", rich_help_panel="Manage")
+@tabs_app.command(name="hide")
 def tabs_hide(
     id_or_label: str = typer.Argument(..., help="Tab ID or label"),
     dry_run: bool = _common.dry_run_option(),

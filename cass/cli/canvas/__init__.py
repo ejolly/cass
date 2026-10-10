@@ -19,10 +19,14 @@ from ._common import (
     size,
     when,
 )
+from .announcements import announcements_app
 from .assignments import assignments_app
 from .calendar import calendar_app
+from .files import files_app
 from .modules import modules_app
+from .people import people_app
 from .quizzes import quizzes_app
+from .tabs import tabs_app
 
 __all__ = [
     "canvas_app",
@@ -36,10 +40,14 @@ __all__ = [
     "when",
 ]
 
+canvas_app.add_typer(people_app, name="people", rich_help_panel="Browse")
 canvas_app.add_typer(modules_app, name="modules", rich_help_panel="Browse")
 canvas_app.add_typer(assignments_app, name="assignments", rich_help_panel="Browse")
 canvas_app.add_typer(quizzes_app, name="quizzes", rich_help_panel="Browse")
 canvas_app.add_typer(calendar_app, name="calendar", rich_help_panel="Browse")
+canvas_app.add_typer(files_app, name="files", rich_help_panel="Browse")
+canvas_app.add_typer(announcements_app, name="announcements", rich_help_panel="Browse")
+canvas_app.add_typer(tabs_app, name="tabs", rich_help_panel="Browse")
 
 
 @canvas_app.command(rich_help_panel="Setup")
@@ -154,20 +162,9 @@ def canvas_callback(ctx: typer.Context) -> None:
     err_console.print()
 
 
-# Imported last, in this order, so commands keep their place in the help panels.
+# Imported last: these modules register their commands on ``canvas_app``.
 # isort: off
-from . import people  # noqa: E402
-from . import files  # noqa: E402
-from . import announcements  # noqa: E402
-from . import tabs  # noqa: E402
 from . import sync  # noqa: E402, F401
 from . import api  # noqa: E402, F401
 
 # isort: on
-
-canvas_app.add_typer(people.people_app, name="people", rich_help_panel="Browse")
-canvas_app.add_typer(files.files_app, name="files", rich_help_panel="Browse")
-canvas_app.add_typer(
-    announcements.announcements_app, name="announcements", rich_help_panel="Browse"
-)
-canvas_app.add_typer(tabs.tabs_app, name="tabs", rich_help_panel="Browse")

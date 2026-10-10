@@ -68,25 +68,25 @@ Install: `uv tool install cass` or `uvx cass`.
 | Command | Description |
 |---------|-------------|
 | `cass canvas files` | Show course files as a tree |
-| `cass canvas upload` | Upload a file to the course |
-| `cass canvas delete-file` | Delete a file from the course |
+| `cass canvas files upload` | Upload a file to the course |
+| `cass canvas files delete` | Delete a file from the course |
 
 ### Announcements
 
 | Command | Description |
 |---------|-------------|
 | `cass canvas announcements` | List course announcements |
-| `cass canvas announce` | Create an announcement |
-| `cass canvas update-announcement` | Update an announcement |
-| `cass canvas delete-announcement` | Delete an announcement |
+| `cass canvas announcements create` | Create an announcement |
+| `cass canvas announcements update` | Update an announcement |
+| `cass canvas announcements delete` | Delete an announcement |
 
 ### Tabs
 
 | Command | Description |
 |---------|-------------|
 | `cass canvas tabs` | List course navigation tabs |
-| `cass canvas show-tab` | Make a navigation tab visible |
-| `cass canvas hide-tab` | Hide a navigation tab |
+| `cass canvas tabs show` | Make a navigation tab visible |
+| `cass canvas tabs hide` | Hide a navigation tab |
 
 ### Calendar (`cass canvas calendar`)
 

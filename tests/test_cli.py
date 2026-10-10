@@ -12,6 +12,7 @@ from unittest.mock import MagicMock
 
 import pytest
 import sqlite_utils
+import typer.main
 from typer.testing import CliRunner
 
 from cass import db
@@ -63,6 +64,22 @@ def _sample_assignment_id(sdb: sqlite_utils.Database) -> int:
 
 
 class TestCliSurface:
+    def test_canvas_subcommands(self):
+        canvas = typer.main.get_command(app).commands["canvas"]  # ty: ignore[unresolved-attribute]
+        assert set(canvas.commands) == {
+            "people",
+            "modules",
+            "assignments",
+            "quizzes",
+            "calendar",
+            "files",
+            "announcements",
+            "tabs",
+            "login",
+            "sync",
+            "api",
+        }
+
     def test_only_prompt_helper_calls_typer_confirm(self):
         root = Path(__file__).parents[1]
         users = [
@@ -1379,6 +1396,7 @@ class TestCanvasTabsAndFiles:
         fake.resolve_tab.return_value = CanvasTab(
             id="context_external_tool_5826", label="Media Gallery"
         )
+        fake.resolve_file.return_value = CanvasFile(id=15, display_name="notes.txt")
         fake.update_tab.return_value = CanvasTab(
             id="context_external_tool_5826", label="Media Gallery", hidden=True
         )
@@ -1393,13 +1411,19 @@ class TestCanvasTabsAndFiles:
         return fake
 
     def test_delete_file_without_yes_on_non_tty_exits_1(self, fake_client):
-        result = runner.invoke(app, ["canvas", "delete-file", "15"])
+        result = runner.invoke(app, ["canvas", "files", "delete", "15"])
         assert result.exit_code == 1
         assert "--yes" in result.stderr
         fake_client.delete_file.assert_not_called()
 
+    def test_files_delete_by_name(self, fake_client):
+        result = runner.invoke(app, ["canvas", "files", "delete", "notes.txt", "-y"])
+        assert result.exit_code == 0, result.output
+        fake_client.resolve_file.assert_called_once_with("notes.txt")
+        fake_client.delete_file.assert_called_once_with(15)
+
     def test_hide_tab_resolves_by_label(self, fake_client):
-        result = runner.invoke(app, ["canvas", "hide-tab", "Media Gallery"])
+        result = runner.invoke(app, ["canvas", "tabs", "hide", "Media Gallery"])
         assert result.exit_code == 0, result.output
         fake_client.resolve_tab.assert_called_once_with("Media Gallery")
         fake_client.update_tab.assert_called_once_with(
@@ -1407,7 +1431,7 @@ class TestCanvasTabsAndFiles:
         )
 
     def test_show_tab_resolves_by_label(self, fake_client):
-        result = runner.invoke(app, ["canvas", "show-tab", "media gallery"])
+        result = runner.invoke(app, ["canvas", "tabs", "show", "media gallery"])
         assert result.exit_code == 0, result.output
         fake_client.update_tab.assert_called_once_with(
             "context_external_tool_5826", hidden=False
@@ -1418,6 +1442,43 @@ class TestCanvasTabsAndFiles:
         assert result.exit_code == 0, result.output
         assert "notes.txt" in result.stdout
         assert "18962999" in result.stdout
+
+
+class TestCanvasAnnouncements:
+    @pytest.fixture
+    def fake_client(self, monkeypatch):
+        from cass.apis.canvas.schema import CanvasAnnouncement
+
+        fake = MagicMock()
+        fake.__enter__.return_value = fake
+        announcement = CanvasAnnouncement(id=13, title="Welcome")
+        fake.resolve_announcement.return_value = announcement
+        fake.update_announcement.return_value = announcement
+        fake.create_announcement.return_value = announcement
+        monkeypatch.setattr("cass.cli.canvas._common.require_canvas", lambda: None)
+        monkeypatch.setattr("cass.cli.canvas._common.client", lambda **_: fake)
+        return fake
+
+    def test_update_by_title(self, fake_client):
+        result = runner.invoke(
+            app, ["canvas", "announcements", "update", "Welcome", "--title", "Hi"]
+        )
+        assert result.exit_code == 0, result.output
+        fake_client.update_announcement.assert_called_once_with(13, title="Hi")
+
+    def test_delete_by_title(self, fake_client):
+        result = runner.invoke(
+            app, ["canvas", "announcements", "delete", "Welcome", "-y"]
+        )
+        assert result.exit_code == 0, result.output
+        fake_client.delete_announcement.assert_called_once_with(13)
+
+    def test_create(self, fake_client):
+        result = runner.invoke(
+            app, ["canvas", "announcements", "create", "Hello", "-m", "Hi"]
+        )
+        assert result.exit_code == 0, result.output
+        fake_client.create_announcement.assert_called_once_with("Hello", "Hi")
 
 
 class TestCanvasAssignments:

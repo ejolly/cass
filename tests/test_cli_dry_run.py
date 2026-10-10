@@ -71,6 +71,8 @@ GET_ROUTES: dict[str, object] = {
     "/calendar_events/11": {"id": 11, "title": "Office hours"},
     "/courses/1/discussion_topics/13": {"id": 13, "title": "Welcome"},
     "/files/15": {"id": 15, "display_name": "notes.txt"},
+    "/courses/1/files": [{"id": 15, "display_name": "notes.txt"}],
+    "/courses/1/discussion_topics": [{"id": 13, "title": "Welcome"}],
 }
 
 DRY_RUN_COMMANDS = [
@@ -96,13 +98,13 @@ DRY_RUN_COMMANDS = [
     (("canvas", "calendar", "create"), ["Review", "--start", "2026-10-20 10:00"]),
     (("canvas", "calendar", "update"), ["11", "--title", "Review session"]),
     (("canvas", "calendar", "delete"), ["11"]),
-    (("canvas", "upload"), ["notes.txt"]),
-    (("canvas", "delete-file"), ["15"]),
-    (("canvas", "announce"), ["Hello", "--message", "Hi"]),
-    (("canvas", "update-announcement"), ["13", "--title", "Hello again"]),
-    (("canvas", "delete-announcement"), ["13"]),
-    (("canvas", "show-tab"), ["Files"]),
-    (("canvas", "hide-tab"), ["Files"]),
+    (("canvas", "files", "upload"), ["notes.txt"]),
+    (("canvas", "files", "delete"), ["notes.txt"]),
+    (("canvas", "announcements", "create"), ["Hello", "--message", "Hi"]),
+    (("canvas", "announcements", "update"), ["Welcome", "--title", "Hello again"]),
+    (("canvas", "announcements", "delete"), ["13"]),
+    (("canvas", "tabs", "show"), ["Files"]),
+    (("canvas", "tabs", "hide"), ["Files"]),
     (("canvas", "sync"), []),
     (
         ("canvas", "api"),
@@ -246,13 +248,25 @@ def _command_paths(
 
 
 def test_every_write_command_is_in_the_matrix():
-    write_words = {"create", "update", "delete", "publish", "unpublish"}
+    write_words = {
+        "create",
+        "update",
+        "delete",
+        "publish",
+        "unpublish",
+        "upload",
+        "hide",
+    }
     root = typer.main.get_command(app)
     write_paths = {
         path
         for path in _command_paths(root)
         if path[:1] == ("canvas",)
-        and (path[-1] == "add-item" or write_words & set(path[-1].split("-")))
+        and (
+            path[-1] == "add-item"
+            or path == ("canvas", "tabs", "show")
+            or write_words & set(path[-1].split("-"))
+        )
     }
     assert write_paths
     assert write_paths <= {path for path, _ in DRY_RUN_COMMANDS}

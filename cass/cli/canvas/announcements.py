@@ -1,4 +1,4 @@
-"""``cass canvas announcements list`` plus announce / update / delete."""
+"""``cass canvas announcements`` — list, create, update, delete."""
 
 from __future__ import annotations
 
@@ -7,12 +7,12 @@ __docformat__ = "google"
 import typer
 
 from . import _common
-from ._common import canvas_app, console, due, err_console
+from ._common import console, due, err_console
 
 announcements_app = typer.Typer(
     invoke_without_command=True,
     no_args_is_help=False,
-    help="Announcements — list.",
+    help="Announcements — list, create, update, delete.",
 )
 
 
@@ -47,7 +47,7 @@ def announcements_list(
         report.render_list(headers, rows, title="Announcements")
 
 
-@canvas_app.command(name="announce", rich_help_panel="Manage")
+@announcements_app.command(name="create")
 def announcements_create(
     title: str = typer.Argument(..., help="Announcement title"),
     message: str = typer.Option(..., "--message", "-m", help="HTML message body"),
@@ -63,9 +63,9 @@ def announcements_create(
     console.print(f"[green]Created announcement:[/green] {a.title} (id={a.id})")
 
 
-@canvas_app.command(name="update-announcement", rich_help_panel="Manage")
+@announcements_app.command(name="update")
 def announcements_update(
-    topic_id: int = typer.Argument(..., help="Announcement (discussion topic) ID"),
+    id_or_title: str = typer.Argument(..., help="Announcement ID or title"),
     title: str = typer.Option("", "--title", help="New title"),
     message: str = typer.Option("", "--message", "-m", help="New message body"),
     dry_run: bool = _common.dry_run_option(),
@@ -81,27 +81,29 @@ def announcements_update(
         err_console.print("[yellow]Nothing to update.[/yellow]")
         return
     with _common.client(dry_run=dry_run) as c:
-        a = c.update_announcement(topic_id, **kwargs)
+        found = c.resolve_announcement(id_or_title)
+        a = c.update_announcement(found.id, **kwargs)
     if dry_run:
         _common.print_plan(c)
         return
     console.print(f"[green]Updated:[/green] {a.title}")
 
 
-@canvas_app.command(name="delete-announcement", rich_help_panel="Manage")
+@announcements_app.command(name="delete")
 def announcements_delete(
-    topic_id: int = typer.Argument(..., help="Announcement (discussion topic) ID"),
+    id_or_title: str = typer.Argument(..., help="Announcement ID or title"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
     dry_run: bool = _common.dry_run_option(),
 ) -> None:
     """Delete an announcement."""
-    _common.require_canvas()
     from ..prompts import confirm
 
-    confirm(f"Delete announcement {topic_id}?", yes=yes, dry_run=dry_run)
+    _common.require_canvas()
     with _common.client(dry_run=dry_run) as c:
-        c.delete_announcement(topic_id)
+        a = c.resolve_announcement(id_or_title)
+        confirm(f"Delete announcement '{a.title}'?", yes=yes, dry_run=dry_run)
+        c.delete_announcement(a.id)
     if dry_run:
         _common.print_plan(c)
         return
-    console.print(f"[red]Deleted announcement {topic_id}[/red]")
+    console.print(f"[red]Deleted announcement:[/red] {a.title}")

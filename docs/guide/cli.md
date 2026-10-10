@@ -21,14 +21,14 @@ cass canvas                      # course overview
 cass canvas people               # roster with roles and emails
 cass canvas files                # course files as a tree
 cass canvas announcements        # list announcements
-cass canvas tabs                 # navigation tabs; show-tab / hide-tab change visibility
+cass canvas tabs                 # navigation tabs; tabs show / tabs hide change visibility
 cass canvas modules              # list / create / publish / delete modules
 cass canvas assignments          # list / create / publish / delete assignments and groups
 cass canvas quizzes              # list quizzes; see the Quizzes guide for authoring
 cass canvas quizzes responses "Survey 1" --csv out.csv   # every student's answers
 cass canvas calendar             # list / create / update / delete events
-cass canvas upload file.pdf      # upload a file (delete-file removes one)
-cass canvas announce "Title" "Body"   # update-announcement / delete-announcement
+cass canvas files upload file.pdf   # upload a file (files delete removes one)
+cass canvas announcements create "Title" -m "Body"   # also update / delete
 cass canvas sync [--apply]       # reconcile [[canvas.*]] declarations in cass.toml
 cass canvas login --from-chrome  # browser-session auth, see Canvas authentication
 cass canvas api GET /courses/{course}/modules --all     # raw API request
