@@ -266,6 +266,7 @@ class CanvasFile(msgspec.Struct):
     content_type: str = msgspec.field(default="", name="content-type")
     url: str = ""
     folder_id: int = 0
+    locked: bool = False
     created_at: str = ""
     updated_at: str = ""
 

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 __docformat__ = "google"
 
+from typing import Literal
+
 import msgspec
 
 from ..errors import CanvasNotFoundError
@@ -167,7 +169,49 @@ class FilesMixin(BaseClient):
             params={"force": "true"} if force else None,
         )
 
-    def upload_file(self, local_path: str, *, folder: str = "") -> CanvasFile:
+    def update_file(
+        self,
+        file_id: int,
+        *,
+        name: str | None = None,
+        folder_id: int | None = None,
+        locked: bool | None = None,
+        on_duplicate: Literal["rename", "overwrite"] | None = None,
+    ) -> CanvasFile:
+        """Rename, move or lock a file; only the given fields are sent.
+
+        Args:
+            file_id: Canvas file ID.
+            name: New display name.
+            folder_id: ID of the folder to move the file into.
+            locked: Lock (``True``) or unlock (``False``) the file.
+            on_duplicate: What to do if the destination already has a file with
+                the same name.
+
+        Raises:
+            RuntimeError: If no field is given.
+        """
+        fields: dict[str, object] = {
+            "name": name,
+            "parent_folder_id": folder_id,
+            "locked": locked,
+            "on_duplicate": on_duplicate,
+        }
+        data = {key: value for key, value in fields.items() if value is not None}
+        if not data:
+            raise RuntimeError("update_file needs at least one field")
+        response = self.request("PUT", f"/files/{file_id}", data=data)
+        return msgspec.convert(response.json(), CanvasFile, strict=False)
+
+    def upload_file(
+        self,
+        local_path: str,
+        *,
+        folder: str = "",
+        name: str | None = None,
+        on_duplicate: Literal["rename", "overwrite"] = "rename",
+        locked: bool = False,
+    ) -> CanvasFile:
         """Upload a file to the course.
 
         Uses Canvas's 3-step file upload flow:
@@ -177,22 +221,31 @@ class FilesMixin(BaseClient):
 
         Args:
             local_path: Path to the local file.
-            folder: Destination folder path in Canvas (e.g. ``slides``).
+            folder: Destination folder path relative to the course files root
+                (e.g. ``slides``); created if missing. ``""`` is the root.
+            name: Name in Canvas; defaults to the local file name.
+            on_duplicate: ``"rename"`` keeps both files, ``"overwrite"``
+                replaces the existing file of that name.
+            locked: Lock the file after uploading.
 
         Returns:
             The uploaded file metadata.
         """
         import os as _os
 
-        filename = _os.path.basename(local_path)
+        filename = name or _os.path.basename(local_path)
         size = _os.path.getsize(local_path)
 
         # Step 1: notify Canvas
         params: dict[str, object] = {
             "name": filename,
             "size": size,
-            "parent_folder_path": folder or "/",
+            "on_duplicate": on_duplicate,
         }
+        if folder:
+            params["parent_folder_id"] = self.create_folder(folder).id
+        else:
+            params["parent_folder_path"] = "/"
         resp = self._client.post(self._course("/files"), data=params)
         upload_info = resp.json()
 
@@ -205,16 +258,13 @@ class FilesMixin(BaseClient):
             )
 
         # Step 3: Canvas may return the file directly or a redirect
-        if resp2.status_code == 201:
-            return msgspec.convert(resp2.json(), CanvasFile, strict=False)
+        if resp2.status_code != 201 and resp2.headers.get("Location"):
+            resp2 = self._client.get(resp2.headers["Location"])
+        uploaded = msgspec.convert(resp2.json(), CanvasFile, strict=False)
 
-        # Follow redirect if needed
-        location = resp2.headers.get("Location")
-        if location:
-            resp3 = self._client.get(location)
-            return msgspec.convert(resp3.json(), CanvasFile, strict=False)
-
-        return msgspec.convert(resp2.json(), CanvasFile, strict=False)
+        if locked:
+            return self.update_file(uploaded.id, locked=True)
+        return uploaded
 
     def delete_file(self, file_id: int) -> None:
         """Delete a file."""

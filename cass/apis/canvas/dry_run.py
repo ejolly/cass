@@ -168,11 +168,11 @@ class DryRunRecorder:
     ) -> dict[str, Any]:
         """Record the file POST to an upload URL and build the file's body."""
         self.planned.append(PlannedRequest("POST", url, {**params, "file": filename}))
-        return {
-            "id": self._next_placeholder(),
-            "display_name": filename,
-            "filename": filename,
-        }
+        new_id = self._next_placeholder()
+        result = {"id": new_id, "display_name": filename, "filename": filename}
+        # Stored so a following PUT /files/<new id> merges into this body.
+        self._bodies[f"/files/{new_id}"] = result
+        return result
 
     def _next_placeholder(self) -> int:
         self._last_placeholder -= 1

@@ -1452,3 +1452,79 @@ class TestFolders:
         assert (first.method, first.url.path) == ("DELETE", "/api/v1/folders/2")
         assert "force" not in first.url.params
         assert second.url.params["force"] == "true"
+
+
+class TestFileWrites:
+    def test_update_file_sends_only_given_fields(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data={"id": 9, "display_name": "b.pdf", "locked": True})
+        f = client.update_file(9, name="b.pdf", locked=True)
+        request = transport.requests[0]
+        assert (request.method, request.url.path) == ("PUT", "/api/v1/files/9")
+        assert b"name=b.pdf" in request.content
+        assert b"locked=true" in request.content
+        assert b"parent_folder_id" not in request.content
+        assert b"on_duplicate" not in request.content
+        assert f.locked is True
+
+    def test_update_file_without_fields_raises(self, mock_client):
+        client, transport = mock_client
+        with pytest.raises(RuntimeError, match="at least one field"):
+            client.update_file(9)
+        assert transport.requests == []
+
+    def test_upload_named_overwrite_locked(self, mock_client, monkeypatch, tmp_path):
+        client, transport = mock_client
+        transport.add(json_data=FOLDER_LIST)
+        transport.add(
+            json_data={"upload_url": "https://u.example/u", "upload_params": {}}
+        )
+        transport.add(json_data={"id": 9, "display_name": "w1.pdf", "locked": True})
+        posted = {}
+
+        def fake_post(url, **kwargs):
+            posted.update(kwargs)
+            return httpx.Response(
+                201,
+                json={"id": 9, "display_name": "w1.pdf", "size": 5},
+                request=httpx.Request("POST", url),
+            )
+
+        monkeypatch.setattr("cass.apis.canvas.client.base.httpx.post", fake_post)
+        path = tmp_path / "local.pdf"
+        path.write_text("hello")
+        f = client.upload_file(
+            str(path),
+            folder="readings",
+            name="w1.pdf",
+            on_duplicate="overwrite",
+            locked=True,
+        )
+        notify = transport.requests[1]
+        assert b"name=w1.pdf" in notify.content
+        assert b"on_duplicate=overwrite" in notify.content
+        assert b"parent_folder_id=2" in notify.content
+        assert posted["files"]["file"][0] == "w1.pdf"
+        last = transport.requests[-1]
+        assert (last.method, last.url.path) == ("PUT", "/api/v1/files/9")
+        assert b"locked=true" in last.content
+        assert f.locked is True
+
+    def test_upload_to_root_uses_folder_path(self, mock_client, monkeypatch, tmp_path):
+        client, transport = mock_client
+        transport.add(
+            json_data={"upload_url": "https://u.example/u", "upload_params": {}}
+        )
+        monkeypatch.setattr(
+            "cass.apis.canvas.client.base.httpx.post",
+            lambda url, **kwargs: httpx.Response(
+                201,
+                json={"id": 9, "display_name": "a.txt"},
+                request=httpx.Request("POST", url),
+            ),
+        )
+        path = tmp_path / "a.txt"
+        path.write_text("hi")
+        client.upload_file(str(path))
+        assert len(transport.requests) == 1
+        assert b"parent_folder_path=%2F" in transport.requests[0].content

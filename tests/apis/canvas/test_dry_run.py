@@ -38,6 +38,17 @@ def test_format_plan_renders_nested_values_as_json():
 # --- Dry-run client ---
 
 _GET_RESPONSES = {
+    "/courses/1/folders": (
+        200,
+        [
+            {
+                "id": 1,
+                "name": "course files",
+                "full_name": "course files",
+                "parent_folder_id": None,
+            }
+        ],
+    ),
     "/courses/1/tabs": (
         200,
         [{"id": "files", "label": "Files", "hidden": False, "position": 3}],
@@ -127,6 +138,25 @@ def test_upload_file_records_both_posts(dry, tmp_path, monkeypatch):
         ("POST", "https://dry-run.invalid/upload"),
     ]
     assert planned[1].body["file"] == "notes.txt"
+    assert writes(sent) == []
+
+
+def test_upload_locked_into_new_folder_chains(dry, tmp_path):
+    client, sent = dry
+    path = tmp_path / "local.pdf"
+    path.write_text("hello")
+    uploaded = client.upload_file(
+        str(path), folder="new/sub", name="w1.pdf", locked=True
+    )
+    assert [(r.method, r.path) for r in client.planned_requests] == [
+        ("POST", "/folders/1/folders"),
+        ("POST", "/folders/-1/folders"),
+        ("POST", "/courses/1/files"),
+        ("POST", "https://dry-run.invalid/upload"),
+        ("PUT", "/files/-4"),
+    ]
+    assert uploaded.display_name == "w1.pdf"
+    assert uploaded.locked is True
     assert writes(sent) == []
 
 
