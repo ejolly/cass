@@ -72,17 +72,13 @@ def require_canvas() -> None:
         raise typer.Exit(code=1)
 
 
-def _pending_count(
-    pending: dict[str, dict[str, dict[str, dict[str, object]]]],
-) -> int:
-    return sum(len(cols) for rows in pending.values() for cols in rows.values())
-
-
 def _render_pending_summary(
     pending: dict[str, dict[str, dict[str, dict[str, object]]]],
     *,
     title: str,
 ) -> None:
+    from ..actions.status import count_pending
+
     table = Table(title=title, show_edge=False, pad_edge=False)
     table.add_column("Table")
     table.add_column("Row")
@@ -103,7 +99,7 @@ def _render_pending_summary(
 
     console.print()
     console.print(table)
-    console.print(f"\n{_pending_count(pending)} pending change(s)\n")
+    console.print(f"\n{count_pending(pending)} pending change(s)\n")
 
 
 def _render_push_preview(preview: dict[str, object]) -> None:
@@ -189,12 +185,27 @@ def _render_push_results(results: list[dict[str, object]]) -> None:
 
 
 @app.command()
-def status() -> None:
+def status(
+    as_json: bool = typer.Option(
+        False, "--json", help="Print project status as one JSON object"
+    ),
+) -> None:
     """Show project sync status and the local DB overview."""
     from .. import db
     from ..actions.config import config_file_path, get_config
+    from ..actions.status import count_pending
 
     cfg_path = config_file_path()
+    if as_json:
+        import msgspec
+
+        from ..actions.status import project_status
+
+        if cfg_path is None:
+            err_console.print("No cass.toml found. Run 'cass init' to create one.")
+            raise typer.Exit(code=1)
+        typer.echo(msgspec.json.encode(project_status(cfg_path)).decode())
+        return
     if cfg_path is None:
         err_console.print(
             "[yellow]No cass.toml found.[/yellow] "
@@ -256,7 +267,7 @@ def status() -> None:
         console.print(f"  canvas submissions: {conn['canvas_submissions'].count}")
 
     pending = db.get_pending_changes(conn)
-    total = _pending_count(pending)
+    total = count_pending(pending)
     console.print("\n[bold]Sync[/bold]")
     if total == 0:
         console.print("  [green]All Canvas-managed changes are synchronized.[/green]")
@@ -512,13 +523,14 @@ def push(
 ) -> None:
     """Preview and push pending Canvas-managed changes."""
     from .. import db
+    from ..actions.status import count_pending
     from .prompts import confirm
 
     require_canvas()
 
     conn = db.get_db()
     pending = db.get_pending_changes(conn)
-    if _pending_count(pending) == 0:
+    if count_pending(pending) == 0:
         err_console.print("[yellow]No pending Canvas changes to push.[/yellow]")
         return
 
@@ -546,11 +558,12 @@ def revert(
 ) -> None:
     """Revert local pending Canvas-managed changes since the last sync."""
     from .. import db
+    from ..actions.status import count_pending
     from .prompts import confirm
 
     conn = db.get_db()
     pending = db.get_pending_changes(conn)
-    if _pending_count(pending) == 0:
+    if count_pending(pending) == 0:
         err_console.print("[yellow]No pending changes to revert.[/yellow]")
         return
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 __docformat__ = "google"
 
+import json
 import shutil
 import time
 from collections.abc import Iterator
@@ -225,6 +226,50 @@ class TestStatus:
         assert "students:" in result.stdout
         assert "assignments:" in result.stdout
         assert "pending change" in result.stdout
+
+
+STATUS_JSON_KEYS = {
+    "config_path",
+    "course_url",
+    "course_id",
+    "auth_source",
+    "db_path",
+    "course_name",
+    "counts",
+    "pending_changes",
+}
+
+
+class TestStatusJson:
+    def test_status_json_without_config(self, monkeypatch, tmp_path):
+        monkeypatch.chdir(tmp_path)
+        result = runner.invoke(app, ["status", "--json"])
+        assert result.exit_code == 1
+        assert result.stdout == ""
+        assert "No cass.toml found" in result.stderr
+
+    def test_status_json_without_db(self, project_dir, monkeypatch):
+        monkeypatch.chdir(project_dir)
+        result = runner.invoke(app, ["status", "--json"])
+        assert result.exit_code == 0
+        data = json.loads(result.stdout)
+        assert set(data) == STATUS_JSON_KEYS
+        for key in ("db_path", "course_name", "counts", "pending_changes"):
+            assert data[key] is None
+
+    def test_status_json_with_db(self, project_db):
+        canvas_id = _sample_assignment_id(project_db)
+        project_db.execute(
+            "UPDATE canvas_assignments SET name = 'Renamed' WHERE canvas_id = ?",
+            [canvas_id],
+        )
+        result = runner.invoke(app, ["status", "--json"])
+        assert result.exit_code == 0
+        data = json.loads(result.stdout)
+        assert set(data["counts"]) == {"students", "assignments", "submissions"}
+        assert data["counts"]["students"] > 0
+        assert data["pending_changes"] >= 1
+        assert data["db_path"].endswith("cass.db")
 
 
 class TestPull:
