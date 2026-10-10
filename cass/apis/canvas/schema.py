@@ -125,6 +125,19 @@ class CanvasModuleItem(msgspec.Struct):
     published: bool | None = None
     html_url: str = ""
     module_id: int = 0
+    indent: int = 0
+    page_url: str = ""
+    external_url: str = ""
+
+
+class CanvasPage(msgspec.Struct):
+    """Canvas wiki page."""
+
+    page_id: int
+    url: str
+    title: str
+    published: bool = False
+    html_url: str = ""
 
 
 class CanvasModule(msgspec.Struct):

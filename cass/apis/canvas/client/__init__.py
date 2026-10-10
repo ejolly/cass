@@ -32,6 +32,7 @@ from .course import CourseMixin
 from .files import FilesMixin
 from .grades import GradesMixin
 from .modules import ModulesMixin
+from .pages import PagesMixin
 from .quizzes import QuizzesMixin
 from .tabs import TabsMixin
 
@@ -53,6 +54,7 @@ __all__ = [
 class CanvasClient(
     CourseMixin,
     ModulesMixin,
+    PagesMixin,
     AssignmentsMixin,
     GradesMixin,
     QuizzesMixin,

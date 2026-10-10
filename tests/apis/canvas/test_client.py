@@ -1726,3 +1726,138 @@ class TestQuizQuestionWrites:
         grouped, ungrouped = transport.requests
         assert json.loads(grouped.content)["question"]["quiz_group_id"] == 5
         assert "quiz_group_id" not in json.loads(ungrouped.content)["question"]
+
+
+class TestModuleItems:
+    def test_module_item_converts_new_fields(self):
+        item = msgspec.convert(
+            {
+                "id": 1,
+                "title": "t",
+                "indent": 2,
+                "page_url": "week-1",
+                "external_url": "https://x.org",
+            },
+            CanvasModuleItem,
+            strict=False,
+        )
+        assert (item.indent, item.page_url, item.external_url) == (
+            2,
+            "week-1",
+            "https://x.org",
+        )
+
+    def test_list_pages(self, mock_client):
+        client, transport = mock_client
+        transport.add(
+            json_data=[{"page_id": 3, "url": "syllabus", "title": "Syllabus"}]
+        )
+        pages = client.list_pages()
+        request = transport.requests[0]
+        assert (request.method, request.url.path) == ("GET", "/api/v1/courses/1/pages")
+        assert [p.url for p in pages] == ["syllabus"]
+        assert pages[0].page_id == 3
+
+    def test_create_module_item_page(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data={"id": 7, "title": "Week 1", "type": "Page"})
+        client.create_module_item(5, item_type="Page", page_url="week-1", indent=1)
+        body = transport.requests[0].content.decode()
+        assert "module_item%5Btype%5D=Page" in body
+        assert "module_item%5Bpage_url%5D=week-1" in body
+        assert "module_item%5Bindent%5D=1" in body
+        assert "content_id" not in body
+
+    def test_create_module_item_external_url(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data={"id": 7, "title": "Site", "type": "ExternalUrl"})
+        client.create_module_item(
+            5, item_type="ExternalUrl", external_url="https://x.org", title="Site"
+        )
+        body = transport.requests[0].content.decode()
+        assert "module_item%5Bexternal_url%5D=https%3A%2F%2Fx.org" in body
+        assert "module_item%5Btitle%5D=Site" in body
+
+    def test_create_module_item_subheader_title_only(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data={"id": 7, "title": "Part 1", "type": "SubHeader"})
+        client.create_module_item(5, item_type="SubHeader", title="Part 1")
+        body = transport.requests[0].content.decode()
+        assert sorted(p.split("=")[0] for p in body.split("&")) == [
+            "module_item%5Btitle%5D",
+            "module_item%5Btype%5D",
+        ]
+
+    def test_update_module_item_sends_only_given_fields(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data={"id": 9, "title": "New", "indent": 2})
+        client.update_module_item(5, 9, title="New", indent=2)
+        request = transport.requests[0]
+        assert (request.method, request.url.path) == (
+            "PUT",
+            "/api/v1/courses/1/modules/5/items/9",
+        )
+        assert (
+            request.content.decode()
+            == "module_item%5Btitle%5D=New&module_item%5Bindent%5D=2"
+        )
+
+    def test_update_module_item_omits_unchanged_published(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data={"id": 9, "title": "New", "published": True})
+        current = CanvasModuleItem(id=9, title="Old", published=True)
+        client.update_module_item(5, 9, title="New", published=True, current=current)
+        body = transport.requests[0].content.decode()
+        assert "module_item%5Btitle%5D=New" in body
+        assert "published" not in body
+
+    def test_update_module_item_sends_changed_published(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data={"id": 9, "title": "Old", "published": False})
+        current = CanvasModuleItem(id=9, title="Old", published=True)
+        client.update_module_item(5, 9, published=False, current=current)
+        assert (
+            "module_item%5Bpublished%5D=false" in transport.requests[0].content.decode()
+        )
+
+    def test_update_module_item_nothing_to_send_makes_no_request(self, mock_client):
+        client, transport = mock_client
+        current = CanvasModuleItem(id=9, title="Old", published=True)
+        result = client.update_module_item(5, 9, published=True, current=current)
+        assert result is current
+        assert transport.requests == []
+
+    def test_update_module_item_without_fields_raises(self, mock_client):
+        client, transport = mock_client
+        with pytest.raises(ValueError, match="at least one field"):
+            client.update_module_item(5, 9)
+        assert transport.requests == []
+
+    def test_update_module_item_position(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data={"id": 9, "title": "Old", "position": 3})
+        client.update_module_item(5, 9, position=3)
+        assert transport.requests[0].content.decode() == "module_item%5Bposition%5D=3"
+
+    def test_delete_module_item(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data={"id": 9, "title": "Old"})
+        client.delete_module_item(5, 9)
+        request = transport.requests[0]
+        assert (request.method, request.url.path) == (
+            "DELETE",
+            "/api/v1/courses/1/modules/5/items/9",
+        )
+
+    def test_resolve_module_item_by_title_and_ambiguity(self, mock_client):
+        client, transport = mock_client
+        transport.add(
+            json_data=[{"id": 1, "title": "Reading"}, {"id": 2, "title": "Quiz"}]
+        )
+        assert client.resolve_module_item(5, "quiz").id == 2
+        transport.add(
+            json_data=[{"id": 1, "title": "Reading"}, {"id": 2, "title": "Reading"}]
+        )
+        with pytest.raises(RuntimeError, match="ambiguous") as excinfo:
+            client.resolve_module_item(5, "Reading")
+        assert "1, 2" in str(excinfo.value)
