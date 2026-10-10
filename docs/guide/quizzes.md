@@ -83,7 +83,9 @@ text = "<p>Second candidate</p>"
 
 Questions in one group must be next to each other. The group sits at its first question's place in the quiz.
 
-`update --questions --apply` sends settings changes first. If a question change then fails, the settings stay applied, and the error lists what was applied before the failure.
+`update --questions --apply` sends settings changes first, including `published`, so a file with `published = true` publishes the quiz before its questions change. It then creates new groups; adds, updates, and deletes questions; updates groups; reorders the quiz and each group; deletes groups; and re-saves the quiz. If a request fails, cass stops: the settings stay applied, and the error lists the steps applied before the failure.
+
+`update --questions` refuses quizzes in concluded courses. Canvas serves their questions only through quiz statistics, which lack names and answer weights. `questions` and `export` still work there, with a warning.
 
 If students have finished attempts, cass warns first: Canvas keeps earlier attempts on the old version of each question. Plan lines for questions whose answers change are marked, because editing answers replaces their answer IDs.
 
@@ -91,8 +93,10 @@ If students have finished attempts, cass warns first: Canvas keeps earlier attem
 
 ### Canvas quirks
 
-- Positions sent when creating questions are ignored, so cass reorders after creating.
-- `position` is null until the quiz is re-saved. cass re-saves after every change.
+- Positions sent when creating questions are ignored. `create --from` reorders the new quiz only when the file declares groups; `update --questions` reorders whenever the order or a question's group changes.
+- Canvas recounts `question_count` only when the quiz is re-saved, so cass re-saves after it sends changes.
+- Updating a question with `quiz_group_id: null` leaves it in its group; only reordering the quiz takes it out.
+- Deleting a group deletes its questions. cass moves the questions the file keeps out of a group first, and deletes groups last.
 - Changing a question's answers on a quiz with submissions replaces their answer IDs.
 
 ## Declaring quizzes in cass.toml
