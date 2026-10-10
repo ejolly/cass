@@ -84,6 +84,8 @@ makes a tab visible: a write that accepts `--dry-run`.
 | Command | Description |
 |---------|-------------|
 | `cass canvas submissions list` | Show each student's submission state, lateness and score |
+| `cass canvas submissions excuse` | Excuse submissions (dry run unless --apply) |
+| `cass canvas submissions clear-late` | Clear late flags (dry run unless --apply) |
 
 ### Files
 

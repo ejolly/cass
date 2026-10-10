@@ -57,6 +57,15 @@ ITEM = {
     "module_id": 5,
 }
 ASSIGNMENT = {"id": 7, "name": "HW1", "published": False}
+SUBMISSION = {
+    "user_id": 5,
+    "assignment_id": 7,
+    "late": True,
+    "workflow_state": "submitted",
+    "submitted_at": "2026-10-01T00:00:00Z",
+    "excused": False,
+    "user": {"id": 5, "name": "Ann"},
+}
 GROUP = {"id": 9, "name": "Labs"}
 QUIZ = {
     "id": 3,
@@ -74,6 +83,8 @@ GET_ROUTES: dict[str, object] = {
     "/courses/1/modules/5/items/21": ITEM,
     "/courses/1/assignments": [ASSIGNMENT],
     "/courses/1/assignments/7": ASSIGNMENT,
+    "/courses/1/assignments/7/submissions": [SUBMISSION],
+    "/courses/1/assignments/7/submissions/5": SUBMISSION,
     "/courses/1/assignment_groups": [GROUP],
     "/courses/1/assignment_groups/9": GROUP,
     "/courses/1/quizzes": [QUIZ],
@@ -159,6 +170,8 @@ DRY_RUN_COMMANDS = [
     (("canvas", "announcements", "create"), ["Hello", "--message", "Hi"]),
     (("canvas", "announcements", "update"), ["Welcome", "--title", "Hello again"]),
     (("canvas", "announcements", "delete"), ["13"]),
+    (("canvas", "submissions", "excuse"), ["HW1", "--student", "5"]),
+    (("canvas", "submissions", "clear-late"), ["HW1", "--student", "5"]),
     (("canvas", "tabs", "show"), ["Files"]),
     (("canvas", "tabs", "hide"), ["Files"]),
     (("canvas", "sync"), []),
@@ -318,6 +331,8 @@ def test_every_write_command_is_in_the_matrix():
         "add",
         "move",
         "remove",
+        "excuse",
+        "clear",
     }
     root = typer.main.get_command(app)
     write_paths = {

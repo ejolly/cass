@@ -4,11 +4,15 @@ from __future__ import annotations
 
 __docformat__ = "google"
 
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
+import click
 import typer
 
 from . import _common
+
+if TYPE_CHECKING:
+    from ...actions.submissions import SubmissionCommand
 
 submissions_app = typer.Typer(
     invoke_without_command=True,
@@ -84,3 +88,139 @@ def submissions_list(
         report.save_markdown(save, title, headers, rows)
     else:
         report.render_list(headers, rows, title=title)
+
+
+_TITLES = {"excuse": "Excuse", "clear-late": "Clear late"}
+_DONE = {"excuse": "Excused", "clear-late": "Cleared late on"}
+
+
+def _run(
+    kind: SubmissionCommand,
+    assignment: str,
+    student_ids: list[int],
+    enrolled_after: str,
+    *,
+    apply: bool,
+    dry_run: bool,
+    include_graded: bool = False,
+) -> None:
+    """Plan an ``excuse`` or ``clear-late`` command; send it only with *apply*."""
+    from rich.markup import escape
+
+    from ...actions.submissions import (
+        apply_submission_changes,
+        check_target_options,
+        plan_submission_command,
+    )
+    from .. import report
+
+    if apply and dry_run:
+        raise click.UsageError("--apply and --dry-run cannot be combined.")
+    try:
+        check_target_options(
+            has_assignment=bool(assignment),
+            student_ids=student_ids,
+            enrolled_after=enrolled_after,
+        )
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
+
+    _common.require_canvas()
+    with _common.client(dry_run=not apply) as c:
+        target = c.resolve_assignment(assignment) if assignment else None
+        plan = plan_submission_command(
+            c,
+            kind,
+            assignment=target,
+            student_ids=student_ids,
+            enrolled_after=enrolled_after,
+            include_graded=include_graded,
+        )
+        for warning in plan.warnings:
+            _common.err_console.print(
+                warning, markup=False, highlight=False, soft_wrap=True
+            )
+        if not plan.changes:
+            _common.err_console.print("No matching submissions.")
+            return
+        title = _TITLES[kind] + ("" if apply else " (dry run)")
+        report.render_list(
+            ["Action", "Assignment", "Student", "Detail"],
+            [[escape(cell) for cell in row] for row in plan.rows],
+            title=title,
+        )
+        summary = ", ".join(f"{n} {action}" for action, n in plan.counts.items())
+        _common.console.print(f"  {summary}", markup=False, highlight=False)
+        applied = apply_submission_changes(c, plan.changes)
+
+    if not apply:
+        _common.print_plan(c)
+        if c.planned_requests:
+            _common.err_console.print("Dry run — use --apply to send these changes.")
+        return
+    _common.console.print(
+        f"{_DONE[kind]} {len(applied)} submission(s).", markup=False, highlight=False
+    )
+
+
+STUDENT_OPTION = typer.Option(
+    "--student", help="Canvas user ID; repeatable (needs an ASSIGNMENT)"
+)
+ENROLLED_AFTER_HELP = (
+    "Students first enrolled after DATE (course time zone), "
+    "on assignments due before they enrolled"
+)
+
+
+@submissions_app.command(name="excuse")
+def submissions_excuse(
+    assignment: Annotated[
+        str, typer.Argument(help="Assignment ID or name (limits --enrolled-after)")
+    ] = "",
+    student_ids: Annotated[list[int], STUDENT_OPTION] = [],  # noqa: B006
+    enrolled_after: str = typer.Option(
+        "", "--enrolled-after", help=ENROLLED_AFTER_HELP
+    ),
+    include_graded: bool = typer.Option(
+        False, "--include-graded", help="Also excuse submissions that have a grade"
+    ),
+    apply: bool = typer.Option(False, "--apply", help="Send the changes"),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Show what would change (the default)"
+    ),
+) -> None:
+    """Excuse submissions; a dry run unless --apply."""
+    _run(
+        "excuse",
+        assignment,
+        student_ids,
+        enrolled_after,
+        apply=apply,
+        dry_run=dry_run,
+        include_graded=include_graded,
+    )
+
+
+@submissions_app.command(name="clear-late")
+def submissions_clear_late(
+    assignment: Annotated[
+        str, typer.Argument(help="Assignment ID or name (limits --enrolled-after)")
+    ] = "",
+    student_ids: Annotated[list[int], STUDENT_OPTION] = [],  # noqa: B006
+    enrolled_after: str = typer.Option(
+        "", "--enrolled-after", help=ENROLLED_AFTER_HELP
+    ),
+    apply: bool = typer.Option(False, "--apply", help="Send the changes"),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Show what would change (the default)"
+    ),
+) -> None:
+    """Clear late flags and penalties; a dry run unless --apply."""
+    _run(
+        "clear-late",
+        assignment,
+        student_ids,
+        enrolled_after,
+        apply=apply,
+        dry_run=dry_run,
+    )
