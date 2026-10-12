@@ -18,6 +18,14 @@ from cass.apis.canvas.client import CanvasClient
 from cass.cli import app
 
 runner = CliRunner()
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def plain(text: str) -> str:
+    """*text* without ANSI styling; Typer colours usage errors on GitHub Actions."""
+    return ANSI_RE.sub("", text)
+
+
 API = "/api/v1"
 QUIZ_PATH = "/courses/1/quizzes/20"
 
@@ -224,7 +232,7 @@ def test_prune_without_questions_exits_2(canvas, quiz_file):
     result = _update("--prune")
 
     assert result.exit_code == 2, result.output
-    assert "--prune needs --questions." in result.output
+    assert "--prune needs --questions." in plain(result.output)
     assert canvas.writes == []
 
 
@@ -276,7 +284,7 @@ def test_questions_apply_and_dry_run_exits_2(canvas, quiz_file):
     result = _update("--questions", "--apply", "--dry-run")
 
     assert result.exit_code == 2, result.output
-    assert "--apply and --dry-run cannot be combined." in result.output
+    assert "--apply and --dry-run cannot be combined." in plain(result.output)
     assert canvas.writes == []
 
 
