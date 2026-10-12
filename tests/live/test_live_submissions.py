@@ -7,6 +7,7 @@ __docformat__ = "google"
 import contextlib
 import json
 import re
+import time
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -39,6 +40,24 @@ def _json_lines(output: str) -> list[dict]:
     return [json.loads(line) for line in output.splitlines() if line.strip()]
 
 
+def _listed_row(assignment_id: int, user_id: int, timeout: float = 30) -> dict:
+    """The user's row from ``submissions list --json``, once Canvas has made it.
+
+    Canvas creates a new assignment's submission rows a few seconds after the
+    assignment, so the list starts out empty.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        lines = _json_lines(
+            _invoke("submissions", "list", str(assignment_id), "--json")
+        )
+        rows = [row for row in lines if row["user_id"] == user_id]
+        if rows or time.monotonic() > deadline:
+            assert rows, f"no submission row for user {user_id} after {timeout}s"
+            return rows[0]
+        time.sleep(2)
+
+
 def _reread(practice: CanvasClient, assignment_id: int, user_id: int):
     (sub,) = practice.list_student_submissions(
         [user_id], assignment_ids=[assignment_id]
@@ -61,8 +80,7 @@ def test_submission_status_round_trip(practice: CanvasClient):
     try:
         # Assumptions 3, 5: submissions list carries the status fields and the
         # student's own due date.
-        lines = _json_lines(_invoke("submissions", "list", str(a.id), "--json"))
-        line = next(row for row in lines if row["user_id"] == ts)
+        line = _listed_row(a.id, ts)
         for key in (
             "late",
             "missing",
