@@ -16,12 +16,11 @@ cass is a CLI over the Canvas REST API for one course, set by `cass.toml`. `--he
 
 ## Safety rules
 
-- **Dry run every write first.** Every Canvas write takes `--dry-run`, which prints the exact requests and sends none. The one exception is `cass canvas quizzes preview`, which leaves a teacher preview attempt on Canvas. Reconcile commands are dry runs unless you pass `--apply`: `cass canvas sync`, `cass canvas quizzes update QUIZ --from FILE --questions`, `cass canvas submissions excuse` and `cass canvas submissions clear-late`.
+- **Dry run every write first.** Every Canvas write takes `--dry-run`, which prints the exact requests and sends none. The one exception is `cass canvas quizzes preview`, which leaves a teacher preview attempt on Canvas. Reconcile commands are dry runs unless you pass `--apply`: `cass canvas sync`, `cass canvas quizzes update QUIZ --from FILE`, `cass canvas submissions excuse` and `cass canvas submissions clear-late`.
 - **Show the plan and wait.** Paste the dry-run output to the user. Run the real command, or add `--apply`, only after they agree.
 - **Deletes need `--yes`.** You have no TTY, so a prompting command exits 1 without it. Pass `--yes` only after the user approved that dry run.
 - **Never publish unless asked.** Don't pass `--publish` or run `publish` verbs unless the user asked. `cass canvas files upload` makes the file visible to students unless you pass `--unpublished`, so pass it by default. Announcements and calendar events are visible to students as soon as they're created; there is no unpublished state.
-- **Never unpublish by accident.** A module, assignment or quiz that `cass.toml` or a quiz file declares without `published` counts as `published = false`. `sync --apply` or `quizzes update --from` then unpublishes it if it's live and published. Content the file doesn't declare is never touched. Set `published` to the current live value (check `cass canvas modules list --json` or `cass canvas quizzes show QUIZ --json`) and change it only when asked.
-- **`quizzes update --from` without `--questions` has no `--apply` gate.** It sends at once and resets every quiz setting the file leaves out to its default. Start from `cass canvas quizzes export QUIZ -o FILE`, which writes every setting with its live value, and run with `--dry-run` first.
+- **Leave out what you don't mean to change.** In `cass.toml` and quiz files, an omitted `published`, or any other omitted quiz setting, leaves the live value as it is. Only new content gets defaults: unpublished, one attempt. Write `published` only when the user asked to publish or unpublish.
 - **Use the public API only.** In Python, use `CanvasClient` public methods. Never `_client`.
 
 ## Task → command
@@ -39,7 +38,7 @@ cass is a CLI over the Canvas REST API for one course, set by `cass.toml`. `--he
 | File tree, folders | `cass canvas files list --json`; `cass canvas files folders list` |
 | Move, rename, hide or show a file | `cass canvas files mv`, `rename`, `unpublish`, `publish` |
 | Create a quiz or survey | write a quiz file, then `cass canvas quizzes create --from quizzes/survey.toml --dry-run` |
-| Edit quiz settings | `cass canvas quizzes update QUIZ --from FILE --dry-run` |
+| Edit quiz settings | `cass canvas quizzes update QUIZ --from FILE`, then add `--apply` |
 | Edit quiz questions | `cass canvas quizzes export QUIZ -o FILE`, edit it, then `cass canvas quizzes update QUIZ --from FILE --questions` |
 | See question IDs and groups, or a student's view | `cass canvas quizzes questions QUIZ --json`; `cass canvas quizzes preview QUIZ` |
 | Pull survey or quiz answers | `cass canvas quizzes responses QUIZ --csv responses.csv` |

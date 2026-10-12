@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from cass.actions.quizzes import (
+    QUIZ_SETTINGS,
     AnswerSpec,
     GroupSpec,
     QuestionSpec,
@@ -28,6 +29,7 @@ from cass.actions.quizzes import (
     quiz_spec_from_canvas,
     strip_html,
     sync_quizzes,
+    with_create_defaults,
 )
 from cass.apis.canvas.schema import (
     CanvasQuiz,
@@ -69,14 +71,25 @@ def _write(tmp_path, text, name="quiz.toml"):
 
 
 class TestLoadQuizFile:
+    def test_quoted_boolean_fails(self, tmp_path):
+        text = 'title = "S"\ntype = "survey"\npublished = "false"\n'
+        with pytest.raises(SystemExit, match="published must be true or false"):
+            load_quiz_file(_write(tmp_path, text))
+
+    def test_omitted_settings_are_none(self, tmp_path):
+        spec = load_quiz_file(_write(tmp_path, 'title = "S"\ntype = "survey"\n'))
+        assert spec == QuizSpec(title="S", quiz_type="survey")
+        for name in QUIZ_SETTINGS:
+            assert getattr(spec, name) is None, name
+
     def test_loads_settings_and_questions(self, tmp_path):
         spec = load_quiz_file(_write(tmp_path, SURVEY_TOML))
         assert spec.title == "09-25 Participation Survey"
         assert spec.quiz_type == "graded_survey"
         assert spec.points == 2
         assert spec.hide_results == "always"
-        assert spec.scoring_policy == "keep_highest"
-        assert spec.lock_at == ""
+        assert spec.scoring_policy is None
+        assert spec.lock_at is None
         assert [q.type for q in spec.questions] == [
             "essay_question",
             "multiple_choice_question",
@@ -372,6 +385,31 @@ def _spec(**overrides: Any) -> QuizSpec:
 
 
 class TestQuizSettingsDiff:
+    def test_omitted_settings_leave_live_values(self):
+        live = _live(
+            published=True,
+            allowed_attempts=3,
+            time_limit=10,
+            shuffle_answers=True,
+            description="<p>x</p>",
+            lock_at="2026-09-27T00:00:00Z",
+        )
+        spec = QuizSpec(title="S", quiz_type="graded_survey")
+        assert quiz_settings_diff(spec, live, LA) == {}
+
+    def test_form_fields_omit_unset_settings(self):
+        fields = quiz_form_fields(QuizSpec(title="S", quiz_type="survey"), LA)
+        assert fields == {"title": "S", "quiz_type": "survey"}
+
+    def test_empty_values_still_clear(self):
+        live = _live(description="<p>x</p>", time_limit=10)
+        spec = QuizSpec(title="S", quiz_type="graded_survey", description="")
+        spec.time_limit = 0
+        assert quiz_settings_diff(spec, live, LA) == {
+            "description": "",
+            "time_limit": "",
+        }
+
     def test_equal_is_empty(self):
         assert quiz_settings_diff(_spec(), _live(), LA, group_id=9) == {}
 
@@ -400,11 +438,29 @@ class TestQuizSettingsDiff:
         }
 
     def test_form_fields_and_diff_share_names(self):
-        fields = quiz_form_fields(_spec(), LA, assignment_group_id=9)
+        fields = quiz_form_fields(_spec(time_limit=0), LA, assignment_group_id=9)
         assert fields["due_at"] == "2026-09-25T17:00:00-07:00"
         assert fields["points_possible"] == 2
         assert fields["time_limit"] == ""
         assert set(quiz_settings_diff(_spec(title="T"), _live(), LA)) == {"title"}
+
+
+class TestCreateDefaults:
+    def test_fills_only_unset_settings(self):
+        spec = QuizSpec(title="S", quiz_type="survey", attempts=3)
+        filled = with_create_defaults(spec)
+        assert filled.attempts == 3
+        assert filled.published is False
+        assert filled.scoring_policy == "keep_highest"
+        assert filled.description == ""
+        assert spec.published is None  # the original is untouched
+
+    def test_dump_skips_unset_settings(self, tmp_path):
+        spec = QuizSpec(title="S", quiz_type="survey", published=True)
+        text = dump_quiz_file(spec, None)
+        assert "published = true" in text
+        assert "attempts" not in text
+        assert load_quiz_file(_write(tmp_path, text)) == spec
 
 
 class TestSyncQuizzes:

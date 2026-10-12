@@ -12,8 +12,9 @@ cass canvas quizzes preview "Survey 1"               # one student-style draw; t
 cass canvas quizzes export "Survey 1" -o quizzes/survey-1.toml
 cass canvas quizzes create --from quizzes/survey-1.toml --dry-run
 cass canvas quizzes create --from quizzes/survey-1.toml --create-groups --dry-run   # missing assignment group
-cass canvas quizzes update "Survey 1" --from quizzes/survey-1.toml --dry-run       # settings only
-cass canvas quizzes update "Survey 1" --from quizzes/survey-1.toml --questions     # question plan, sends nothing
+cass canvas quizzes update "Survey 1" --from quizzes/survey-1.toml               # settings plan, sends nothing
+cass canvas quizzes update "Survey 1" --from quizzes/survey-1.toml --apply
+cass canvas quizzes update "Survey 1" --from quizzes/survey-1.toml --questions     # settings and question plan
 cass canvas quizzes update "Survey 1" --from quizzes/survey-1.toml --questions --apply
 cass canvas quizzes delete "Survey 1" --dry-run
 ```
@@ -30,7 +31,7 @@ points = 2                      # graded_survey only
 unlock_at = "2026-09-25 14:15"  # course time zone unless an offset is given
 due_at = "2026-09-25 17:00"
 attempts = 1                    # -1 = unlimited
-published = false               # omitted counts as false; set the live value (export writes it)
+published = false               # omit to leave the live quiz as it is
 
 [[questions]]
 type = "essay"
@@ -43,7 +44,7 @@ points = 1
 answers = [{ text = "A", correct = true }, { text = "B" }]
 ```
 
-- `title` and `type` are required. Other settings are `description`, `lock_at`, `time_limit`, `hide_results`, `scoring_policy`, `shuffle_answers` and `one_question_at_a_time`. `update --from` sends immediately and resets each omitted setting, `published` included, to its default; only an omitted `group` or `points` is left alone. Start from an export.
+- `title` and `type` are required. Other settings are `description`, `lock_at`, `time_limit`, `hide_results`, `scoring_policy`, `shuffle_answers` and `one_question_at_a_time`. `update` and `sync` compare and send only the settings the file sets, so a file with only the settings to change is enough.
 - Question types: `essay`, `multiple_choice`, `multiple_answers`, `true_false`, `short_answer`, `numerical` and `text_only`. Other Canvas type names pass through.
 - Question `points` default to 0 on surveys and 1 elsewhere. `answers` are required for choice and true/false questions.
 - Question groups draw `pick_count` questions from a pool on each attempt. Declare `[[groups]]` with `name`, `pick_count` and `points_per_item`, and set `group = "Pool"` on each question in it. Grouped questions must sit next to each other. Inside `[[questions]]`, `group` names a question group. At the top level, it names the assignment group.
@@ -59,7 +60,7 @@ answers = [{ text = "A", correct = true }, { text = "B" }]
 - Matching goes by `id`, then by a unique name, then by order. `Question` and `Question N` count as no name.
 - cass edits only essay, text-only, multiple-choice, multiple-answers, true/false and short-answer questions. If any other type would change, the plan errors. Keep those questions unchanged in the file, or edit them in Canvas.
 - If students have finished attempts, cass warns. Earlier attempts keep the old question version. Plan lines are flagged when an answer is reworded or removed, because that gets a new answer ID and can unlink earlier responses. Changing only which answer is correct is safe.
-- `--apply` sends the settings first, `published` included, then the questions in a fixed order, then re-saves the quiz. It stops at the first failure and lists the steps that finished.
+- `--apply` sends the changed settings first, then the questions in a fixed order, then re-saves the quiz. It stops at the first failure and lists the steps that finished.
 - Quizzes in concluded courses are refused, because Canvas serves their questions only through statistics.
 
 ## Responses

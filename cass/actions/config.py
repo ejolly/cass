@@ -71,24 +71,30 @@ class ModuleItemSpec:
 class CanvasModuleSpec:
     """Desired state for a Canvas module declared in cass.toml.
 
-    ``items`` is ``None`` when the module has no ``items`` key (never
-    reconciled) and ``[]`` when it declares ``items = []`` (an empty module).
+    ``published`` is ``None`` when the entry leaves it out: sync leaves the
+    live module as it is. ``items`` is ``None`` when the module has no
+    ``items`` key (never reconciled) and ``[]`` when it declares
+    ``items = []`` (an empty module).
     """
 
     name: str
-    published: bool = False
+    published: bool | None = None
     items: list[ModuleItemSpec] | None = None
 
 
 @dataclass
 class CanvasAssignmentSpec:
-    """Desired state for a Canvas assignment declared in cass.toml."""
+    """Desired state for a Canvas assignment declared in cass.toml.
+
+    ``published`` is ``None`` when the entry leaves it out: sync leaves the
+    live assignment as it is, and creates a new one unpublished.
+    """
 
     name: str
     points: float = 0.0
     submission_types: list[str] = field(default_factory=lambda: ["online_url"])
     due_at: str = ""
-    published: bool = False
+    published: bool | None = None
     group: str = ""
 
 
@@ -277,6 +283,14 @@ def _load_module_items(
     return specs
 
 
+def _optional_published(entry: dict[str, Any], where: str) -> bool | None:
+    """An entry's ``published`` value, or ``None`` when it leaves it out."""
+    published = entry.get("published")
+    if published is not None and not isinstance(published, bool):
+        raise SystemExit(f"{where}: published must be true or false")
+    return published
+
+
 def load_config(path: Path | None = None) -> Config:
     """Read a config file; the one in use (``config_file()``) by default.
 
@@ -300,7 +314,7 @@ def load_config(path: Path | None = None) -> Config:
     module_specs = [
         CanvasModuleSpec(
             name=m["name"],
-            published=m.get("published", False),
+            published=_optional_published(m, f"{path}: module '{m['name']}'"),
             items=(
                 _load_module_items(m["items"], m["name"], root, path)
                 if "items" in m
@@ -316,7 +330,7 @@ def load_config(path: Path | None = None) -> Config:
             points=a.get("points", 0.0),
             submission_types=a.get("submission_types", ["online_url"]),
             due_at=a.get("due_at", ""),
-            published=a.get("published", False),
+            published=_optional_published(a, f"{path}: assignment '{a['name']}'"),
             group=a.get("group", ""),
         )
         for a in canvas.get("assignments", [])

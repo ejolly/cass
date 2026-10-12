@@ -128,7 +128,7 @@ def sync(
                         changes["points_possible"] = spec.points
                     if wanted_due and not same_instant(live.due_at, wanted_due):
                         changes["due_at"] = wanted_due
-                    if live.published != spec.published:
+                    if spec.published is not None and live.published != spec.published:
                         changes["published"] = spec.published
 
                     if changes:
@@ -147,7 +147,7 @@ def sync(
                         points_possible=spec.points,
                         due_at=wanted_due or None,
                         submission_types=spec.submission_types,
-                        published=spec.published,
+                        published=bool(spec.published),
                         assignment_group_id=group_id,
                     )
                     created_assignments.append(new_assignment)

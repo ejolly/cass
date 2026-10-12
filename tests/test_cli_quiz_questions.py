@@ -218,15 +218,56 @@ def test_questions_prune_deletes_only_with_prune(canvas, quiz_file, tmp_path):
     assert f"DELETE {API}{QUIZ_PATH}/questions/13" in canvas.write_lines()
 
 
-@pytest.mark.parametrize("flag", ["--apply", "--prune"])
-def test_apply_or_prune_without_questions_exits_2(canvas, quiz_file, flag):
+def test_prune_without_questions_exits_2(canvas, quiz_file):
     quiz_file()
 
-    result = _update(flag)
+    result = _update("--prune")
 
     assert result.exit_code == 2, result.output
-    assert "--apply and --prune need --questions." in result.output
+    assert "--prune needs --questions." in result.output
     assert canvas.writes == []
+
+
+def test_settings_default_is_dry_run(canvas, quiz_file):
+    quiz_file(("attempts = 1", "attempts = 3"))
+
+    result = _update()
+
+    assert result.exit_code == 0, result.output
+    assert canvas.writes == []
+    assert f"PUT {QUIZ_PATH}" in result.stdout
+    assert "Dry run — use --apply" in result.stderr
+
+
+def test_settings_apply_sends_changes(canvas, quiz_file):
+    quiz_file(("attempts = 1", "attempts = 3"))
+
+    result = _update("--apply")
+
+    assert result.exit_code == 0, result.output
+    assert canvas.write_lines() == [f"PUT {API}{QUIZ_PATH}"]
+    assert "allowed_attempts" in canvas.writes[0].content.decode()
+    assert "Updated: Survey" in result.stdout
+    assert not [r for r in canvas.sent if r.url.path.endswith("/questions")]
+
+
+def test_settings_apply_and_dry_run_exits_2(canvas, quiz_file):
+    quiz_file()
+
+    result = _update("--apply", "--dry-run")
+
+    assert result.exit_code == 2, result.output
+    assert canvas.writes == []
+
+
+def test_file_without_settings_leaves_quiz_alone(canvas, tmp_path):
+    (tmp_path / "q.toml").write_text('title = "Survey"\ntype = "survey"\n')
+
+    result = _update("--apply")
+
+    assert result.exit_code == 0, result.output
+    assert canvas.writes == []
+    assert "No changes for Survey" in result.stderr
 
 
 def test_questions_apply_and_dry_run_exits_2(canvas, quiz_file):
@@ -237,17 +278,6 @@ def test_questions_apply_and_dry_run_exits_2(canvas, quiz_file):
     assert result.exit_code == 2, result.output
     assert "--apply and --dry-run cannot be combined." in result.output
     assert canvas.writes == []
-
-
-def test_plain_update_unchanged(canvas, quiz_file):
-    quiz_file(("attempts = 1", "attempts = 3"))
-
-    result = _update()
-
-    assert result.exit_code == 0, result.output
-    assert canvas.write_lines() == [f"PUT {API}{QUIZ_PATH}"]
-    assert "Updated:" in result.stdout
-    assert not [r for r in canvas.sent if r.url.path.endswith("/questions")]
 
 
 def _answers_changed(quiz_file) -> None:

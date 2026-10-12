@@ -16,8 +16,9 @@ def sync_modules(
 ) -> tuple[list[tuple[str, str, str]], dict[str, int]]:
     """Create missing modules and set each module's published state.
 
-    Modules match by name, case-insensitively. Writes always go through
-    ``client``; dry runs pass a dry-run client.
+    Modules match by name, case-insensitively. A spec without ``published``
+    leaves the live module as it is; a module it creates stays unpublished.
+    Writes always go through ``client``; dry runs pass a dry-run client.
 
     Returns:
         ``(action, "module", name)`` rows (create, update or skip), and the
@@ -37,7 +38,7 @@ def sync_modules(
                 client.publish("modules", module.id)
             continue
         module_ids[spec.name] = live.id
-        if live.published == spec.published:
+        if spec.published is None or live.published == spec.published:
             rows.append(("skip", "module", spec.name))
             continue
         rows.append(("update", "module", f"{spec.name} (published: {spec.published})"))

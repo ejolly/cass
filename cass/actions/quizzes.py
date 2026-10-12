@@ -13,7 +13,7 @@ import difflib
 import html
 import re
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -112,25 +112,57 @@ class QuestionSpec:
 
 @dataclass
 class QuizSpec:
-    """Desired settings and questions for a Canvas Classic quiz."""
+    """Desired settings and questions for a Canvas Classic quiz.
+
+    A setting left as ``None`` means "leave as is": updates never send it, and
+    ``create_quiz`` fills it from ``QUIZ_CREATE_DEFAULTS``. An empty ``group``
+    and a ``None`` ``points`` are likewise never sent.
+    """
 
     title: str
     quiz_type: str
     group: str = ""
     points: float | None = None
-    description: str = ""
-    unlock_at: str = ""
-    due_at: str = ""
-    lock_at: str = ""
-    attempts: int = 1
-    time_limit: int = 0
-    hide_results: str = ""
-    scoring_policy: str = "keep_highest"
-    shuffle_answers: bool = False
-    one_question_at_a_time: bool = False
-    published: bool = False
+    description: str | None = None
+    unlock_at: str | None = None
+    due_at: str | None = None
+    lock_at: str | None = None
+    attempts: int | None = None
+    time_limit: int | None = None
+    hide_results: str | None = None
+    scoring_policy: str | None = None
+    shuffle_answers: bool | None = None
+    one_question_at_a_time: bool | None = None
+    published: bool | None = None
     groups: list[GroupSpec] = field(default_factory=list)
     questions: list[QuestionSpec] = field(default_factory=list)
+
+
+# Values a new quiz gets for the settings its spec leaves unset.
+QUIZ_CREATE_DEFAULTS: dict[str, object] = {
+    "description": "",
+    "unlock_at": "",
+    "due_at": "",
+    "lock_at": "",
+    "attempts": 1,
+    "time_limit": 0,
+    "hide_results": "",
+    "scoring_policy": "keep_highest",
+    "shuffle_answers": False,
+    "one_question_at_a_time": False,
+    "published": False,
+}
+QUIZ_SETTINGS = tuple(QUIZ_CREATE_DEFAULTS)
+
+
+def with_create_defaults(spec: QuizSpec) -> QuizSpec:
+    """A copy of *spec* with each unset setting filled from ``QUIZ_CREATE_DEFAULTS``."""
+    unset = {
+        name: default
+        for name, default in QUIZ_CREATE_DEFAULTS.items()
+        if getattr(spec, name) is None
+    }
+    return replace(spec, **unset)
 
 
 def default_question_points(quiz_type: str) -> float:
@@ -326,23 +358,29 @@ def load_quiz_file(path: Path) -> QuizSpec:
         if not any(q.group == g.name for q in questions):
             _fail(path, f"group '{g.name}' has no questions")
 
+    for key in ("shuffle_answers", "one_question_at_a_time", "published"):
+        if key in raw and not isinstance(raw[key], bool):
+            _fail(path, f"{key} must be true or false")
+
     points = raw.get("points")
+    attempts = raw.get("attempts")
+    time_limit = raw.get("time_limit")
     return QuizSpec(
         title=raw["title"],
         quiz_type=quiz_type,
         group=raw.get("group", ""),
         points=float(points) if points is not None else None,
-        description=raw.get("description", ""),
-        unlock_at=raw.get("unlock_at", ""),
-        due_at=raw.get("due_at", ""),
-        lock_at=raw.get("lock_at", ""),
-        attempts=int(raw.get("attempts", 1)),
-        time_limit=int(raw.get("time_limit", 0)),
-        hide_results=raw.get("hide_results", ""),
-        scoring_policy=raw.get("scoring_policy", "keep_highest"),
-        shuffle_answers=bool(raw.get("shuffle_answers", False)),
-        one_question_at_a_time=bool(raw.get("one_question_at_a_time", False)),
-        published=bool(raw.get("published", False)),
+        description=raw.get("description"),
+        unlock_at=raw.get("unlock_at"),
+        due_at=raw.get("due_at"),
+        lock_at=raw.get("lock_at"),
+        attempts=int(attempts) if attempts is not None else None,
+        time_limit=int(time_limit) if time_limit is not None else None,
+        hide_results=raw.get("hide_results"),
+        scoring_policy=raw.get("scoring_policy"),
+        shuffle_answers=raw.get("shuffle_answers"),
+        one_question_at_a_time=raw.get("one_question_at_a_time"),
+        published=raw.get("published"),
         groups=groups,
         questions=questions,
     )
@@ -369,19 +407,10 @@ def dump_quiz_file(spec: QuizSpec, path: Path | None) -> str:
     ]
     if spec.points is not None:
         lines.append(f"points = {format_toml_value(_number(spec.points))}")
-    lines += [
-        f"description = {format_toml_value(spec.description)}",
-        f"unlock_at = {format_toml_value(spec.unlock_at)}",
-        f"due_at = {format_toml_value(spec.due_at)}",
-        f"lock_at = {format_toml_value(spec.lock_at)}",
-        f"attempts = {spec.attempts}",
-        f"time_limit = {spec.time_limit}",
-        f"hide_results = {format_toml_value(spec.hide_results)}",
-        f"scoring_policy = {format_toml_value(spec.scoring_policy)}",
-        f"shuffle_answers = {format_toml_value(spec.shuffle_answers)}",
-        f"one_question_at_a_time = {format_toml_value(spec.one_question_at_a_time)}",
-        f"published = {format_toml_value(spec.published)}",
-    ]
+    for name in QUIZ_SETTINGS:
+        value = getattr(spec, name)
+        if value is not None:
+            lines.append(f"{name} = {format_toml_value(value)}")
     for g in spec.groups:
         lines += ["", "[[groups]]", f"name = {format_toml_value(g.name)}"]
         lines.append(f"pick_count = {g.pick_count}")
@@ -658,23 +687,26 @@ def quiz_form_fields(
 ) -> dict[str, object]:
     """Canvas quiz fields for *spec* (Canvas names, without the ``quiz[]`` wrapper).
 
-    Empty strings clear a field on Canvas; ``time_limit`` 0 is sent as "".
+    Settings left as ``None`` are omitted. Empty strings clear a field on
+    Canvas; ``time_limit`` 0 is sent as "".
     """
-    fields: dict[str, object] = {
-        "title": spec.title,
-        "quiz_type": spec.quiz_type,
+    settings: dict[str, object] = {
         "description": spec.description,
         "allowed_attempts": spec.attempts,
-        "time_limit": spec.time_limit or "",
+        "time_limit": None if spec.time_limit is None else spec.time_limit or "",
         "hide_results": spec.hide_results,
         "scoring_policy": spec.scoring_policy,
         "shuffle_answers": spec.shuffle_answers,
         "one_question_at_a_time": spec.one_question_at_a_time,
-        "unlock_at": parse_when(spec.unlock_at, tz),
-        "due_at": parse_when(spec.due_at, tz),
-        "lock_at": parse_when(spec.lock_at, tz),
+        "unlock_at": None if spec.unlock_at is None else parse_when(spec.unlock_at, tz),
+        "due_at": None if spec.due_at is None else parse_when(spec.due_at, tz),
+        "lock_at": None if spec.lock_at is None else parse_when(spec.lock_at, tz),
         "published": spec.published,
     }
+    fields: dict[str, object] = {"title": spec.title, "quiz_type": spec.quiz_type}
+    fields.update(
+        {name: value for name, value in settings.items() if value is not None}
+    )
     if spec.points is not None:
         fields["points_possible"] = _number(spec.points)
     if assignment_group_id is not None:
@@ -687,8 +719,8 @@ def quiz_settings_diff(
 ) -> dict[str, object]:
     """Canvas fields whose live value differs from *spec*.
 
-    Times compare by instant, so an offset-only difference is not a change.
-    Questions are never compared.
+    Only the settings *spec* sets are compared. Times compare by instant, so
+    an offset-only difference is not a change. Questions are never compared.
     """
     desired = quiz_form_fields(spec, tz, assignment_group_id=group_id)
     current: dict[str, object] = {

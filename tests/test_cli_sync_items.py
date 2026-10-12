@@ -110,7 +110,7 @@ def sync_course(tmp_path, monkeypatch) -> FakeCourse:
     course = FakeCourse()
     routes: dict[str, object] = {
         "/courses/1/modules": MODULES,
-        "/courses/1/assignments": [{"id": 7, "name": "HW1"}],
+        "/courses/1/assignments": [{"id": 7, "name": "HW1", "published": True}],
         "/courses/1/quizzes": [],
         "/courses/1/pages": [],
         "/courses/1/folders": FOLDERS,
@@ -202,6 +202,21 @@ def test_sync_without_items_is_unchanged(sync_course):
         assert not any(get.endswith(path) for get in gets), gets
     summary = row_index(table_rows(result.stdout), r"\d+ create")
     assert table_rows(result.stdout)[summary] == "0 create, 0 update, 1 skip"
+
+
+def test_omitted_published_leaves_published_content_alone(sync_course):
+    write_toml(
+        '\n[[canvas.modules]]\nname = "Week 1"\n'
+        '\n[[canvas.assignments]]\nname = "HW1"\n'
+    )
+
+    result = runner.invoke(app, ["canvas", "sync", "--apply"])
+
+    assert result.exit_code == 0, result.output
+    assert sync_course.writes() == []
+    rows = table_rows(result.stdout)
+    row_index(rows, r"^skip module Week 1$")
+    row_index(rows, r"^skip assignment HW1$")
 
 
 def test_sync_dry_run_shows_upload_then_create(sync_course):

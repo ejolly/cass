@@ -410,24 +410,22 @@ def quizzes_update(
         "--questions",
         help="Also reconcile questions and question groups (dry run unless --apply)",
     ),
-    apply: bool = typer.Option(
-        False, "--apply", help="Send the question changes (with --questions)"
-    ),
+    apply: bool = typer.Option(False, "--apply", help="Send the changes"),
     prune: bool = typer.Option(
         False,
         "--prune",
         help="Delete questions and groups not in the file (with --questions)",
     ),
 ) -> None:
-    """Update a quiz's settings from a quiz file.
+    """Update a quiz's settings from a quiz file; a dry run unless --apply.
 
-    Questions are untouched unless --questions is given, which previews the
-    question changes; add --apply to send them.
+    Only the settings the file sets are compared and sent. Questions are
+    untouched unless --questions is given.
     """
     import click
 
-    if (apply or prune) and not questions:
-        raise click.UsageError("--apply and --prune need --questions.")
+    if prune and not questions:
+        raise click.UsageError("--prune needs --questions.")
     if apply and dry_run:
         raise click.UsageError("--apply and --dry-run cannot be combined.")
     if questions:
@@ -440,7 +438,7 @@ def quizzes_update(
 
     _common.require_canvas()
     spec = load_quiz_file(Path(from_file))
-    with _common.client(dry_run=dry_run) as c:
+    with _common.client(dry_run=not apply) as c:
         q = c.resolve_quiz(id_or_name)
         group_id = _common.group_id_for(c, spec.group, create=False)
         changes = quiz_settings_diff(spec, q, c.time_zone, group_id=group_id)
@@ -449,8 +447,10 @@ def quizzes_update(
             return
         c.update_quiz(q.id, changes)
     detail = ", ".join(f"{k}: {v!r}" for k, v in changes.items())
-    if dry_run:
+    if not apply:
+        console.print(f"update settings ({detail})", markup=False, highlight=False)
         _common.print_plan(c)
+        err_console.print("Dry run — use --apply to send these changes.")
         return
     console.print(f"[green]Updated:[/green] {q.title} ({detail})")
 

@@ -7,7 +7,12 @@ __docformat__ = "google"
 import pytest
 from live_course import CONFIG_PATH, QUIZ_TITLE, SURVEY_TITLE
 
-from cass.actions.quizzes import load_quiz_file, quiz_spec_from_canvas, strip_html
+from cass.actions.quizzes import (
+    load_quiz_file,
+    quiz_spec_from_canvas,
+    strip_html,
+    with_create_defaults,
+)
 from cass.apis.canvas.client import CanvasClient
 
 
@@ -16,7 +21,10 @@ from cass.apis.canvas.client import CanvasClient
     [(QUIZ_TITLE, "live-quiz.toml"), (SURVEY_TITLE, "live-survey.toml")],
 )
 def test_seeded_quiz_matches_its_file(practice: CanvasClient, title, file):
-    expected = load_quiz_file(CONFIG_PATH.parent / "quizzes" / file)
+    # Seeding creates the quiz, so settings the file omits take create defaults.
+    expected = with_create_defaults(
+        load_quiz_file(CONFIG_PATH.parent / "quizzes" / file)
+    )
     quiz = practice.resolve_quiz(title)
     questions, _ = practice.list_quiz_questions(quiz.id)
     exported = quiz_spec_from_canvas(quiz, questions, "", practice.time_zone)

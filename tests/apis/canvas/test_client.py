@@ -966,6 +966,21 @@ class TestCanvasClient:
         ]
         assert "quiz%5Bpublished%5D=true" in transport.requests[3].content.decode()
 
+    def test_create_quiz_fills_defaults_for_unset_settings(self, mock_client):
+        from cass.actions.quizzes import QuizSpec
+
+        client, transport = mock_client
+        transport.add(json_data={"id": 20, "title": "S", "quiz_type": "survey"})
+        transport.add(json_data={"id": 20, "title": "S"})
+        transport.add(json_data={"id": 20, "title": "S", "quiz_type": "survey"})
+
+        client.create_quiz(QuizSpec(title="S", quiz_type="survey"))
+
+        body = transport.requests[0].content.decode()
+        assert "quiz%5Ballowed_attempts%5D=1" in body
+        assert "quiz%5Bscoring_policy%5D=keep_highest" in body
+        assert "quiz%5Bpublished%5D=false" in transport.requests[1].content.decode()
+
     def test_create_quiz_deletes_partial_quiz_on_failure(self, mock_client):
         from cass.actions.quizzes import QuestionSpec, QuizSpec
 

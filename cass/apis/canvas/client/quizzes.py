@@ -18,6 +18,7 @@ from ....actions.quizzes import (
     group_members,
     question_form_fields,
     quiz_form_fields,
+    with_create_defaults,
 )
 from ..schema import (
     CanvasQuiz,
@@ -52,10 +53,11 @@ class QuizzesMixin(BaseClient):
     ) -> CanvasQuiz:
         """Create a quiz with its questions.
 
-        Posts the quiz unpublished, creates the declared question groups, posts
-        each question in file order (into its group), orders groups and entries
-        when there are groups, then re-saves the quiz (applying
-        ``spec.published``) so Canvas recomputes
+        Fills unset settings from ``QUIZ_CREATE_DEFAULTS``, posts the quiz
+        unpublished, creates the declared question groups, posts each question
+        in file order (into its group), orders groups and entries when there
+        are groups, then re-saves the quiz (applying ``spec.published``) so
+        Canvas recomputes
         ``question_count`` and ``points_possible``. If a question post fails
         the partial quiz is deleted and the error re-raised.
 
@@ -66,6 +68,7 @@ class QuizzesMixin(BaseClient):
         Returns:
             The quiz as re-fetched after the re-save.
         """
+        spec = with_create_defaults(spec)
         fields = quiz_form_fields(
             spec, self.time_zone, assignment_group_id=assignment_group_id
         )

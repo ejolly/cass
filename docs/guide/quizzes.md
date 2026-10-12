@@ -9,7 +9,7 @@ cass canvas quizzes list
 cass canvas quizzes show "Survey 1"                   # settings and questions (--json for machines)
 cass canvas quizzes export "Survey 1" -o quizzes/survey-1.toml
 cass canvas quizzes create --from quizzes/survey-1.toml [--publish] [--create-groups]
-cass canvas quizzes update "Survey 1" --from quizzes/survey-1.toml [--questions [--apply] [--prune]]
+cass canvas quizzes update "Survey 1" --from quizzes/survey-1.toml [--questions [--prune]] [--apply]
 cass canvas quizzes questions "Survey 1"              # question IDs, groups, types (--json for machines)
 cass canvas quizzes preview "Survey 1"                # one student-style draw of the questions
 cass canvas quizzes publish "Survey 1"                # also unpublish, delete
@@ -17,7 +17,7 @@ cass canvas quizzes responses "Survey 1" [--all-attempts] [--csv responses.csv] 
 cass canvas sync [--apply] [--create-groups]          # reconcile [[canvas.quizzes]] declarations
 ```
 
-`sync` and plain `update` change quiz settings only. `update --questions` also changes questions; see [Editing questions](#editing-questions).
+`update` previews the changes and sends them only with `--apply`. `sync` and plain `update` change quiz settings only. `update --questions` also changes questions; see [Editing questions](#editing-questions).
 
 ## Quiz file
 
@@ -44,7 +44,8 @@ points = 1
 answers = [{ text = "A", correct = true }, { text = "B" }]
 ```
 
-- `title` and `type` are required; every other setting has a default (`description`, `lock_at`, `time_limit`, `scoring_policy`, `shuffle_answers`, `one_question_at_a_time`, `published`).
+- `title` and `type` are required. Other settings are `description`, `lock_at`, `time_limit`, `scoring_policy`, `shuffle_answers`, `one_question_at_a_time` and `published`.
+- `update` and `sync` compare and send only the settings the file sets; a missing setting keeps its live value. A new quiz gets 1 attempt, `keep_highest`, no time limit, and stays unpublished. `due_at = ""` or `time_limit = 0` clears a live value.
 - Question `type` aliases: `essay`, `multiple_choice`, `multiple_answers`, `true_false`, `short_answer`, `numerical`, `text_only`. Other Canvas question types pass through verbatim.
 - Question `points` default to 0 for surveys and 1 otherwise; `name` defaults to `Question`.
 - `answers` are required for `multiple_choice`, `multiple_answers`, and `true_false`; `correct = true` marks the right answer.
@@ -85,7 +86,7 @@ text = "<p>Second candidate</p>"
 
 Questions in one group must be next to each other. The group takes the place of its first question in the quiz.
 
-`update --questions --apply` sends settings changes first, including `published`, so a file with `published = true` publishes the quiz before its questions change. It then runs these steps in order: create new groups, add, update and delete questions, update groups, reorder the quiz and each group, delete groups, and re-save the quiz. If a request fails, cass stops. The settings stay applied, and the error lists the steps that finished before the failure.
+`update --questions --apply` sends settings changes first, so a file with `published = true` publishes an unpublished quiz before its questions change. It then runs these steps in order: create new groups, add, update and delete questions, update groups, reorder the quiz and each group, delete groups, and re-save the quiz. If a request fails, cass stops. The settings stay applied, and the error lists the steps that finished before the failure.
 
 `update --questions` refuses quizzes in concluded courses. Canvas serves their questions only through quiz statistics, which lack names and answer weights. `questions` and `export` still work there, with a warning.
 

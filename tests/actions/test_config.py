@@ -144,6 +144,35 @@ class TestCanvasDeclarations:
         assert cfg.canvas_modules[0] == CanvasModuleSpec(name="Week 1", published=False)
         assert cfg.canvas_modules[1] == CanvasModuleSpec(name="Week 2", published=True)
 
+    def test_omitted_published_is_none(self, tmp_path, monkeypatch):
+        """No `published` key means leave the live state as it is."""
+        toml = tmp_path / "cass.toml"
+        toml.write_text(
+            '[canvas]\nbase_url = "https://canvas.example.com"\ncourse_id = 1\n\n'
+            '[[canvas.modules]]\nname = "Week 1"\n\n'
+            '[[canvas.assignments]]\nname = "HW1"\n'
+        )
+        monkeypatch.chdir(tmp_path)
+        reset_config()
+        from cass.actions.config import load_config
+
+        cfg = load_config()
+        assert cfg.canvas_modules[0].published is None
+        assert cfg.canvas_assignments[0].published is None
+
+    def test_published_must_be_bool(self, tmp_path, monkeypatch):
+        toml = tmp_path / "cass.toml"
+        toml.write_text(
+            '[canvas]\nbase_url = "https://canvas.example.com"\ncourse_id = 1\n\n'
+            '[[canvas.assignments]]\nname = "HW1"\npublished = "yes"\n'
+        )
+        monkeypatch.chdir(tmp_path)
+        reset_config()
+        from cass.actions.config import load_config
+
+        with pytest.raises(SystemExit, match="published must be true or false"):
+            load_config()
+
     def test_assignments(self, tmp_path, monkeypatch):
         """Parse [[canvas.assignments]] from cass.toml."""
         toml = tmp_path / "cass.toml"

@@ -1232,7 +1232,7 @@ class TestCanvasQuizzes:
             'due_at = "2026-09-25 18:00"\nattempts = 1\nhide_results = "always"\n'
         )
         result = runner.invoke(
-            app, ["canvas", "quizzes", "update", "20", "--from", str(path)]
+            app, ["canvas", "quizzes", "update", "20", "--from", str(path), "--apply"]
         )
         assert result.exit_code == 0, result.output
         quiz_client.update_quiz.assert_called_once_with(
@@ -1248,7 +1248,7 @@ class TestCanvasQuizzes:
             'due_at = "2026-09-25 17:00"\nattempts = 1\nhide_results = "always"\n'
         )
         result = runner.invoke(
-            app, ["canvas", "quizzes", "update", "20", "--from", str(path)]
+            app, ["canvas", "quizzes", "update", "20", "--from", str(path), "--apply"]
         )
         assert result.exit_code == 0, result.output
         quiz_client.update_quiz.assert_not_called()
