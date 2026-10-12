@@ -179,6 +179,7 @@ class CanvasAssignmentResponse(msgspec.Struct):
     post_manually: bool = False
     group_category_id: int | None = None
     grade_group_students_individually: bool = False
+    created_at: str | None = None
 
 
 class CanvasAssignmentGroup(msgspec.Struct):

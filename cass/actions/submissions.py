@@ -10,6 +10,7 @@ __docformat__ = "google"
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Literal
 
 import httpx
@@ -220,6 +221,18 @@ def submission_rows(
         submissions,
         key=lambda sub: (sub.user.sortable_name if sub.user else "", sub.user_id),
     )
+
+
+def submissions_may_be_pending(assignment: CanvasAssignmentResponse) -> bool:
+    """True when *assignment* may be too new for Canvas to have its submissions.
+
+    Canvas creates a new assignment's submissions a few seconds after the
+    assignment, so listing them straight away comes back empty.
+    """
+    if not assignment.created_at:
+        return False
+    created = datetime.fromisoformat(assignment.created_at)
+    return datetime.now(UTC) - created < timedelta(minutes=1)
 
 
 def targets_for_students(

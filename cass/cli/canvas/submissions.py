@@ -45,7 +45,7 @@ def submissions_list(
     """Show each student's submission status and score."""
     from rich.markup import escape
 
-    from ...actions.submissions import submission_rows
+    from ...actions.submissions import submission_rows, submissions_may_be_pending
     from .. import report
 
     _common.reject_json_with_files(as_json, csv_out, save)
@@ -54,6 +54,12 @@ def submissions_list(
         target = c.resolve_assignment(assignment)
         subs = submission_rows(c, target, student_ids=student_ids or [])
         tz = c.time_zone
+
+    if not subs and submissions_may_be_pending(target):
+        _common.err_console.print(
+            "[yellow]Canvas adds submissions a few seconds after an assignment "
+            "is created; try again shortly.[/yellow]"
+        )
 
     if as_json:
         _common.emit_json_lines(subs)

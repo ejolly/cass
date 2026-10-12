@@ -45,6 +45,7 @@ Canvas behaviors that `--help` won't tell you. Each one is documented in the cas
 ## Enrollments and submissions
 
 - Canvas fills in a new student's due dates a few moments after they enroll, so `--enrolled-after` may miss a student added minutes ago.
+- Canvas creates a new assignment's submissions a few seconds after the assignment. Until then `submissions list`, `excuse` and `clear-late` find no submissions, so wait a few seconds after creating an assignment before using them.
 - When a student resubmits, Canvas resets the late status, so a late resubmission is late again. If they resubmitted after grading, the deduction stays until the submission is regraded.
 - Setting a late status on an excused submission un-excuses it, and on a group-graded assignment it changes every group member. `clear-late` skips both.
 - Excusing clears the grade.
