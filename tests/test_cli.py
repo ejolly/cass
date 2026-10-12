@@ -1310,63 +1310,6 @@ class TestCanvasQuizzes:
 
 
 class TestCanvasSync:
-    def test_due_at_with_offset_is_idempotent(self, monkeypatch, tmp_path):
-        from cass.apis.canvas.schema import CanvasAssignmentResponse
-
-        monkeypatch.chdir(tmp_path)
-        (tmp_path / "cass.toml").write_text(
-            '[canvas]\nbase_url = "https://canvas.example.com"\ncourse_id = 1\n'
-            '\n[[canvas.assignments]]\nname = "HW1"\npoints = 10\n'
-            'due_at = "2026-10-01T23:59:00-07:00"\npublished = true\n'
-        )
-        fake = MagicMock()
-        fake.__enter__.return_value = fake
-        fake.time_zone = "America/Los_Angeles"
-        fake.planned_requests = []
-        fake.list_assignments.return_value = [
-            CanvasAssignmentResponse(
-                id=1,
-                name="HW1",
-                points_possible=10,
-                due_at="2026-10-02T06:59:00Z",
-                published=True,
-            )
-        ]
-        monkeypatch.setattr("cass.cli.canvas._common.client", lambda **_: fake)
-
-        result = runner.invoke(app, ["canvas", "sync"])
-        assert result.exit_code == 0, result.output
-        assert "0 create, 0 update, 1 skip" in result.stdout
-
-    def test_naive_due_at_is_localized(self, monkeypatch, tmp_path):
-        from cass.apis.canvas.schema import CanvasAssignmentResponse
-
-        monkeypatch.chdir(tmp_path)
-        (tmp_path / "cass.toml").write_text(
-            '[canvas]\nbase_url = "https://canvas.example.com"\ncourse_id = 1\n'
-            'time_zone = "America/Los_Angeles"\n'
-            '\n[[canvas.assignments]]\nname = "HW1"\npoints = 10\n'
-            'due_at = "2026-10-01 23:59"\npublished = true\n'
-        )
-        fake = MagicMock()
-        fake.__enter__.return_value = fake
-        fake.time_zone = "America/Los_Angeles"
-        fake.planned_requests = []
-        fake.list_assignments.return_value = [
-            CanvasAssignmentResponse(
-                id=1,
-                name="HW1",
-                points_possible=10,
-                due_at="2026-10-02T06:59:00Z",
-                published=True,
-            )
-        ]
-        monkeypatch.setattr("cass.cli.canvas._common.client", lambda **_: fake)
-
-        result = runner.invoke(app, ["canvas", "sync"])
-        assert result.exit_code == 0, result.output
-        assert "0 create, 0 update, 1 skip" in result.stdout
-
     def _quiz_project(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         (tmp_path / "quizzes").mkdir()

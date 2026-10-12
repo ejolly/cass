@@ -60,6 +60,11 @@ def sync(
     from rich.markup import escape
     from rich.table import Table
 
+    from ...actions.assignments import (
+        MissingAssignmentGroupsError,
+        sync_assignment_groups,
+        sync_assignments,
+    )
     from ...actions.config import get_config
     from ...actions.module_items import (
         ModuleItemLookupError,
@@ -68,8 +73,6 @@ def sync(
     )
     from ...actions.modules import sync_modules
     from ...actions.quizzes import load_quiz_file, sync_quizzes
-    from ...apis.canvas.sync import push_assignments, resolve_group_ids
-    from ...apis.canvas.times import parse_when, same_instant
 
     _common.require_canvas()
     cfg = get_config()
@@ -94,18 +97,16 @@ def sync(
         created_quizzes: list[CanvasQuiz] = []
 
         # --- Assignment groups ---
-        group_ids: dict[str, int] = {}
-        if wanted_groups:
-            group_ids, missing = resolve_group_ids(c, wanted_groups)
-            if missing and not create_groups:
-                err_console.print(
-                    "[red]Assignment groups not found on Canvas: "
-                    f"{', '.join(missing)}[/red] (pass --create-groups to create them)"
-                )
-                raise typer.Exit(code=1)
-            for name in missing:
-                actions.append(("create", "group", name))
-                group_ids[name.lower()] = c.create_assignment_group(name).id
+        try:
+            group_rows, group_ids = sync_assignment_groups(
+                c, wanted_groups, create=create_groups
+            )
+        except MissingAssignmentGroupsError as exc:
+            err_console.print(
+                f"[red]{escape(str(exc))}[/red] (pass --create-groups to create them)"
+            )
+            raise typer.Exit(code=1) from None
+        actions.extend(group_rows)
 
         # --- Modules ---
         if cfg.canvas_modules:
@@ -114,46 +115,15 @@ def sync(
 
         # --- Assignments ---
         if cfg.canvas_assignments:
-            live_assignments = c.list_assignments()
-            live_by_name = {a.name.lower(): a for a in live_assignments}
-
-            updates_by_id: dict[int, dict[str, object]] = {}
-            for spec in cfg.canvas_assignments:
-                key = spec.name.lower()
-                wanted_due = parse_when(spec.due_at, tz)
-                if key in live_by_name:
-                    live = live_by_name[key]
-                    changes: dict[str, object] = {}
-                    if spec.points and (live.points_possible or 0.0) != spec.points:
-                        changes["points_possible"] = spec.points
-                    if wanted_due and not same_instant(live.due_at, wanted_due):
-                        changes["due_at"] = wanted_due
-                    if spec.published is not None and live.published != spec.published:
-                        changes["published"] = spec.published
-
-                    if changes:
-                        detail = ", ".join(f"{k}: {v}" for k, v in changes.items())
-                        actions.append(
-                            ("update", "assignment", f"{spec.name} ({detail})")
-                        )
-                        updates_by_id[live.id] = changes
-                    else:
-                        actions.append(("skip", "assignment", spec.name))
-                else:
-                    actions.append(("create", "assignment", spec.name))
-                    group_id = group_ids.get(spec.group.lower()) if spec.group else None
-                    new_assignment = c.create_assignment(
-                        spec.name,
-                        points_possible=spec.points,
-                        due_at=wanted_due or None,
-                        submission_types=spec.submission_types,
-                        published=bool(spec.published),
-                        assignment_group_id=group_id,
-                    )
-                    created_assignments.append(new_assignment)
-
-            if updates_by_id:
-                push_assignments(c, updates_by_id)
+            actions.extend(
+                sync_assignments(
+                    c,
+                    cfg.canvas_assignments,
+                    group_ids,
+                    tz,
+                    created=created_assignments,
+                )
+            )
 
         # --- Quizzes ---
         if quiz_specs:
