@@ -227,7 +227,8 @@ def resolve_group_ids(
     """Map assignment group names to IDs, case-insensitively.
 
     Returns:
-        ``(ids keyed by lower-cased name, names with no live match)``.
+        ``(ids keyed by lower-cased name, names with no live match)``. A
+        missing name is listed once, as first spelled.
     """
     live = {g.name.lower(): g.id for g in client.list_assignment_groups()}
     ids: dict[str, int] = {}
@@ -236,7 +237,7 @@ def resolve_group_ids(
         key = name.lower()
         if key in live:
             ids[key] = live[key]
-        elif name not in missing:
+        elif key not in {m.lower() for m in missing}:
             missing.append(name)
     return ids, missing
 

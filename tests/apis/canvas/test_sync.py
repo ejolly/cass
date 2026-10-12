@@ -60,6 +60,14 @@ class TestResolveGroupIds:
         assert ids == {"labs": 9}
         assert missing == ["Homework"]
 
+    def test_missing_names_differing_only_in_case_are_listed_once(self):
+        from cass.apis.canvas.sync import resolve_group_ids
+
+        client = MagicMock()
+        client.list_assignment_groups.return_value = []
+        _, missing = resolve_group_ids(client, ["Labs", "LABS", "labs"])
+        assert missing == ["Labs"]
+
 
 # ---------------------------------------------------------------------------
 # Fixtures

@@ -117,7 +117,7 @@ def test_sync_assignment_groups_creates_missing_when_asked():
     )
 
     rows, group_ids = sync_assignment_groups(
-        client, ["homework", "Labs", "Labs"], create=True
+        client, ["homework", "Labs", "LABS"], create=True
     )
 
     assert rows == [("create", "group", "Labs")]
