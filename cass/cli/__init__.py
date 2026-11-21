@@ -125,6 +125,8 @@ def _render_push_preview(preview: dict[str, object]) -> None:
             status = "error"
         elif bool(change.get("conflict")):
             status = "conflict"
+        elif bool(change.get("clears")):
+            status = "clear"
         elif bool(change.get("over_points")):
             status = f"over {change.get('points_possible')} pts"
         table.add_row(
@@ -181,8 +183,8 @@ def _render_held_back(held: list[dict[str, object]]) -> None:
             highlight=False,
         )
     err_console.print(
-        "Approve them at the prompt, or pass --overwrite-conflicts or "
-        "--allow-over-points; revert them with `cass revert`.",
+        "Approve them at the prompt, or pass --overwrite-conflicts, "
+        "--allow-over-points or --allow-clears; revert them with `cass revert`.",
         markup=False,
         highlight=False,
     )
@@ -552,12 +554,17 @@ def push(
         "--allow-over-points",
         help="Also push grades above the assignment's points possible",
     ),
+    allow_clears: bool = typer.Option(
+        False,
+        "--allow-clears",
+        help="Also remove grades you cleared from Canvas",
+    ),
 ) -> None:
     """Preview and push pending Canvas-managed changes.
 
-    Values changed on Canvas since your last pull, and grades above an
-    assignment's points possible, are held back unless you approve them at the
-    prompt or pass the matching flag. Held-back changes stay pending.
+    Values changed on Canvas since your last pull, grades above an assignment's
+    points possible, and cleared grades are held back unless you approve them
+    at the prompt or pass the matching flag. Held-back changes stay pending.
     """
     from .. import db
     from ..actions.status import count_pending
@@ -593,11 +600,15 @@ def push(
     allow_over_points = allow_over_points or _approve_flagged(
         previewed, "over_points", "grade(s) above points possible", yes=yes
     )
+    allow_clears = allow_clears or _approve_flagged(
+        previewed, "clears", "cleared grade(s), removing them from Canvas", yes=yes
+    )
     to_push, held = db.hold_back_unapproved(
         pending,
         preview,
         overwrite_conflicts=overwrite_conflicts,
         allow_over_points=allow_over_points,
+        allow_clears=allow_clears,
     )
     _render_held_back(held)
     if count_pending(to_push) == 0:

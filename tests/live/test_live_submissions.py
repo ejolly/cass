@@ -195,3 +195,25 @@ def test_enrolled_after_dry_run_on_real_course(
         pytest.skip("the real course has no Test Student to check against")
     assert f"({ts})" not in out
     assert all(not r.path.endswith(f"/submissions/{ts}") for r in planned)
+
+
+def test_bulk_push_of_empty_grade_clears_it(practice: CanvasClient):
+    """#22: push sends a cleared grade as "", which must remove it on Canvas."""
+    tag = uuid4().hex[:8]
+    ts = get_test_student_id(practice)
+    a = practice.create_assignment(
+        f"cass-live clear grade {tag}", points_possible=10, published=True
+    )
+    try:
+        assert practice.push_grade(a.id, ts, "8")
+        assert _reread(practice, a.id, ts).grade == "8"
+
+        progress = practice.bulk_push_grades(a.id, {ts: ""})
+        practice.wait_for_progress(progress.id)
+
+        cleared = _reread(practice, a.id, ts)
+        assert cleared.grade is None
+        assert cleared.score is None
+    finally:
+        with contextlib.suppress(Exception):
+            practice.delete_assignment(a.id)

@@ -287,6 +287,8 @@ def preview_grades(
                             "points_possible": points_possible,
                             "over_points": col == "posted_grade"
                             and exceeds_points(vals["current"], points_possible),
+                            "clears": col == "posted_grade"
+                            and clears_grade(vals["baseline"], vals["current"]),
                         }
                     )
         except Exception as exc:
@@ -337,20 +339,48 @@ def _extract_assignment_updates(
     return updates
 
 
+def has_grade(value: object) -> bool:
+    """Return whether a stored grade value holds a grade (not blank, ``-`` or ``?``)."""
+    return value is not None and is_valid_grade(str(value))
+
+
+def clears_grade(baseline: object, current: object) -> bool:
+    """Return whether a grade change removes a grade Canvas had."""
+    return has_grade(baseline) and not has_grade(current)
+
+
 def _extract_grade_data(
     table_changes: TableChanges,
-) -> tuple[dict[int, dict[int, str]], dict[int, list[str]]]:
+) -> tuple[dict[int, dict[int, str]], dict[int, list[str]], list[str]]:
+    """Split grade changes into what to send and blank-to-blank no-ops.
+
+    A cleared grade is sent as ``""``, which removes it on Canvas. Callers must
+    hold back clears the user has not approved (``hold_back_unapproved``).
+
+    Returns:
+        Grades to send by assignment, the pending keys each assignment's push
+        settles, and keys of changes between two blank values, which need no
+        request.
+    """
     grade_data_by_aid: dict[int, dict[int, str]] = {}
     pk_keys_by_aid: dict[int, list[str]] = {}
+    noop_keys: list[str] = []
     for pk_key, columns in table_changes.items():
         pk = json.loads(pk_key)
         aid = pk["canvas_assignment_id"]
         uid = pk["canvas_user_id"]
-        grade_val = columns.get("posted_grade", {}).get("current")
-        if grade_val is not None and is_valid_grade(str(grade_val)):
-            grade_data_by_aid.setdefault(aid, {})[uid] = str(grade_val)
-            pk_keys_by_aid.setdefault(aid, []).append(pk_key)
-    return grade_data_by_aid, pk_keys_by_aid
+        change = columns.get("posted_grade", {})
+        current = change.get("current")
+        if has_grade(current):
+            grade = str(current)
+        elif has_grade(change.get("baseline")):
+            grade = ""
+        else:
+            noop_keys.append(pk_key)
+            continue
+        grade_data_by_aid.setdefault(aid, {})[uid] = grade
+        pk_keys_by_aid.setdefault(aid, []).append(pk_key)
+    return grade_data_by_aid, pk_keys_by_aid, noop_keys
 
 
 def canvas_apply(
@@ -384,7 +414,13 @@ def canvas_apply(
                     synced_assignment_ids.append(canvas_id)
 
         if grade_changes:
-            grade_data, pk_keys = _extract_grade_data(grade_changes)
+            grade_data, pk_keys, noop_keys = _extract_grade_data(grade_changes)
+            for pk_key in noop_keys:
+                grade_changes.pop(pk_key, None)
+                pk = json.loads(pk_key)
+                synced_grade_keys.append(
+                    (pk["canvas_user_id"], pk["canvas_assignment_id"])
+                )
             grade_results = push_grades(client, conn, grade_data)
             results.extend(grade_results)
             for result in grade_results:
@@ -476,6 +512,7 @@ def count_pending(pending: PendingChanges) -> int:
 
 HELD_CONFLICT = "changed on Canvas since your last pull"
 HELD_OVER_POINTS = "above the assignment's points possible"
+HELD_CLEAR = "would remove the grade on Canvas"
 HELD_NOT_COMPARED = "could not be compared with Canvas"
 
 
@@ -485,19 +522,22 @@ def hold_back_unapproved(
     *,
     overwrite_conflicts: bool = False,
     allow_over_points: bool = False,
+    allow_clears: bool = False,
 ) -> tuple[PendingChanges, list[dict[str, object]]]:
     """Split pending changes into those safe to push and those held back.
 
     A change is held back when its Canvas value changed since the last pull
     (unless ``overwrite_conflicts``), when a grade is above the assignment's
-    points possible (unless ``allow_over_points``), or when the preview could
-    not read Canvas to compare it. Held-back changes stay pending locally.
+    points possible (unless ``allow_over_points``), when it removes a grade
+    from Canvas (unless ``allow_clears``), or when the preview could not read
+    Canvas to compare it. Held-back changes stay pending locally.
 
     Args:
         pending: Pending changes from ``get_pending_changes``.
         preview: Result of ``canvas_preview`` for the same pending changes.
         overwrite_conflicts: The user approved overwriting conflicting values.
         allow_over_points: The user approved grades above points possible.
+        allow_clears: The user approved removing grades from Canvas.
 
     Returns:
         A copy of ``pending`` without held-back changes, and the preview rows
@@ -511,6 +551,7 @@ def hold_back_unapproved(
             change,
             overwrite_conflicts=overwrite_conflicts,
             allow_over_points=allow_over_points,
+            allow_clears=allow_clears,
         )
         if reason is None:
             continue
@@ -524,6 +565,7 @@ def held_reason(
     *,
     overwrite_conflicts: bool,
     allow_over_points: bool,
+    allow_clears: bool = False,
 ) -> str | None:
     """Return why a previewed change must not be pushed yet, or None."""
     if "error" in change:
@@ -532,6 +574,8 @@ def held_reason(
         return HELD_CONFLICT
     if change.get("over_points") and not allow_over_points:
         return HELD_OVER_POINTS
+    if change.get("clears") and not allow_clears:
+        return HELD_CLEAR
     return None
 
 

@@ -2208,3 +2208,48 @@ class TestPushHoldsBackUnapproved:
         result = runner.invoke(app, ["push", "--yes", "--allow-over-points"])
         assert result.exit_code == 0
         apply_mock.assert_called_once()
+
+
+class TestPushClearsGrades:
+    """#22: a cleared grade reaches Canvas only after explicit approval."""
+
+    @pytest.fixture
+    def cleared(self, project_dir, monkeypatch):
+        monkeypatch.chdir(project_dir)
+        sdb = sqlite_utils.Database(str(project_dir / "cass.db"))
+        db.init_schema(sdb)
+        monkeypatch.setattr("cass.db.core._db", sdb)
+        monkeypatch.setattr("cass.db.core._db_path", None)
+        db.upsert_canvas_grade(sdb, 1, 7, "8")
+        db.snapshot_canvas_synced(sdb)
+        db.upsert_canvas_grade(sdb, 1, 7, "")
+        row = {
+            "table": "canvas_grades",
+            "canvas_assignment_id": 7,
+            "canvas_user_id": 1,
+            "name": "Ada — HW1",
+            "column": "posted_grade",
+            "baseline": "8",
+            "current": "",
+            "live": "8",
+            "clears": True,
+        }
+        monkeypatch.setattr(
+            "cass.db.canvas_preview",
+            lambda conn, pending: {"ok": True, "changes": [row]},
+        )
+        apply_mock = MagicMock(return_value={"ok": True, "results": []})
+        monkeypatch.setattr("cass.db.canvas_apply", apply_mock)
+        return apply_mock
+
+    def test_yes_holds_back_clear(self, cleared):
+        result = runner.invoke(app, ["push", "--yes"])
+        assert result.exit_code == 1
+        assert "would remove the grade on Canvas" in result.stderr
+        cleared.assert_not_called()
+
+    def test_allow_clears_pushes(self, cleared):
+        result = runner.invoke(app, ["push", "--yes", "--allow-clears"])
+        assert result.exit_code == 0, result.output
+        pushed = cleared.call_args.args[1]["canvas_grades"]
+        assert [c["posted_grade"]["current"] for c in pushed.values()] == [""]

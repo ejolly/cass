@@ -31,8 +31,9 @@ Two kinds of change are held back unless you approve them, and stay pending unti
 
 - **Conflicts:** values that changed on Canvas since your last pull, for example a grade a TA entered in SpeedGrader. Pushing would overwrite them.
 - **Grades above points possible:** usually a typo, sometimes extra credit.
+- **Cleared grades:** a grade you deleted in a cell. Pushing it removes the grade on Canvas.
 
-`cass push` asks about each kind. With `--yes` there is no prompt, so pass `--overwrite-conflicts` or `--allow-over-points` to include them. Changes cass could not compare with Canvas are always held back.
+`cass push` asks about each kind. With `--yes` there is no prompt, so pass `--overwrite-conflicts`, `--allow-over-points` or `--allow-clears` to include them. Changes cass could not compare with Canvas are always held back.
 
 Sends every pending change to Canvas. The viewer's **Push** button does the same.
 
