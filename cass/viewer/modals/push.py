@@ -32,6 +32,7 @@ class PushModal:
         self._phase: str = "loading"
         self._overwrite_conflicts = False
         self._allow_over_points = False
+        self._allow_clears = False
 
         with ui.dialog() as self.dialog, ui.card().classes("v-modal-card-lg"):
             ui.label("Push to Canvas").classes("v-modal-title")
@@ -42,6 +43,7 @@ class PushModal:
         self._preview = None
         self._overwrite_conflicts = False
         self._allow_over_points = False
+        self._allow_clears = False
         self._phase = "loading"
         self._render_loading()
         self.dialog.open()
@@ -92,11 +94,19 @@ class PushModal:
                     f"Push {n_over} grade(s) above points possible",
                     on_change=lambda e: self._approve("over_points", bool(e.value)),
                 )
+            n_clears = sum(1 for c in changes if c.get("clears") and "error" not in c)
+            if n_clears:
+                ui.checkbox(
+                    f"Remove {n_clears} cleared grade(s) from Canvas",
+                    on_change=lambda e: self._approve("clears", bool(e.value)),
+                )
         self._render_preview_actions()
 
     def _approve(self, kind: str, value: bool) -> None:
         if kind == "conflicts":
             self._overwrite_conflicts = value
+        elif kind == "clears":
+            self._allow_clears = value
         else:
             self._allow_over_points = value
         self._render_preview_actions()
@@ -107,6 +117,7 @@ class PushModal:
             self._preview or {},
             overwrite_conflicts=self._overwrite_conflicts,
             allow_over_points=self._allow_over_points,
+            allow_clears=self._allow_clears,
         )
 
     def _render_preview_actions(self) -> None:

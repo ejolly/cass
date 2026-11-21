@@ -9,7 +9,12 @@ import json
 import pytest
 
 from cass.db import exceeds_points, hold_back_unapproved
-from cass.db.sync import HELD_CONFLICT, HELD_NOT_COMPARED, HELD_OVER_POINTS
+from cass.db.sync import (
+    HELD_CLEAR,
+    HELD_CONFLICT,
+    HELD_NOT_COMPARED,
+    HELD_OVER_POINTS,
+)
 
 
 def grade_key(aid: int, uid: int) -> str:
@@ -152,3 +157,61 @@ class TestPreviewGradesFlagsOverPoints:
         assert rows[1]["over_points"] is False
         assert rows[2]["over_points"] is True
         assert rows[2]["points_possible"] == 10
+
+
+class TestClearedGrades:
+    @pytest.mark.parametrize(
+        ("baseline", "current", "expected"),
+        [
+            ("8", "", True),
+            ("8", None, True),
+            ("8", "-", True),
+            ("", "", False),
+            (None, "", False),
+            ("8", "9", False),
+            ("", "9", False),
+        ],
+    )
+    def test_clears_grade(self, baseline, current, expected):
+        from cass.db.sync import clears_grade
+
+        assert clears_grade(baseline, current) is expected
+
+    def test_extract_sends_clear_and_settles_blank_noops(self):
+        from cass.db.sync import _extract_grade_data
+
+        changes = {
+            grade_key(7, 1): {"posted_grade": {"baseline": "8", "current": ""}},
+            grade_key(7, 2): {"posted_grade": {"baseline": "", "current": "-"}},
+            grade_key(7, 3): {"posted_grade": {"baseline": "8", "current": "9"}},
+        }
+        data, keys, noops = _extract_grade_data(changes)
+        assert data == {7: {1: "", 3: "9"}}
+        assert keys == {7: [grade_key(7, 1), grade_key(7, 3)]}
+        assert noops == [grade_key(7, 2)]
+
+    def test_clear_is_held_unless_approved(self, pending):
+        preview = {"changes": [grade_change(7, 1, clears=True)]}
+        to_push, held = hold_back_unapproved(pending, preview)
+        assert grade_key(7, 1) not in to_push["canvas_grades"]
+        assert held[0]["held"] == HELD_CLEAR
+
+        to_push, held = hold_back_unapproved(pending, preview, allow_clears=True)
+        assert grade_key(7, 1) in to_push["canvas_grades"]
+        assert held == []
+
+    def test_blank_grade_is_a_pending_clear(self):
+        import sqlite_utils
+
+        from cass import db
+
+        conn = sqlite_utils.Database(memory=True)
+        db.init_schema(conn)
+        db.upsert_canvas_grade(conn, 1, 7, "8")
+        db.snapshot_canvas_synced(conn)
+        db.upsert_canvas_grade(conn, 1, 7, "")
+        pending = db.get_pending_changes(conn)
+        assert pending["canvas_grades"][grade_key(7, 1)]["posted_grade"] == {
+            "baseline": "8",
+            "current": "",
+        }
