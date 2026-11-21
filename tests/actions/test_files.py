@@ -70,10 +70,53 @@ def test_skip_with_missing_folder_uploads(client, local_file):
     assert kwargs["folder"] == "readings"
 
 
-def test_unpublished_locks_upload(client, local_file):
+def test_new_upload_is_locked_by_default(client, local_file):
+    client.find_folder.return_value = None
+
+    upload_course_file(client, local_file)
+
+    assert client.upload_file.call_args.kwargs["locked"] is True
+    client.update_file.assert_not_called()
+
+
+def test_publish_leaves_new_upload_unlocked(client, local_file):
     upload_course_file(
-        client, local_file, on_duplicate=OnDuplicate.RENAME, unpublished=True
+        client, local_file, on_duplicate=OnDuplicate.RENAME, published=True
     )
+
+    assert client.upload_file.call_args.kwargs["locked"] is False
+    client.find_folder.assert_not_called()
+
+
+@pytest.mark.parametrize("was_locked", [True, False])
+def test_overwrite_keeps_existing_lock(client, local_file, was_locked):
+    client.find_folder.return_value = CanvasFolder(id=2, name="readings")
+    client.list_files.return_value = [
+        CanvasFile(id=7, display_name="w1.pdf", size=99, locked=was_locked)
+    ]
+
+    upload_course_file(client, local_file, folder="readings")
+
+    kwargs = client.upload_file.call_args.kwargs
+    assert kwargs["on_duplicate"] == "overwrite"
+    assert kwargs["locked"] is was_locked
+    client.update_file.assert_not_called()
+
+
+def test_publish_over_locked_file_unlocks_it(client, local_file):
+    client.find_folder.return_value = CanvasFolder(id=2, name="readings")
+    client.list_files.return_value = [
+        CanvasFile(id=7, display_name="w1.pdf", size=99, locked=True)
+    ]
+
+    upload_course_file(client, local_file, folder="readings", published=True)
+
+    assert client.upload_file.call_args.kwargs["locked"] is False
+    client.update_file.assert_called_once_with(9, locked=False)
+
+
+def test_rename_upload_is_a_new_locked_file(client, local_file):
+    upload_course_file(client, local_file, on_duplicate=OnDuplicate.RENAME)
 
     assert client.upload_file.call_args.kwargs["locked"] is True
 

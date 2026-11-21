@@ -4,7 +4,7 @@ Canvas behaviors that `--help` won't tell you. Each one is documented in the cas
 
 ## Publishing and visibility
 
-- `cass canvas files upload` leaves the file visible to students, which is Canvas's default for uploads. `--unpublished` locks it with a second request right after the upload. Pass `--unpublished` unless the user asked to publish.
+- Canvas leaves a new upload visible to students. `cass canvas files upload` locks it with a second request right after the upload unless you pass `--publish`. Canvas stores an overwrite as a new file, so cass re-applies the old file's lock.
 - A `sync` File item works the other way. A new upload stays locked unless the item declares `published = true`. An overwrite with `published` omitted keeps the file's current lock.
 - A `[[canvas.modules]]` or `[[canvas.assignments]]` entry, module item or quiz file without `published` leaves the live state as it is. `sync` creates missing modules, assignments and quizzes unpublished.
 - cass never compares or sends a setting the quiz file leaves out. A new quiz gets 1 attempt, `keep_highest`, no time limit, no shuffle, all questions on one page, and stays unpublished. An empty string (`due_at = ""`) or `time_limit = 0` clears the live value.

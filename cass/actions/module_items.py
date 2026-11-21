@@ -669,11 +669,9 @@ def apply_module_item_plan(
 
 def _upload_lock(upload: FileUploadPlan) -> bool:
     """Whether the uploaded file ends up locked (see the plan's Decisions)."""
-    if upload.existing is None:
-        return upload.published is not True
-    if upload.published is None:
-        return upload.existing.locked
-    return not upload.published
+    from .files import lock_for_upload
+
+    return lock_for_upload(upload.existing, upload.published)
 
 
 def _upload_files(

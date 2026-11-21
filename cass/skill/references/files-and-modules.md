@@ -5,7 +5,7 @@
 ```bash
 cass canvas files list --json                         # a tree; each line has kind file or folder
 cass canvas files list --folder readings              # folder ID or path, with subfolders
-cass canvas files upload intro.pdf --folder readings/week1 --unpublished --dry-run
+cass canvas files upload intro.pdf --folder readings/week1 --dry-run
 cass canvas files upload intro.pdf --folder readings/week1 --on-duplicate skip
 cass canvas files upload draft.pdf --name intro.pdf --folder readings/week1
 cass canvas files mv intro.pdf readings/week2 --dry-run
@@ -18,7 +18,7 @@ cass canvas files folders delete readings/old --force --yes
 ```
 
 - Paths are relative to the course files root. `upload --folder` and `mv` create missing folders.
-- `upload` is visible to students unless you pass `--unpublished`.
+- `upload` locks a new file so students can't see it; `--publish` makes it visible. An overwrite keeps the existing file's lock unless you pass `--publish` or `--unpublished`.
 - `--on-duplicate` takes `overwrite`, the default, which replaces the file with a new one under a new ID while module items and links follow. `rename` keeps both. `skip` skips on the same name and size.
 - `folders delete` refuses a non-empty folder unless you pass `--force`.
 

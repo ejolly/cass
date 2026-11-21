@@ -1577,7 +1577,7 @@ class TestCanvasTabsAndFiles:
             "folder": "readings",
             "name": "w1.txt",
             "on_duplicate": OnDuplicate.SKIP,
-            "unpublished": True,
+            "published": False,
         }
 
     def test_upload_skip_message(self, fake_client, monkeypatch, tmp_path):
@@ -1647,24 +1647,26 @@ class TestCanvasTabsAndFiles:
         plan.assert_not_called()
 
     @pytest.mark.parametrize(
-        ("flags", "line"),
+        ("locked", "line"),
         [
-            ([], "Uploaded: w1.txt (id=9)"),
-            (["--unpublished"], "Uploaded: w1.txt (id=9), unpublished"),
+            (True, "Uploaded: w1.txt (id=9), unpublished"),
+            (False, "Uploaded: w1.txt (id=9), visible to students"),
         ],
     )
-    def test_upload_message(self, fake_client, monkeypatch, tmp_path, flags, line):
+    def test_upload_message(self, fake_client, monkeypatch, tmp_path, locked, line):
         from cass.actions.files import FileUpload
         from cass.apis.canvas.schema import CanvasFile
 
         (tmp_path / "notes.txt").write_text("hi")
         monkeypatch.chdir(tmp_path)
-        done = FileUpload(CanvasFile(id=9, display_name="w1.txt"), skipped=False)
+        done = FileUpload(
+            CanvasFile(id=9, display_name="w1.txt", locked=locked), skipped=False
+        )
         monkeypatch.setattr(
             "cass.actions.files.upload_course_file", MagicMock(return_value=done)
         )
 
-        result = runner.invoke(app, ["canvas", "files", "upload", "notes.txt", *flags])
+        result = runner.invoke(app, ["canvas", "files", "upload", "notes.txt"])
 
         assert result.exit_code == 0, result.output
         assert line in result.stdout.splitlines()

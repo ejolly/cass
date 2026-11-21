@@ -29,6 +29,20 @@ class OnConflict(StrEnum):
     OVERWRITE = "overwrite"
 
 
+def lock_for_upload(existing: CanvasFile | None, published: bool | None) -> bool:
+    """Return whether an uploaded file should end up locked (hidden from students).
+
+    A new file is locked unless ``published`` is true. An upload over an
+    existing file keeps that file's lock when ``published`` is None, so an
+    overwrite never makes a hidden file visible by accident.
+    """
+    if published is not None:
+        return not published
+    if existing is None:
+        return True
+    return bool(existing.locked)
+
+
 @dataclass(frozen=True)
 class FileUpload:
     """Result of an upload: the Canvas file, and whether the upload was skipped."""
@@ -44,7 +58,7 @@ def upload_course_file(
     folder: str = "",
     name: str | None = None,
     on_duplicate: OnDuplicate = OnDuplicate.OVERWRITE,
-    unpublished: bool = False,
+    published: bool | None = None,
 ) -> FileUpload:
     """Upload a local file, applying the duplicate policy.
 
@@ -58,7 +72,8 @@ def upload_course_file(
         folder: Destination folder path; ``""`` is the course files root.
         name: Name in Canvas; defaults to the local file name.
         on_duplicate: Duplicate policy.
-        unpublished: Lock the uploaded file so students cannot see it.
+        published: True unlocks the file for students and False locks it.
+            None locks a new file and keeps an overwritten file's lock.
 
     Returns:
         The Canvas file and whether the upload was skipped.
@@ -67,27 +82,43 @@ def upload_course_file(
     policy: Literal["rename", "overwrite"] = (
         "rename" if on_duplicate is OnDuplicate.RENAME else "overwrite"
     )
+    existing = None
+    if on_duplicate is not OnDuplicate.RENAME:
+        existing = find_existing_file(client, folder, target_name)
     if on_duplicate is OnDuplicate.SKIP:
-        policy = "rename"
-        found = client.find_folder(folder)
-        if found is not None:
-            local_size = os.path.getsize(local_path)
-            for existing in client.list_files(found.id):
-                if existing.display_name != target_name:
-                    continue
-                if existing.size == local_size:
-                    return FileUpload(existing, skipped=True)
-                policy = "overwrite"
-                break
+        if existing is None:
+            policy = "rename"
+        elif existing.size == os.path.getsize(local_path):
+            return FileUpload(existing, skipped=True)
+    if policy == "rename":
+        existing = None
 
+    locked = lock_for_upload(existing, published)
     uploaded = client.upload_file(
         local_path,
         folder=folder,
         name=name,
         on_duplicate=policy,
-        locked=unpublished,
+        locked=locked,
     )
+    if not locked and existing is not None and existing.locked:
+        # upload_file(locked=False) sends no unlock; an overwrite of a locked
+        # file needs an explicit one.
+        uploaded = client.update_file(uploaded.id, locked=False)
     return FileUpload(uploaded, skipped=False)
+
+
+def find_existing_file(
+    client: CanvasClient, folder: str, name: str
+) -> CanvasFile | None:
+    """Return the file named exactly ``name`` in ``folder``, if there is one."""
+    found = client.find_folder(folder)
+    if found is None:
+        return None
+    for existing in client.list_files(found.id):
+        if existing.display_name == name:
+            return existing
+    return None
 
 
 def folder_subtree(

@@ -130,8 +130,13 @@ def files_upload(
             ),
         ),
     ] = OnDuplicate.OVERWRITE,
-    unpublished: bool = typer.Option(
-        False, "--unpublished", help="Lock the file so students cannot see it"
+    published: bool | None = typer.Option(
+        None,
+        "--publish/--unpublished",
+        help=(
+            "Make the file visible to students, or lock it. Default: a new file "
+            "is locked; an overwrite keeps the existing file's lock"
+        ),
     ),
     dry_run: bool = _common.dry_run_option(),
 ) -> None:
@@ -152,7 +157,7 @@ def files_upload(
             folder=folder,
             name=name,
             on_duplicate=on_duplicate,
-            unpublished=unpublished,
+            published=published,
         )
     f = result.file
     if result.skipped:
@@ -167,7 +172,7 @@ def files_upload(
     if dry_run:
         _common.print_plan(c)
         return
-    suffix = ", unpublished" if unpublished else ""
+    suffix = ", unpublished" if f.locked else ", visible to students"
     console.print(f"[green]Uploaded:[/green] {f.display_name} (id={f.id}){suffix}")
 
 

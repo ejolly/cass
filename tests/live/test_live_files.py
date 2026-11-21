@@ -79,3 +79,38 @@ def test_file_lifecycle(practice: CanvasClient, tmp_path: Path):
         leftover = practice.find_folder(top)
         if leftover is not None:
             practice.delete_folder(leftover.id, force=True)
+
+
+def test_upload_lock_defaults(practice: CanvasClient, tmp_path: Path):
+    """C5: a new upload is locked; an overwrite keeps the existing lock."""
+    top = f"cass-live-lock-{uuid4().hex[:8]}"
+    local = tmp_path / "handout.txt"
+    local.write_bytes(b"first version\n")
+
+    try:
+        _run("upload", str(local), "--folder", top)
+        folder = practice.find_folder(top)
+        assert folder is not None
+        [first] = practice.list_files(folder.id)
+        assert first.locked is True
+
+        _run("publish", str(first.id))
+        local.write_bytes(b"second, longer version\n")
+        _run("upload", str(local), "--folder", top)
+        [second] = practice.list_files(folder.id)
+        assert second.locked is False
+
+        _run("unpublish", str(second.id))
+        local.write_bytes(b"third, even longer version\n")
+        _run("upload", str(local), "--folder", top)
+        [third] = practice.list_files(folder.id)
+        assert third.locked is True
+
+        local.write_bytes(b"fourth, published on purpose\n")
+        _run("upload", str(local), "--folder", top, "--publish")
+        [fourth] = practice.list_files(folder.id)
+        assert fourth.locked is False
+    finally:
+        leftover = practice.find_folder(top)
+        if leftover is not None:
+            practice.delete_folder(leftover.id, force=True)

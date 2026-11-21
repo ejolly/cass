@@ -41,7 +41,7 @@ cass canvas quizzes list         # see the Quizzes guide for authoring
 cass canvas quizzes show "Survey 1"
 cass canvas quizzes responses "Survey 1" --csv out.csv   # every student's answers
 cass canvas calendar list        # also create / update / delete, by event ID
-cass canvas files upload file.pdf --folder readings/week1 --unpublished
+cass canvas files upload file.pdf --folder readings/week1
 cass canvas files mv file.pdf readings/week2   # also files rename / publish / unpublish / delete
 cass canvas files folders list   # also folders create / delete
 cass canvas announcements create "Title" -m "Body"   # also update / delete
@@ -54,7 +54,7 @@ cass canvas api PUT /courses/{course}/modules/5 --data 'module[name]=Week1'
 
 `modules items add` takes `--type` Assignment, Quiz, File, Page, ExternalUrl or SubHeader, and the matching reference: `--content-id` (Assignment, Quiz, File), `--page-url` (Page), or `--url` and `--title` (ExternalUrl); SubHeader needs `--title`. No other item types are supported. To manage a module's items from `cass.toml`, see [Module items](configuration.md#module-items).
 
-Folder paths are relative to the course files root (no `course files/` prefix). `files upload --folder` and `files mv` create missing folders. `--unpublished` locks new uploads so students cannot see them. `files upload --on-duplicate` defaults to `overwrite`, which replaces a same-named file: Canvas stores the upload as a new file with a new ID and re-points module items and course links to it. `rename` keeps both files. `skip` skips the upload when a file with the same name and size is already there, and overwrites when only the name matches. `files mv` and `files rename` accept `--on-duplicate rename|overwrite`; without it, a name clash fails in Canvas. `files list --folder` takes a folder ID or path. `files folders delete --force` deletes non-empty folders.
+Folder paths are relative to the course files root (no `course files/` prefix). `files upload --folder` and `files mv` create missing folders. New uploads are locked so students cannot see them; `--publish` makes them visible. An overwrite keeps the existing file's lock unless you pass `--publish` or `--unpublished`. `files upload --on-duplicate` defaults to `overwrite`, which replaces a same-named file: Canvas stores the upload as a new file with a new ID and re-points module items and course links to it. `rename` keeps both files. `skip` skips the upload when a file with the same name and size is already there, and overwrites when only the name matches. `files mv` and `files rename` accept `--on-duplicate rename|overwrite`; without it, a name clash fails in Canvas. `files list --folder` takes a folder ID or path. `files folders delete --force` deletes non-empty folders.
 
 `cass canvas api` prints the response body as JSON. `{course}` expands to the configured course ID; `--param KEY=VALUE` adds query parameters and `--json-body` sends a JSON body. To call the API from Python, see the [Python API guide](python-api.md).
 

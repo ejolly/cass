@@ -19,7 +19,7 @@ cass is a CLI over the Canvas REST API for one course, set by `cass.toml`. `--he
 - **Dry run every write first.** Every Canvas write takes `--dry-run`, which prints the exact requests and sends none. The one exception is `cass canvas quizzes preview`, which leaves a teacher preview attempt on Canvas. Reconcile commands are dry runs unless you pass `--apply`: `cass canvas sync`, `cass canvas quizzes update QUIZ --from FILE`, `cass canvas submissions excuse` and `cass canvas submissions clear-late`.
 - **Show the plan and wait.** Paste the dry-run output to the user. Run the real command, or add `--apply`, only after they agree.
 - **Deletes need `--yes`.** You have no TTY, so a prompting command exits 1 without it. Pass `--yes` only after the user approved that dry run.
-- **Never publish unless asked.** Don't pass `--publish` or run `publish` verbs unless the user asked. `cass canvas files upload` makes the file visible to students unless you pass `--unpublished`, so pass it by default. Announcements and calendar events are visible to students as soon as they're created; there is no unpublished state.
+- **Never publish unless asked.** Don't pass `--publish` or run `publish` verbs unless the user asked. `cass canvas files upload` locks a new file unless you pass `--publish`, and an overwrite keeps the existing file's lock. Announcements and calendar events are visible to students as soon as they're created; there is no unpublished state.
 - **Leave out what you don't mean to change.** In `cass.toml` and quiz files, an omitted `published`, or any other omitted quiz setting, leaves the live value as it is. Only new content gets defaults: unpublished, one attempt. Write `published` only when the user asked to publish or unpublish.
 - **Use the public API only.** In Python, use `CanvasClient` public methods. Never `_client`.
 
@@ -34,7 +34,7 @@ cass is a CLI over the Canvas REST API for one course, set by `cass.toml`. `--he
 | Add, edit, reorder or remove module items | `cass canvas modules items add`, `update`, `move`, `remove` |
 | Declare modules, items, assignments and quizzes | edit `cass.toml`, then `cass canvas sync`, then `cass canvas sync --apply` |
 | Remove undeclared module items | `cass canvas sync --prune --apply` |
-| Readings and files | `cass canvas files upload notes.pdf --folder readings/week1 --unpublished --dry-run` |
+| Readings and files | `cass canvas files upload notes.pdf --folder readings/week1 --dry-run` |
 | File tree, folders | `cass canvas files list --json`; `cass canvas files folders list` |
 | Move, rename, hide or show a file | `cass canvas files mv`, `rename`, `unpublish`, `publish` |
 | Create a quiz or survey | write a quiz file, then `cass canvas quizzes create --from quizzes/survey.toml --dry-run` |
