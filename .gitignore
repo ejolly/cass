@@ -30,3 +30,4 @@ dist/
 *wal
 *shm
 .superpowers/
+.coherence-site/
