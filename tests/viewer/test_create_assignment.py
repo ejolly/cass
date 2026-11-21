@@ -10,13 +10,9 @@ import msgspec
 import pytest
 import sqlite_utils
 
+from cass.actions.assignments import push_new_assignment, validate_assignment_fields
 from cass.apis.canvas.schema import CanvasAssignmentGroup, CanvasAssignmentResponse
-from cass.viewer.actions import (
-    create_local_assignment,
-    push_new_assignment,
-    replace_local_id,
-    validate_assignment_fields,
-)
+from cass.db import create_local_assignment, replace_local_id
 
 
 @pytest.fixture

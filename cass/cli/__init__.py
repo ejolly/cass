@@ -723,8 +723,6 @@ def restore(
     """Replace the current database with a backup file."""
     import shutil
 
-    import sqlite_utils
-
     from .. import db
     from .prompts import confirm
 
@@ -737,17 +735,7 @@ def restore(
         raise typer.Exit(code=1)
 
     try:
-        backup_db = sqlite_utils.Database(str(src))
-        row = backup_db.execute(
-            "SELECT value FROM meta WHERE key = 'schema_version'"
-        ).fetchone()
-        version = int(row[0]) if row else 0
-        counts: dict[str, int] = {}
-        for table in ("canvas_students", "canvas_assignments"):
-            try:
-                counts[table] = backup_db[table].count
-            except Exception:
-                counts[table] = 0
+        version, counts = db.read_backup_summary(src)
     except Exception as exc:
         err_console.print(f"[red]Invalid database file: {exc}[/red]")
         raise typer.Exit(code=1) from exc

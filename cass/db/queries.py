@@ -150,3 +150,13 @@ def run_query(query: str) -> list[dict[str, object]]:
     """Execute arbitrary SQL and return results as list of dicts."""
     sdb = get_db()
     return list(sdb.query(query))
+
+
+def get_query_column_names(conn: sqlite_utils.Database, table: str) -> list[str]:
+    """Return the column names of a table's display query.
+
+    Uses the table's enriched query when it has one, else all its columns.
+    """
+    query = ENRICHED_QUERIES.get(table, f"SELECT * FROM {table}")
+    result = conn.execute(query)
+    return [desc[0] for desc in result.description]

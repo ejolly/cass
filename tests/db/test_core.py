@@ -342,3 +342,37 @@ class TestGetDbInjectedConnection:
 
         monkeypatch.setattr("cass.db.core.get_config", no_config)
         assert db.get_db() is db_conn
+
+
+class TestReadBackupSummary:
+    def test_reads_version_and_counts(self, tmp_path):
+        path = tmp_path / "backup.db"
+        backup = sqlite_utils.Database(str(path))
+        backup["meta"].insert({"key": "schema_version", "value": "12"}, pk="key")
+        backup["canvas_students"].insert_all([{"canvas_id": 1}, {"canvas_id": 2}])
+        assert db.read_backup_summary(path) == (
+            12,
+            {"canvas_students": 2, "canvas_assignments": 0},
+        )
+
+    def test_missing_meta_is_version_zero(self, tmp_path):
+        path = tmp_path / "empty.db"
+        sqlite_utils.Database(str(path))["canvas_assignments"].insert({"id": 1})
+        version, counts = db.read_backup_summary(path)
+        assert version == 0
+        assert counts["canvas_assignments"] == 1
+
+
+class TestIsConnectionUsable:
+    def test_open_and_closed(self):
+        conn = sqlite_utils.Database(memory=True)
+        assert db.is_connection_usable(conn)
+        _connection(conn).close()
+        assert not db.is_connection_usable(conn)
+
+
+class TestGetQueryColumnNames:
+    def test_plain_table(self):
+        conn = sqlite_utils.Database(memory=True)
+        conn["notes"].insert({"id": 1, "body": "x"})
+        assert db.get_query_column_names(conn, "notes") == ["id", "body"]

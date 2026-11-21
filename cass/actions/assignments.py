@@ -8,8 +8,15 @@ from typing import TYPE_CHECKING
 
 from ..apis.canvas.sync import push_assignments, resolve_group_ids
 from ..apis.canvas.times import parse_when, same_instant
+from ..db.assignments import (
+    delete_local_assignment,
+    get_local_assignment,
+    replace_local_id,
+)
 
 if TYPE_CHECKING:
+    import sqlite_utils
+
     from ..apis.canvas.client import CanvasClient
     from ..apis.canvas.schema import CanvasAssignmentResponse
     from .config import CanvasAssignmentSpec
@@ -115,3 +122,101 @@ def sync_assignments(
     if updates_by_id:
         push_assignments(client, updates_by_id)
     return rows
+
+
+def validate_assignment_fields(*, name: str, points: float | None) -> list[str]:
+    """Validate assignment creation fields.
+
+    Args:
+        name: Assignment name.
+        points: Points possible.
+
+    Returns:
+        List of error messages (empty if valid).
+    """
+    errors: list[str] = []
+    if not name.strip():
+        errors.append("Name is required.")
+    if points is not None and points < 0:
+        errors.append("Points must be ≥ 0.")
+    return errors
+
+
+def push_new_assignment(
+    conn: sqlite_utils.Database,
+    local_id: int,
+    client: CanvasClient,
+) -> dict[str, object]:
+    """Push a locally-created assignment to Canvas and update the local DB.
+
+    Args:
+        conn: SQLite database connection.
+        local_id: The negative local canvas_id.
+        client: Authenticated Canvas API client.
+
+    Returns:
+        Result dict with ``ok``, ``canvas_id``, and optionally ``error``.
+    """
+    row = get_local_assignment(conn, local_id)
+    if row is None:
+        return {"ok": False, "error": "Assignment not found"}
+
+    name, points, due_at, published, group_name = row
+
+    # Resolve group name -> Canvas group ID (create if new)
+    group_id: int | None = None
+    if group_name:
+        groups = client.list_assignment_groups()
+        for g in groups:
+            if g.name == group_name:
+                group_id = g.id
+                break
+        if group_id is None:
+            try:
+                new_group = client.create_assignment_group(group_name)
+                group_id = new_group.id
+            except Exception as e:
+                return {
+                    "ok": False,
+                    "error": f"Failed to create group '{group_name}': {e}",
+                }
+
+    try:
+        created = client.create_assignment(
+            name,
+            points_possible=float(points),
+            due_at=str(due_at) if due_at else None,
+            published=bool(published),
+            assignment_group_id=group_id,
+        )
+        replace_local_id(conn, local_id, created.id)
+        return {"ok": True, "canvas_id": created.id}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def delete_assignment_from_canvas(
+    conn: sqlite_utils.Database,
+    canvas_id: int,
+    client: CanvasClient,
+) -> dict[str, object]:
+    """Delete an assignment from Canvas (if remote) and locally.
+
+    Local-only assignments (negative IDs) skip the Canvas API call.
+    On Canvas API error, the local deletion still proceeds.
+
+    Returns:
+        Result dict with ``ok`` and optionally ``error``.
+    """
+    canvas_error: str | None = None
+    if canvas_id > 0:
+        try:
+            client.delete_assignment(canvas_id)
+        except Exception as e:
+            canvas_error = str(e)
+
+    delete_local_assignment(conn, canvas_id)
+
+    if canvas_error:
+        return {"ok": False, "error": canvas_error}
+    return {"ok": True}

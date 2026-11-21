@@ -9,8 +9,8 @@ from unittest.mock import MagicMock
 import pytest
 import sqlite_utils
 
-from cass.viewer.actions import (
-    delete_assignment_from_canvas,
+from cass.actions.assignments import delete_assignment_from_canvas
+from cass.db import (
     delete_local_assignment,
     list_assignments_for_select,
     purge_pending_for_assignment,

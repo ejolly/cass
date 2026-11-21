@@ -10,10 +10,10 @@ from nicegui import ui
 
 from ..actions.config import config_file_path
 from ..db import DB_FILENAME
+from ..db import count_pending as pending_count
 from ..db import get_tables as get_tables
 from ..db import is_editable as is_editable
-from .actions import pending_count as pending_count
-from .actions import track_change as track_change
+from ..db import track_change as track_change
 
 # Re-export for tests and external consumers
 __all__ = [

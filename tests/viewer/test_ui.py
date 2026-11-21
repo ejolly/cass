@@ -15,8 +15,8 @@ import sqlite_utils
 from nicegui import ui
 from nicegui.testing import User
 
-from cass.db import get_primary_keys, get_tables, is_editable, update_cell
-from cass.viewer.actions import pending_count, track_change
+from cass.db import count_pending as pending_count
+from cass.db import get_primary_keys, get_tables, is_editable, track_change, update_cell
 from cass.viewer.config import DEV_TABLES, PendingChanges, display_name, group_tables
 from cass.viewer.grid import (
     _grid_to_markdown,

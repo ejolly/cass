@@ -14,6 +14,7 @@ from ...db import (
     ENRICHED_QUERIES,
     get_assignment_groups,
     get_primary_keys,
+    get_query_column_names,
     get_table_capability,
     is_editable,
     load_canvas_gradebook_data,
@@ -138,9 +139,7 @@ def _get_col_types(conn: sqlite_utils.Database, table: str) -> dict[str, str]:
 
 def build_column_defs(conn: sqlite_utils.Database, table: str) -> list[dict[str, Any]]:
     """Build AG Grid column definitions for a table."""
-    query = ENRICHED_QUERIES.get(table, f"SELECT * FROM {table}")
-    result = conn.execute(query)
-    col_names = [desc[0] for desc in result.description]
+    col_names = get_query_column_names(conn, table)
     col_types = _get_col_types(conn, table)
 
     display_cols = get_display_columns(table, col_names)

@@ -8,11 +8,8 @@ from typing import TYPE_CHECKING
 
 from nicegui import ui
 
-from ..actions import (
-    delete_assignment_from_canvas,
-    list_assignments_for_select,
-    purge_pending_for_assignment,
-)
+from ...actions.assignments import delete_assignment_from_canvas
+from ...db import list_assignments_for_select, purge_pending_for_assignment
 from ..grid import clear_pending_cells, notify
 
 if TYPE_CHECKING:
