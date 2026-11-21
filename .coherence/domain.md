@@ -42,3 +42,24 @@ Content a student can open or see in the course: a published module,
 assignment, quiz, or page; an unlocked file; and any announcement or calendar
 event, which have no unpublished state. For a file, a module item's `published`
 setting controls the file's lock, not the item.
+
+## Module
+
+A named, ordered section of the course that students work through, holding
+module items. A module item only points at content: an assignment, quiz, page,
+file, external URL, or a subheader that labels a group of items. Removing an
+item leaves the content it points at untouched.
+
+## File
+
+A document stored in the course's Files area, named by its path below the
+course files root, such as `readings/week1/intro.pdf`. Distinct from a module
+item that links to it, and from a local source file in the course directory
+that cass uploads. Uploading over an existing file creates a new file with a new
+ID, and Canvas re-points links to it.
+
+## Announcement
+
+A post to the whole course, which students can see as soon as it is created and
+may be notified about immediately. It has no unpublished state, so creating one
+cannot be previewed on Canvas. Distinct from a calendar event and from a page.
