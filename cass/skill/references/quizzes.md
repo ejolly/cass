@@ -59,7 +59,7 @@ answers = [{ text = "A", correct = true }, { text = "B" }]
 
 - Matching goes by `id`, then by a unique name, then by order. `Question` and `Question N` count as no name.
 - cass edits only essay, text-only, multiple-choice, multiple-answers, true/false and short-answer questions. If any other type would change, the plan errors. Keep those questions unchanged in the file, or edit them in Canvas.
-- If students have finished attempts, cass warns. Earlier attempts keep the old question version. Plan lines are flagged when an answer is reworded or removed, because that gets a new answer ID and can unlink earlier responses. Changing only which answer is correct is safe.
+- Once a student has a finished attempt (`complete` or `pending_review`), cass refuses to delete the quiz, change its questions, or change `quiz_type`, `points_possible`, `allowed_attempts` or `scoring_policy`, and exits 1, dry runs included. Tell the user to make that change in the Canvas web app, which handles regrading. Dates, availability and other settings can still change. Teacher previews and the Test Student don't count. The plan still flags lines where an answer is reworded or removed, which would unlink earlier responses.
 - `--apply` sends the changed settings first, then the questions in a fixed order, then re-saves the quiz. It stops at the first failure and lists the steps that finished.
 - Quizzes in concluded courses are refused, because Canvas serves their questions only through statistics.
 

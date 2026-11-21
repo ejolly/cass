@@ -521,16 +521,6 @@ def format_question_plan(plan: QuestionPlan) -> list[str]:
     return lines
 
 
-def question_plan_warning(plan: QuestionPlan) -> str | None:
-    """A warning when students have finished attempts, else None."""
-    if plan.student_attempts <= 0:
-        return None
-    return (
-        f"Warning: {plan.student_attempts} finished student attempt(s) on this "
-        "quiz. Canvas keeps earlier attempts on the old version of each question."
-    )
-
-
 def plan_summary(plan: QuestionPlan) -> str:
     """Question counts by action, plus group changes when there are any.
 
@@ -672,9 +662,17 @@ def apply_question_plan(
         A description of each step applied.
 
     Raises:
+        QuizHasAttemptsError: Students have finished the quiz and the plan
+            changes something (commitment C2). Nothing is sent.
         QuestionApplyError: A request failed. Nothing after it was sent; the
             error lists the steps that had already succeeded.
     """
+    if plan.student_attempts > 0 and plan.has_changes:
+        from .quizzes import QuizHasAttemptsError
+
+        raise QuizHasAttemptsError(
+            f"quiz {quiz_id}", plan.student_attempts, "change its questions"
+        )
     applied: list[str] = []
     try:
         _apply_steps(client, quiz_id, plan, applied)
