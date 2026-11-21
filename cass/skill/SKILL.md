@@ -49,7 +49,7 @@ cass is a CLI over the Canvas REST API for one course, set by `cass.toml`. `--he
 | Calendar | `cass canvas calendar create "Review" --start "2026-10-20 10:00" --dry-run` |
 | Navigation tabs | `cass canvas tabs list`; `cass canvas tabs hide Grades --dry-run` |
 | Read grades | `cass pull`, then `cass query submissions --where "score < 50"`; `cass query gradebook` for the student × assignment matrix |
-| Push grade edits made in `cass view` | `cass push --dry-run`, then `cass push --yes` |
+| Push grade edits made in `cass view` | `cass push --dry-run`, then `cass push --yes`. Values changed on Canvas since the last pull, and grades above points possible, are held back and stay pending; add `--overwrite-conflicts` or `--allow-over-points` only after the user approves those rows |
 | Anything else | `cass canvas api` (see below) |
 
 Commands take an ID or a name, and an ambiguous name fails and lists the matching IDs. Calendar events take IDs only. Times are course-local (`YYYY-MM-DD HH:MM`) unless they carry an offset.

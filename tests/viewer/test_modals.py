@@ -249,3 +249,50 @@ class TestModalRendering:
         await user.should_see("Assignment")
         await user.should_see("Cancel")
         await user.should_see("Delete")
+
+
+class TestPushModalHoldsBack:
+    async def test_conflict_checkbox_shown(
+        self, user: User, ui_conn: sqlite_utils.Database, monkeypatch
+    ) -> None:
+        from cass.viewer.modals import push as push_module
+        from cass.viewer.modals.push import PushModal
+
+        monkeypatch.setattr("cass.db.connect_db", lambda root=None: ui_conn)
+        monkeypatch.setattr(
+            push_module,
+            "canvas_preview",
+            lambda conn, pending: {
+                "ok": True,
+                "changes": [
+                    {
+                        "table": "canvas_grades",
+                        "canvas_assignment_id": 7,
+                        "canvas_user_id": 1,
+                        "name": "Ada — HW1",
+                        "column": "posted_grade",
+                        "baseline": "8",
+                        "current": "9",
+                        "live": "10",
+                        "conflict": True,
+                    }
+                ],
+                "has_conflicts": True,
+            },
+        )
+
+        @ui.page("/test-push-holds-back")
+        def page() -> None:
+            vp = _make_page(ui_conn)
+            vp.pending = {
+                "canvas_grades": {
+                    '{"canvas_assignment_id": 7, "canvas_user_id": 1}': {
+                        "posted_grade": {"baseline": "8", "current": "9"}
+                    }
+                }
+            }
+            PushModal(vp).open()
+
+        await user.open("/test-push-holds-back")
+        await user.should_see("since your last pull")
+        await user.should_see("1 held back")

@@ -125,6 +125,8 @@ def _render_push_preview(preview: dict[str, object]) -> None:
             status = "error"
         elif bool(change.get("conflict")):
             status = "conflict"
+        elif bool(change.get("over_points")):
+            status = f"over {change.get('points_possible')} pts"
         table.add_row(
             str(change.get("table", "")),
             str(change.get("name", "")),
@@ -148,6 +150,42 @@ def _render_push_preview(preview: dict[str, object]) -> None:
             "not be fetched.[/yellow]"
         )
     console.print()
+
+
+def _approve_flagged(
+    changes: list[dict[str, object]], flag: str, description: str, *, yes: bool
+) -> bool:
+    """Ask whether to push previewed changes carrying ``flag``.
+
+    With ``--yes`` or without a terminal, nothing is asked and the answer is
+    no: only the explicit flag approves these changes.
+    """
+    from .prompts import ask
+
+    count = sum(1 for change in changes if change.get(flag) and "error" not in change)
+    if count == 0 or yes:
+        return False
+    return ask(f"Push {count} {description}?", default=False)
+
+
+def _render_held_back(held: list[dict[str, object]]) -> None:
+    if not held:
+        return
+    err_console.print(
+        f"\n[yellow]Held back {len(held)} change(s); still pending:[/yellow]"
+    )
+    for change in held:
+        err_console.print(
+            f"  {change.get('name', '?')}: {change.get('held')}",
+            markup=False,
+            highlight=False,
+        )
+    err_console.print(
+        "Approve them at the prompt, or pass --overwrite-conflicts or "
+        "--allow-over-points; revert them with `cass revert`.",
+        markup=False,
+        highlight=False,
+    )
 
 
 def _render_push_results(results: list[dict[str, object]]) -> None:
@@ -504,8 +542,23 @@ def push(
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Show the push preview without pushing"
     ),
+    overwrite_conflicts: bool = typer.Option(
+        False,
+        "--overwrite-conflicts",
+        help="Also push values that changed on Canvas since your last pull",
+    ),
+    allow_over_points: bool = typer.Option(
+        False,
+        "--allow-over-points",
+        help="Also push grades above the assignment's points possible",
+    ),
 ) -> None:
-    """Preview and push pending Canvas-managed changes."""
+    """Preview and push pending Canvas-managed changes.
+
+    Values changed on Canvas since your last pull, and grades above an
+    assignment's points possible, are held back unless you approve them at the
+    prompt or pass the matching flag. Held-back changes stay pending.
+    """
     from .. import db
     from ..actions.status import count_pending
     from .prompts import confirm
@@ -530,10 +583,33 @@ def push(
         err_console.print("Dry run: nothing pushed; pending changes stay pending.")
         return
 
+    previewed = cast(list[dict[str, object]], changes)
+    overwrite_conflicts = overwrite_conflicts or _approve_flagged(
+        previewed,
+        "conflict",
+        "value(s) changed on Canvas since your last pull",
+        yes=yes,
+    )
+    allow_over_points = allow_over_points or _approve_flagged(
+        previewed, "over_points", "grade(s) above points possible", yes=yes
+    )
+    to_push, held = db.hold_back_unapproved(
+        pending,
+        preview,
+        overwrite_conflicts=overwrite_conflicts,
+        allow_over_points=allow_over_points,
+    )
+    _render_held_back(held)
+    if count_pending(to_push) == 0:
+        err_console.print("[yellow]Nothing left to push.[/yellow]")
+        raise typer.Exit(code=1 if held else 0)
+
     confirm("Push these changes to Canvas?", yes=yes, default=False)
 
-    result = db.canvas_apply(conn, pending)
+    result = db.canvas_apply(conn, to_push)
     _render_push_results(cast(list[dict[str, object]], result.get("results", [])))
+    if held:
+        raise typer.Exit(code=1)
 
 
 @app.command()

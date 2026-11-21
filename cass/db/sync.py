@@ -5,7 +5,7 @@ from __future__ import annotations
 __docformat__ = "google"
 
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import sqlite_utils
 
@@ -216,6 +216,25 @@ def preview_assignments(
     return results
 
 
+def exceeds_points(grade: object, points_possible: float | None) -> bool:
+    """Return whether a grade is above the assignment's points possible.
+
+    Plain numbers compare with ``points_possible``; percentages compare with
+    100%. Letter grades and complete/incomplete never exceed.
+    """
+    text = str(grade).strip() if grade is not None else ""
+    is_percent = text.endswith("%")
+    try:
+        value = float(text.removesuffix("%"))
+    except ValueError:
+        return False
+    if is_percent:
+        return value > 100
+    if points_possible is None:
+        return False
+    return value > float(points_possible)
+
+
 def preview_grades(
     conn: sqlite_utils.Database,
     table_changes: TableChanges,
@@ -232,6 +251,11 @@ def preview_grades(
 
     for aid, student_changes in by_assignment.items():
         assignment_name = resolve_row_name(conn, "canvas_assignments", str(aid))
+        points_row = conn.execute(
+            "SELECT points_possible FROM canvas_assignments WHERE canvas_id = ?",
+            [aid],
+        ).fetchone()
+        points_possible = points_row[0] if points_row else None
         try:
             live_subs = client.list_submissions(aid)
             live_by_user = {submission.user_id: submission for submission in live_subs}
@@ -260,6 +284,9 @@ def preview_grades(
                             "current": vals["current"],
                             "live": live_val,
                             "conflict": not values_equal(live_val, vals["baseline"]),
+                            "points_possible": points_possible,
+                            "over_points": col == "posted_grade"
+                            and exceeds_points(vals["current"], points_possible),
                         }
                     )
         except Exception as exc:
@@ -445,3 +472,96 @@ def purge_pending_for_assignment(
 def count_pending(pending: PendingChanges) -> int:
     """Count pending column changes across all tables and rows."""
     return sum(len(cols) for rows in pending.values() for cols in rows.values())
+
+
+HELD_CONFLICT = "changed on Canvas since your last pull"
+HELD_OVER_POINTS = "above the assignment's points possible"
+HELD_NOT_COMPARED = "could not be compared with Canvas"
+
+
+def hold_back_unapproved(
+    pending: PendingChanges,
+    preview: dict[str, object],
+    *,
+    overwrite_conflicts: bool = False,
+    allow_over_points: bool = False,
+) -> tuple[PendingChanges, list[dict[str, object]]]:
+    """Split pending changes into those safe to push and those held back.
+
+    A change is held back when its Canvas value changed since the last pull
+    (unless ``overwrite_conflicts``), when a grade is above the assignment's
+    points possible (unless ``allow_over_points``), or when the preview could
+    not read Canvas to compare it. Held-back changes stay pending locally.
+
+    Args:
+        pending: Pending changes from ``get_pending_changes``.
+        preview: Result of ``canvas_preview`` for the same pending changes.
+        overwrite_conflicts: The user approved overwriting conflicting values.
+        allow_over_points: The user approved grades above points possible.
+
+    Returns:
+        A copy of ``pending`` without held-back changes, and the preview rows
+        that were held back, each with a ``held`` reason.
+    """
+    to_push: PendingChanges = json.loads(json.dumps(pending))
+    held: list[dict[str, object]] = []
+    changes = cast(list[dict[str, object]], preview.get("changes", []))
+    for change in changes:
+        reason = held_reason(
+            change,
+            overwrite_conflicts=overwrite_conflicts,
+            allow_over_points=allow_over_points,
+        )
+        if reason is None:
+            continue
+        held.append({**change, "held": reason})
+        remove_previewed_change(to_push, change)
+    return to_push, held
+
+
+def held_reason(
+    change: dict[str, object],
+    *,
+    overwrite_conflicts: bool,
+    allow_over_points: bool,
+) -> str | None:
+    """Return why a previewed change must not be pushed yet, or None."""
+    if "error" in change:
+        return HELD_NOT_COMPARED
+    if change.get("conflict") and not overwrite_conflicts:
+        return HELD_CONFLICT
+    if change.get("over_points") and not allow_over_points:
+        return HELD_OVER_POINTS
+    return None
+
+
+def remove_previewed_change(pending: PendingChanges, change: dict[str, object]) -> None:
+    """Remove the pending change(s) a preview row describes."""
+    table = str(change.get("table", ""))
+    table_changes = pending.get(table)
+    if not table_changes:
+        return
+    column = change.get("column")
+    if table == "canvas_assignments":
+        keys = [str(change.get("canvas_id"))]
+    else:
+        aid = change.get("canvas_assignment_id")
+        uid = change.get("canvas_user_id")
+        keys = [
+            key
+            for key in table_changes
+            if json.loads(key).get("canvas_assignment_id") == aid
+            and (uid is None or json.loads(key).get("canvas_user_id") == uid)
+        ]
+    for key in keys:
+        row = table_changes.get(key)
+        if row is None:
+            continue
+        if column is None or "error" in change:
+            row.clear()
+        else:
+            row.pop(str(column), None)
+        if not row:
+            del table_changes[key]
+    if not table_changes:
+        del pending[table]

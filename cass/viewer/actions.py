@@ -89,7 +89,7 @@ def build_preview_html(
         parts.append(
             '<div class="v-conflict-warning">'
             "\u26a0 Some Canvas values differ from when you "
-            "last pulled. Pushing will overwrite.</div>"
+            "last pulled. They are held back unless you approve them below.</div>"
         )
 
     return "".join(parts)

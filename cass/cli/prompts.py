@@ -41,3 +41,10 @@ def confirm(
         raise typer.Exit(code=1)
     if not typer.confirm(message, default=default, err=True):
         raise typer.Abort()
+
+
+def ask(message: str, *, default: bool = False) -> bool:
+    """Ask a yes/no question; without a terminal, return ``default``."""
+    if not _stdin_is_tty():
+        return default
+    return typer.confirm(message, default=default, err=True)

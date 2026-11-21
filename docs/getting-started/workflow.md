@@ -27,6 +27,13 @@ cass push          # preview, then confirm
 cass push --yes    # skip the confirmation
 ```
 
+Two kinds of change are held back unless you approve them, and stay pending until you do:
+
+- **Conflicts:** values that changed on Canvas since your last pull, for example a grade a TA entered in SpeedGrader. Pushing would overwrite them.
+- **Grades above points possible:** usually a typo, sometimes extra credit.
+
+`cass push` asks about each kind. With `--yes` there is no prompt, so pass `--overwrite-conflicts` or `--allow-over-points` to include them. Changes cass could not compare with Canvas are always held back.
+
 Sends every pending change to Canvas. The viewer's **Push** button does the same.
 
 ## Revert
