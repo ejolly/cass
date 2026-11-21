@@ -4,8 +4,7 @@ CLI grading toolkit for Canvas LMS. SQLite storage, Typer CLI, NiceGUI browser v
 
 ## Architecture
 
-CLI (`cass/cli/`) and viewer (`cass/viewer/`) are thin interfaces over a shared functional core.
-**Never** put business logic, data transforms, queries, or API calls in CLI or viewer code.
+CLI (`cass/cli/`) and viewer (`cass/viewer/`) are thin interfaces over a shared functional core; see [C6](.coherence/commitments.md#c6).
 Always use existing models (`db/schema.py`, `apis/*/schema.py`), operations (`db/`, `apis/`, `actions/`), and catalog metadata (`db/catalog.py`). No ad-hoc dicts, raw SQL in interfaces, or one-off data wrangling — if it doesn't exist in core, add it there first.
 CLI changes update `cass/skill/` in the same commit; `tests/test_skill.py` checks command names.
 
@@ -69,3 +68,14 @@ symbex '*Client*' -s -d cass/  # find classes/functions matching pattern
 - Canvas assignment/tab IDs are strings, not ints
 - The `cass.toml` points to a test Canvas course. When making canvas changes, ask the user if you should dogfood against it and clean up after yourself if granted permission.
 - Canvas leaves the Test Student out of quiz reports and statistics; quiz attempts with essay questions end in `pending_review`, not `complete`
+
+## Project coherence
+
+This project keeps accepted conceptual knowledge in `.coherence/`: the meanings of domain terms, binding commitments, and the rationale for consequential decisions. Follow the `coherence` skill whenever you read, propose, or edit these records.
+
+- At the start of any task that may change code, data, interfaces, or project records, read `.coherence/domain.md` and `.coherence/commitments.md`. Open decisions from `.coherence/decisions.md` only when they are relevant.
+- Commitments are the only binding project agreements. If a change would conflict with one, stop and ask for a ruling.
+- Agents propose; the human accepts. Never add, remove, or change the meaning of any record without the human approving its exact wording. Fixing links, typos, and formatting is fine.
+- Collect any proposals and present them once, at the end of the task, under **Coherence proposals**.
+
+To view the records as a site, run `uvx zensical serve -o -f coherence.zensical.toml`. After editing `.coherence/`, check links with `uvx zensical build -f coherence.zensical.toml`.
