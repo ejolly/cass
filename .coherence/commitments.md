@@ -4,6 +4,22 @@ The authoritative list of non-negotiable project agreements. Each commitment sta
 
 Number commitments C1, C2, etc. Never reuse a retired ID. Give each one a `##` heading ending in a stable anchor, such as `{#c1}`, so links like `commitments.md#c1` survive rewording the title. See the coherence skill's `references/commitments.md` for boundaries and agent behavior.
 
+## C1. Grades on Canvas change only as the user approved {#c1}
+
+cass must never clear, overwrite, or misattribute a grade on Canvas: every grade
+it writes must be the exact value the user entered or approved, for the exact
+student and assignment they entered it for. A grade above the assignment's
+points possible must not be pushed unless the user confirmed it. A wrong or lost
+grade harms a real student, and it may go unnoticed until after grades are final.
+
+## C2. cass never deletes or alters a quiz that has student attempts {#c2}
+
+cass must refuse to delete a quiz, or change its questions, answers, points, or
+scoring settings, once any student has a finished attempt, and tell the user to
+make the change in the Canvas web app instead. Such changes can destroy or alter
+student work, and Canvas's own interface handles their consequences, such as
+regrading, which cass does not.
+
 ## C3. Quizzes behave on Canvas as their quiz file declares {#c3}
 
 A quiz cass creates or updates must have, on Canvas, exactly the questions,
@@ -24,3 +40,10 @@ wrong in ways no one notices.
 
 cass must never publish content or make it visible to students unless the user
 explicitly asked for that, because students act on what they can see.
+
+## C6. The CLI and viewer contain no business logic {#c6}
+
+The CLI (`cass/cli/`) and viewer (`cass/viewer/`) must only call the shared core
+(`cass/actions/`, `cass/apis/`, `cass/db/`). Business logic, data transforms,
+database queries, and Canvas API calls must live in the core, so each rule cass
+enforces, including every other commitment, holds the same in both interfaces.
