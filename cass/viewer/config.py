@@ -6,6 +6,8 @@ __docformat__ = "google"
 
 from typing import Any
 
+from ..db.sync import PendingChanges as PendingChanges
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -77,12 +79,6 @@ COLUMN_DISPLAY_NAMES: dict[str, dict[str, str]] = {
         "workflow_state": "State",
     },
 }
-
-# Type aliases for pending changes
-ChangeFields = dict[str, object]
-RowChanges = dict[str, ChangeFields]
-TableChanges = dict[str, RowChanges]
-PendingChanges = dict[str, TableChanges]
 
 
 # ---------------------------------------------------------------------------

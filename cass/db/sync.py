@@ -16,16 +16,16 @@ from ..apis.canvas.sync import (
     resolve_row_name,
     values_equal,
 )
-from .catalog import PULL_GUARDED_TABLES
+from .catalog import CANVAS_PUSHABLE, PULL_GUARDED_TABLES
 from .core import _connection, get_db
 
 if TYPE_CHECKING:
     from ..apis.canvas.client import CanvasClient
 
-_ChangeFields = dict[str, object]
-_RowChanges = dict[str, _ChangeFields]
-_TableChanges = dict[str, _RowChanges]
-_PendingChanges = dict[str, _TableChanges]
+ChangeFields = dict[str, object]
+RowChanges = dict[str, ChangeFields]
+TableChanges = dict[str, RowChanges]
+PendingChanges = dict[str, TableChanges]
 
 
 def snapshot_canvas_synced(sdb: sqlite_utils.Database | None = None) -> None:
@@ -180,7 +180,7 @@ def pull_block_reason(sdb: sqlite_utils.Database | None = None) -> str | None:
 
 def preview_assignments(
     conn: sqlite_utils.Database,
-    table_changes: _TableChanges,
+    table_changes: TableChanges,
     client: CanvasClient,
 ) -> list[dict[str, object]]:
     """Preview pending assignment changes against live Canvas state."""
@@ -218,12 +218,12 @@ def preview_assignments(
 
 def preview_grades(
     conn: sqlite_utils.Database,
-    table_changes: _TableChanges,
+    table_changes: TableChanges,
     client: CanvasClient,
 ) -> list[dict[str, object]]:
     """Preview pending grade changes against live Canvas submissions."""
     results: list[dict[str, object]] = []
-    by_assignment: dict[int, list[tuple[int, _RowChanges]]] = {}
+    by_assignment: dict[int, list[tuple[int, RowChanges]]] = {}
     for pk_key, columns in table_changes.items():
         pk = json.loads(pk_key)
         aid = pk["canvas_assignment_id"]
@@ -276,7 +276,7 @@ def preview_grades(
 
 def canvas_preview(
     conn: sqlite_utils.Database,
-    pending: _PendingChanges,
+    pending: PendingChanges,
 ) -> dict[str, object]:
     """Compare pending changes against live Canvas state."""
     from ..apis.canvas.client import CanvasClient
@@ -302,7 +302,7 @@ def canvas_preview(
 
 
 def _extract_assignment_updates(
-    table_changes: _TableChanges,
+    table_changes: TableChanges,
 ) -> dict[int, dict[str, object]]:
     updates: dict[int, dict[str, object]] = {}
     for pk_key, columns in table_changes.items():
@@ -311,7 +311,7 @@ def _extract_assignment_updates(
 
 
 def _extract_grade_data(
-    table_changes: _TableChanges,
+    table_changes: TableChanges,
 ) -> tuple[dict[int, dict[int, str]], dict[int, list[str]]]:
     grade_data_by_aid: dict[int, dict[int, str]] = {}
     pk_keys_by_aid: dict[int, list[str]] = {}
@@ -328,7 +328,7 @@ def _extract_grade_data(
 
 def canvas_apply(
     conn: sqlite_utils.Database,
-    pending: _PendingChanges,
+    pending: PendingChanges,
 ) -> dict[str, object]:
     """Push pending changes to Canvas and clear synced rows on success."""
     from ..apis.canvas.client import CanvasClient
@@ -381,3 +381,67 @@ def canvas_apply(
     if synced_grade_keys:
         mark_synced_grades(conn, synced_grade_keys)
     return {"ok": overall_ok, "results": results}
+
+
+def track_change(
+    pending: PendingChanges,
+    table: str,
+    pk: dict[str, object],
+    column: str,
+    old_value: object,
+    new_value: object,
+) -> None:
+    """Record a cell edit as a pending Canvas change."""
+    pushable = CANVAS_PUSHABLE.get(table)
+    if not pushable or column not in pushable:
+        return
+
+    pk_key = (
+        str(next(iter(pk.values()))) if len(pk) == 1 else json.dumps(pk, sort_keys=True)
+    )
+
+    table_changes = pending.setdefault(table, {})
+    row_changes = table_changes.setdefault(pk_key, {})
+
+    if column in row_changes:
+        row_changes[column]["current"] = new_value
+        if values_equal(row_changes[column]["baseline"], new_value):
+            del row_changes[column]
+            if not row_changes:
+                del table_changes[pk_key]
+            if not table_changes:
+                del pending[table]
+    else:
+        row_changes[column] = {
+            "baseline": old_value,
+            "current": new_value,
+        }
+
+
+def purge_pending_for_assignment(
+    pending: PendingChanges,
+    canvas_id: int,
+) -> None:
+    """Remove any pending changes referencing a deleted assignment."""
+    # canvas_assignments: pk_key is str(canvas_id)
+    assign_pending = pending.get("canvas_assignments", {})
+    assign_pending.pop(str(canvas_id), None)
+    if not assign_pending:
+        pending.pop("canvas_assignments", None)
+
+    # canvas_grades: pk_key is JSON with canvas_assignment_id
+    grade_pending = pending.get("canvas_grades", {})
+    to_remove = [
+        pk_key
+        for pk_key in grade_pending
+        if json.loads(pk_key).get("canvas_assignment_id") == canvas_id
+    ]
+    for pk_key in to_remove:
+        grade_pending.pop(pk_key, None)
+    if not grade_pending:
+        pending.pop("canvas_grades", None)
+
+
+def count_pending(pending: PendingChanges) -> int:
+    """Count pending column changes across all tables and rows."""
+    return sum(len(cols) for rows in pending.values() for cols in rows.values())

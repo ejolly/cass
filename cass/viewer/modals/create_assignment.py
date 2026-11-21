@@ -8,12 +8,8 @@ from typing import TYPE_CHECKING
 
 from nicegui import ui
 
-from ...db import get_assignment_groups
-from ..actions import (
-    create_local_assignment,
-    push_new_assignment,
-    validate_assignment_fields,
-)
+from ...actions.assignments import push_new_assignment, validate_assignment_fields
+from ...db import create_local_assignment, get_assignment_groups
 from ..grid import notify
 
 if TYPE_CHECKING:

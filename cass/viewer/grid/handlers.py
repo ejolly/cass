@@ -10,8 +10,7 @@ from typing import Any
 import sqlite_utils
 from nicegui import ui
 
-from ...db import update_cell, upsert_canvas_grade
-from ..actions import track_change
+from ...db import track_change, update_cell, upsert_canvas_grade
 from ..config import PendingChanges
 from .pending import mark_pending_cell
 from .utils import notify

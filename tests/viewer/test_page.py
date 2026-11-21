@@ -514,7 +514,8 @@ class TestViewerPageFull:
         self, user: User, ui_conn: sqlite_utils.Database
     ) -> None:
         """update_pending_display reflects pending count in the badge."""
-        from cass.viewer.actions import pending_count, track_change
+        from cass.db import count_pending as pending_count
+        from cass.db import track_change
         from cass.viewer.page import ViewerPage
 
         page_ref: dict[str, ViewerPage | None] = {"ref": None}

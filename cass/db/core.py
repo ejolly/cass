@@ -59,7 +59,7 @@ def _connection(sdb: sqlite_utils.Database) -> sqlite3.Connection:
     return conn
 
 
-def _is_connection_usable(sdb: sqlite_utils.Database) -> bool:
+def is_connection_usable(sdb: sqlite_utils.Database) -> bool:
     """Return whether the underlying sqlite connection can still execute SQL."""
     try:
         _connection(sdb).execute("SELECT 1").fetchone()
@@ -100,12 +100,12 @@ def get_db(root: Path | None = None) -> sqlite_utils.Database:
     """Return the shared Database, creating it on first call."""
     global _db, _db_path
     if _db is not None and _db_path is None:
-        if _is_connection_usable(_db):
+        if is_connection_usable(_db):
             return _db
         reset()
     target_path = db_path(root)
     if _db is not None and _db_path == target_path:
-        if _is_connection_usable(_db):
+        if is_connection_usable(_db):
             return _db
         reset()
     if _db is not None and _db_path != target_path:
@@ -266,6 +266,24 @@ def get_meta(key: str, sdb: sqlite_utils.Database | None = None) -> str | None:
         return row["value"]  # pyright: ignore[reportReturnType]
     except sqlite_utils.db.NotFoundError:
         return None
+
+
+def read_backup_summary(path: Path) -> tuple[int, dict[str, int]]:
+    """Return a backup file's schema version and its student and assignment counts.
+
+    Raises:
+        Exception: The file is not a readable SQLite database.
+    """
+    backup_db = sqlite_utils.Database(str(path))
+    version_value = get_meta("schema_version", backup_db)
+    version = int(version_value) if version_value else 0
+    counts: dict[str, int] = {}
+    for table in ("canvas_students", "canvas_assignments"):
+        try:
+            counts[table] = backup_db[table].count
+        except Exception:
+            counts[table] = 0
+    return version, counts
 
 
 # ---------------------------------------------------------------------------

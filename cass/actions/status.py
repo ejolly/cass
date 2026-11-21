@@ -7,6 +7,10 @@ __docformat__ = "google"
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..db.sync import count_pending
+
+__all__ = ["ProjectStatus", "StatusCounts", "count_pending", "project_status"]
+
 
 @dataclass
 class StatusCounts:
@@ -29,13 +33,6 @@ class ProjectStatus:
     course_name: str | None
     counts: StatusCounts | None
     pending_changes: int | None
-
-
-def count_pending(
-    pending: dict[str, dict[str, dict[str, dict[str, object]]]],
-) -> int:
-    """Count pending column changes across all tables and rows."""
-    return sum(len(cols) for rows in pending.values() for cols in rows.values())
 
 
 def project_status(config_path: Path) -> ProjectStatus:

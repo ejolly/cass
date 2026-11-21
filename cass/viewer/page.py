@@ -11,12 +11,13 @@ from nicegui import ui
 
 from ..db import (
     CANVAS_PUSHABLE,
+    count_pending,
     get_pending_changes,
     get_table_capability,
     get_tables,
+    is_connection_usable,
     is_editable,
 )
-from .actions import pending_count
 from .config import (
     PendingChanges,
     display_name,
@@ -47,9 +48,7 @@ class ViewerPage:
         """Return a live DB handle for the current viewer session."""
         if self._project_root is None:
             return self._conn
-        try:
-            self._conn.execute("SELECT 1").fetchone()
-        except Exception:
+        if not is_connection_usable(self._conn):
             from ..db import get_db
 
             self._conn = get_db(self._project_root)
@@ -89,7 +88,7 @@ class ViewerPage:
 
     def update_pending_display(self) -> None:
         """Refresh the pending/sync badge and toggle revert/push."""
-        count = pending_count(self.pending)
+        count = count_pending(self.pending)
         has_pending = count > 0
 
         if self.pending_badge is not None:

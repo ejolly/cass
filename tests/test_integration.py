@@ -14,14 +14,15 @@ import math
 import pytest
 
 from cass import db
+from cass.db import count_pending as pending_count
 from cass.db import (
     get_column_names,
     get_primary_keys,
     get_tables,
     is_editable,
+    track_change,
     update_cell,
 )
-from cass.viewer.actions import pending_count, track_change
 from cass.viewer.grid import (
     build_column_defs,
     build_gradebook_view,
