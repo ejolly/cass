@@ -434,7 +434,12 @@ def quizzes_update(
 
     from pathlib import Path
 
-    from ...actions.quizzes import load_quiz_file, quiz_settings_diff
+    from ...actions.quizzes import (
+        load_quiz_file,
+        quiz_settings_diff,
+        refuse_if_attempted,
+        scoring_changes,
+    )
 
     _common.require_canvas()
     spec = load_quiz_file(Path(from_file))
@@ -445,6 +450,9 @@ def quizzes_update(
         if not changes:
             err_console.print(f"[dim]No changes for {q.title}.[/dim]")
             return
+        scoring = scoring_changes(changes)
+        if scoring:
+            refuse_if_attempted(c, q, f"change {', '.join(scoring)}")
         c.update_quiz(q.id, changes)
     detail = ", ".join(f"{k}: {v!r}" for k, v in changes.items())
     if not apply:
@@ -466,12 +474,13 @@ def _update_with_questions(
         format_question_plan,
         plan_quiz_questions,
         plan_summary,
-        question_plan_warning,
     )
     from ...actions.quizzes import (
         fetch_quiz_state,
         load_quiz_file,
         quiz_settings_diff,
+        refuse_if_attempted,
+        scoring_changes,
     )
 
     _common.require_canvas()
@@ -483,9 +492,6 @@ def _update_with_questions(
         group_id = _common.group_id_for(c, spec.group, create=False)
         changes = quiz_settings_diff(spec, q, c.time_zone, group_id=group_id)
 
-        warning = question_plan_warning(plan)
-        if warning:
-            err_console.print(warning, markup=False, highlight=False, soft_wrap=True)
         lines = format_question_plan(plan)
         if changes:
             detail = ", ".join(f"{k}: {v!r}" for k, v in changes.items())
@@ -493,6 +499,12 @@ def _update_with_questions(
         for line in lines:
             console.print(line, markup=False, highlight=False, soft_wrap=True)
 
+        scoring = scoring_changes(changes)
+        if plan.has_changes or scoring:
+            what = "change its questions" if plan.has_changes else ""
+            if scoring:
+                what += (" and " if what else "") + f"change {', '.join(scoring)}"
+            refuse_if_attempted(c, q, what, attempts=state.student_attempts)
         if changes:
             c.update_quiz(q.id, changes)
         apply_question_plan(c, q.id, plan)
@@ -545,12 +557,14 @@ def quizzes_delete(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
     dry_run: bool = _common.dry_run_option(),
 ) -> None:
-    """Delete a quiz."""
+    """Delete a quiz. Refused once students have finished it."""
+    from ...actions.quizzes import refuse_if_attempted
     from ..prompts import confirm
 
     _common.require_canvas()
     with _common.client(dry_run=dry_run) as c:
         q = c.resolve_quiz(id_or_name)
+        refuse_if_attempted(c, q, "delete it")
         confirm(f"Delete quiz '{q.title}'?", yes=yes, dry_run=dry_run)
         c.delete_quiz(q.id)
     if dry_run:

@@ -20,7 +20,6 @@ from cass.actions.quiz_plan import (
     format_question_plan,
     plan_quiz_questions,
     plan_summary,
-    question_plan_warning,
     question_update_fields,
 )
 from cass.actions.quizzes import (
@@ -469,15 +468,11 @@ def test_format_marks_answer_changes_when_students_attempted():
     lines = format_question_plan(plan)
     assert lines[0].startswith("update question 11")
     assert lines[0].endswith(ANSWER_MARKER)
-    warning = question_plan_warning(plan)
-    assert warning is not None
-    assert "2 finished student attempt(s)" in warning
 
     plan = _answer_change(student_attempts=0, answers=reworded)
     lines = format_question_plan(plan)
     assert not any(ANSWER_MARKER in line for line in lines)
     assert lines[0].endswith("(answers)")
-    assert question_plan_warning(plan) is None
 
 
 def test_marker_skips_correctness_flip_but_flags_dropped_answer():
@@ -988,3 +983,15 @@ def test_update_fields_duplicate_answer_texts_pair_in_order():
     answers = question_update_fields(change, "assignment", None)["answers"]
     assert isinstance(answers, list)
     assert [a.get("id") for a in answers] == [1, 2, None]
+
+
+def test_apply_refuses_changes_after_student_attempts():
+    from unittest.mock import MagicMock
+
+    from cass.actions.quizzes import QuizHasAttemptsError
+
+    plan = _answer_change(student_attempts=2)
+    client = MagicMock()
+    with pytest.raises(QuizHasAttemptsError, match="2 finished student attempt"):
+        apply_question_plan(client, 20, plan)
+    assert client.method_calls == []

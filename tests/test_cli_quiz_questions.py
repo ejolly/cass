@@ -292,7 +292,8 @@ def _answers_changed(quiz_file) -> None:
     quiz_file(('text = "yes"', 'text = "maybe"'))
 
 
-def test_student_attempt_warns_and_marks_answers(canvas, quiz_file):
+def test_student_attempt_refuses_question_changes(canvas, quiz_file):
+    """C2: a quiz students have finished is never changed by cass."""
     canvas.routes["/courses/1/users"] = [{"id": 1, "name": "Student"}]
     canvas.routes[f"{QUIZ_PATH}/submissions"] = {
         "quiz_submissions": [{"id": 1, "user_id": 1, "workflow_state": "complete"}]
@@ -301,16 +302,31 @@ def test_student_attempt_warns_and_marks_answers(canvas, quiz_file):
 
     result = _update("--questions", "--apply")
 
-    assert result.exit_code == 0, result.output
-    assert "Warning:" in result.stderr
-    assert "old version" in result.stderr
+    assert result.exit_code == 1, result.output
+    assert "1 finished student attempt(s)" in str(result.exception)
+    assert "Canvas web app" in str(result.exception)
     update_line = next(
         line for line in result.stdout.splitlines() if "update question" in line
     )
     assert "(answers replaced: existing responses may lose their answer link)" in (
         update_line
     )
-    assert canvas.writes
+    assert canvas.writes == []
+
+
+def test_pending_review_attempt_also_refuses(canvas, quiz_file):
+    canvas.routes["/courses/1/users"] = [{"id": 1, "name": "Student"}]
+    canvas.routes[f"{QUIZ_PATH}/submissions"] = {
+        "quiz_submissions": [
+            {"id": 1, "user_id": 1, "workflow_state": "pending_review"}
+        ]
+    }
+    _answers_changed(quiz_file)
+
+    result = _update("--questions", "--apply")
+
+    assert result.exit_code == 1, result.output
+    assert canvas.writes == []
 
 
 def test_teacher_preview_does_not_warn(canvas, quiz_file):
@@ -366,7 +382,7 @@ def test_apply_with_nothing_to_change_says_so(canvas, quiz_file):
     assert canvas.writes == []
 
 
-def test_student_attempt_warns_in_dry_run(canvas, quiz_file):
+def test_student_attempt_refuses_in_dry_run(canvas, quiz_file):
     canvas.routes["/courses/1/users"] = [{"id": 1, "name": "Student"}]
     canvas.routes[f"{QUIZ_PATH}/submissions"] = {
         "quiz_submissions": [{"id": 1, "user_id": 1, "workflow_state": "complete"}]
@@ -375,8 +391,8 @@ def test_student_attempt_warns_in_dry_run(canvas, quiz_file):
 
     result = _update("--questions")
 
-    assert result.exit_code == 0, result.output
-    assert "Warning:" in result.stderr
+    assert result.exit_code == 1, result.output
+    assert "Canvas web app" in str(result.exception)
     assert canvas.writes == []
 
 
@@ -394,7 +410,7 @@ def test_long_plan_lines_do_not_wrap(canvas, quiz_file, monkeypatch):
 
     result = _update("--questions")
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 1, result.output
     marker = "(answers replaced: existing responses may lose their answer link)"
     update_lines = [x for x in result.stdout.splitlines() if "update question" in x]
     assert len(update_lines) == 1
@@ -495,3 +511,55 @@ def test_preview_json_in_order(canvas):
     rows = [json.loads(line) for line in result.stdout.splitlines()]
     assert [r["id"] for r in rows] == [13, 11]
     assert "differ" in result.stderr
+
+
+def _finished_by(canvas, user_id: int) -> None:
+    """Give the quiz one finished attempt by ``user_id``; user 1 is on the roster."""
+    canvas.routes["/courses/1/users"] = [{"id": 1, "name": "Student"}]
+    canvas.routes[f"{QUIZ_PATH}/submissions"] = {
+        "quiz_submissions": [
+            {"id": 1, "user_id": user_id, "workflow_state": "complete"}
+        ]
+    }
+
+
+def test_delete_refused_after_student_attempt(canvas):
+    _finished_by(canvas, 1)
+
+    result = runner.invoke(app, ["canvas", "quizzes", "delete", "20", "--yes"])
+
+    assert result.exit_code == 1, result.output
+    assert "won't delete it" in str(result.exception)
+    assert canvas.writes == []
+
+
+def test_delete_allowed_when_only_preview_or_test_student(canvas):
+    _finished_by(canvas, 9)
+
+    result = runner.invoke(
+        app, ["canvas", "quizzes", "delete", "20", "--yes", "--dry-run"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "DELETE" in result.stdout
+
+
+def test_scoring_setting_refused_after_student_attempt(canvas, quiz_file):
+    quiz_file(("attempts = 1", "attempts = 3"))
+    _finished_by(canvas, 1)
+
+    result = _update("--apply")
+
+    assert result.exit_code == 1, result.output
+    assert "change allowed_attempts" in str(result.exception)
+    assert canvas.writes == []
+
+
+def test_non_scoring_setting_allowed_after_student_attempt(canvas, quiz_file):
+    quiz_file(('title = "Survey"', 'title = "Survey (week 2)"'))
+    _finished_by(canvas, 1)
+
+    result = _update("--apply")
+
+    assert result.exit_code == 0, result.output
+    assert canvas.writes

@@ -20,6 +20,7 @@ ACTION_COLORS = {
     "update": "yellow",
     "move": "yellow",
     "remove": "red",
+    "refuse": "red",
     "skip": "dim",
     "keep": "dim",
     "extra": "dim",
@@ -196,3 +197,11 @@ def sync(
         )
     elif not dry_run:
         console.print("\n  [green]Sync complete.[/green]")
+
+    refused = sum(1 for a, _, _ in actions if a == "refuse")
+    if refused:
+        err_console.print(
+            f"  [red]Refused {refused} change(s) to quizzes students have "
+            "finished; make them in the Canvas web app.[/red]"
+        )
+        raise typer.Exit(code=1)

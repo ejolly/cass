@@ -712,3 +712,60 @@ class TestQuizState:
         fetch_quiz_state(plain, 20)
         plain.list_quiz_submissions.assert_not_called()
         plain.list_students.assert_not_called()
+
+
+class TestQuizAttemptGuard:
+    """C2: cass never alters scoring on a quiz students have finished."""
+
+    @staticmethod
+    def attempted_client(live: CanvasQuiz) -> MagicMock:
+        client = MagicMock()
+        client.list_quizzes.return_value = [live]
+        client.list_students.return_value = [CanvasStudentResponse(id=1, name="S1")]
+        client.list_quiz_submissions.return_value = [
+            CanvasQuizSubmission(id=1, user_id=1, workflow_state="complete")
+        ]
+        return client
+
+    def test_sync_refuses_scoring_but_sends_other_changes(self):
+        live = CanvasQuiz(
+            id=1, title="Existing", quiz_type="survey", allowed_attempts=1
+        )
+        client = self.attempted_client(live)
+        spec = QuizSpec(
+            title="Existing", quiz_type="survey", attempts=2, description="New"
+        )
+
+        rows = sync_quizzes(client, [spec], {}, LA)
+
+        assert [r[0] for r in rows] == ["refuse", "update"]
+        assert "allowed_attempts" in rows[0][2]
+        assert "Canvas web app" in rows[0][2]
+        client.update_quiz.assert_called_once_with(1, {"description": "New"})
+
+    def test_sync_refusal_alone_sends_nothing(self):
+        live = CanvasQuiz(
+            id=1, title="Existing", quiz_type="survey", allowed_attempts=1
+        )
+        client = self.attempted_client(live)
+
+        rows = sync_quizzes(
+            client, [QuizSpec(title="Existing", quiz_type="survey", attempts=2)], {}, LA
+        )
+
+        assert [r[0] for r in rows] == ["refuse"]
+        client.update_quiz.assert_not_called()
+
+    def test_refuse_if_attempted(self):
+        from cass.actions.quizzes import QuizHasAttemptsError, refuse_if_attempted
+
+        live = CanvasQuiz(id=1, title="Quiz 1")
+        with pytest.raises(QuizHasAttemptsError, match="won't delete it"):
+            refuse_if_attempted(self.attempted_client(live), live, "delete it")
+        refuse_if_attempted(MagicMock(), live, "delete it", attempts=0)
+
+    def test_scoring_changes(self):
+        from cass.actions.quizzes import scoring_changes
+
+        changes = {"title": "x", "scoring_policy": "keep_latest", "due_at": "y"}
+        assert scoring_changes(changes) == ["scoring_policy"]

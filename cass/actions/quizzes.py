@@ -599,13 +599,7 @@ def fetch_quiz_state(
     groups.sort(key=lambda g: (g.position or 0, g.id))
     student_attempts = 0
     if include_submissions:
-        student_ids = {s.id for s in client.list_students()}
-        student_attempts = sum(
-            1
-            for sub in client.list_quiz_submissions(quiz_id)
-            if sub.workflow_state in ("complete", "pending_review")
-            and sub.user_id in student_ids
-        )
+        student_attempts = count_finished_attempts(client, quiz_id)
     return QuizState(
         quiz=quiz,
         questions=ordered_questions(questions, groups),
@@ -613,6 +607,69 @@ def fetch_quiz_state(
         from_statistics=from_statistics,
         student_attempts=student_attempts,
     )
+
+
+SCORING_SETTINGS = frozenset(
+    {"quiz_type", "points_possible", "allowed_attempts", "scoring_policy"}
+)
+"""Quiz settings that change how existing attempts are scored (commitment C2)."""
+
+
+class QuizHasAttemptsError(RuntimeError):
+    """A change cass refuses because students have finished the quiz (C2)."""
+
+    def __init__(self, title: str, attempts: int, change: str) -> None:
+        super().__init__(
+            f"Quiz {title!r} has {attempts} finished student attempt(s), so cass "
+            f"won't {change}. Make this change in the Canvas web app, which "
+            "handles regrading existing attempts."
+        )
+        self.attempts = attempts
+
+
+FINISHED_ATTEMPT_STATES = ("complete", "pending_review")
+
+
+def count_finished_attempts(client: CanvasClient, quiz_id: int) -> int:
+    """Count students' finished attempts on a quiz.
+
+    A finished attempt is ``complete`` or ``pending_review``. Only students on
+    the roster count, so teacher previews and the Test Student never do.
+    """
+    student_ids = {s.id for s in client.list_students()}
+    return sum(
+        1
+        for sub in client.list_quiz_submissions(quiz_id)
+        if sub.workflow_state in FINISHED_ATTEMPT_STATES and sub.user_id in student_ids
+    )
+
+
+def refuse_if_attempted(
+    client: CanvasClient,
+    quiz: CanvasQuiz,
+    change: str,
+    *,
+    attempts: int | None = None,
+) -> None:
+    """Raise if students have finished the quiz.
+
+    Args:
+        client: Canvas client; only reads.
+        quiz: The quiz about to change.
+        change: What cass was about to do, e.g. ``"delete it"``.
+        attempts: A count already fetched; otherwise it is fetched.
+
+    Raises:
+        QuizHasAttemptsError: At least one finished student attempt exists.
+    """
+    count = count_finished_attempts(client, quiz.id) if attempts is None else attempts
+    if count > 0:
+        raise QuizHasAttemptsError(quiz.title, count, change)
+
+
+def scoring_changes(changes: dict[str, object]) -> list[str]:
+    """Return the scoring settings among *changes*, sorted."""
+    return sorted(key for key in changes if key in SCORING_SETTINGS)
 
 
 def quiz_spec_from_canvas(
@@ -789,7 +846,9 @@ def sync_quizzes(
 
     Returns:
         ``(action, "quiz", name)`` rows: create, update (with the changed
-        fields), or skip.
+        fields), skip, or refuse. A quiz with finished student attempts gets a
+        ``refuse`` row for its scoring-setting changes, which are not sent;
+        its other changes still are (commitment C2).
     """
     live_by_title = {q.title.lower(): q for q in client.list_quizzes()}
     rows: list[tuple[str, str, str]] = []
@@ -803,8 +862,22 @@ def sync_quizzes(
                 created.append(new_quiz)
             continue
         changes = quiz_settings_diff(spec, live, tz, group_id=group_id)
+        scoring = scoring_changes(changes)
+        if scoring:
+            attempts = count_finished_attempts(client, live.id)
+            if attempts:
+                rows.append(
+                    (
+                        "refuse",
+                        "quiz",
+                        f"{spec.title} ({', '.join(scoring)}: {attempts} finished "
+                        "attempt(s); change it in the Canvas web app)",
+                    )
+                )
+                changes = {k: v for k, v in changes.items() if k not in scoring}
         if not changes:
-            rows.append(("skip", "quiz", spec.title))
+            if not scoring:
+                rows.append(("skip", "quiz", spec.title))
             continue
         detail = ", ".join(f"{k}: {v}" for k, v in changes.items())
         rows.append(("update", "quiz", f"{spec.title} ({detail})"))
