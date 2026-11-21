@@ -4,7 +4,41 @@ Shared meanings of important project concepts. Record only concepts whose ambigu
 
 Give each concept its own `##` heading. The site's "On this page" sidebar lists them, so no separate index is needed. See the coherence skill's `references/domain.md` for what belongs here.
 
-<!-- Example, not an accepted project definition:
-## Observation
-One field measurement in the device-neutral form the project stores, distinct from a device upload.
--->
+## Quiz
+
+A Canvas Classic Quiz, including graded and ungraded surveys. cass does not
+support New Quizzes, which use a different Canvas API, so every cass rule about
+quizzes refers to Classic Quizzes only.
+
+## Finished attempt
+
+A student's quiz attempt that Canvas has closed, in state `complete` or
+`pending_review` (an attempt awaiting manual grading of essay questions).
+Distinct from an attempt still in progress, a teacher's preview attempt, and an
+attempt by the Test Student, none of which count as finished attempts.
+
+## Student
+
+A person with a student enrollment in the course whose enrollment is active or
+invited. Distinct from the Test Student, which Canvas creates for previews and
+leaves out of quiz reports, and from people whose enrollment is concluded or
+inactive.
+
+## Grade
+
+The value Canvas records as a student's result on an assignment, as entered: a
+number of points, a percentage, a letter, or complete/incomplete. Distinct from
+the score, the number of points Canvas computes from the grade.
+
+## Pending change
+
+A local edit to a grade or an assignment field in `cass.db` that differs from
+the value Canvas had at the last pull. Pending changes survive restarts, block
+the next pull, and leave cass only through push or revert.
+
+## Visible to students
+
+Content a student can open or see in the course: a published module,
+assignment, quiz, or page; an unlocked file; and any announcement or calendar
+event, which have no unpublished state. For a file, a module item's `published`
+setting controls the file's lock, not the item.
