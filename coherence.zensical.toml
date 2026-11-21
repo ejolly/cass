@@ -1,0 +1,20 @@
+# Copy alongside .coherence/ into the target project's repository root.
+# Preview with: uvx zensical serve -o -f coherence.zensical.toml
+# Check with:   uvx zensical build -f coherence.zensical.toml
+
+[project]
+site_name = "Project Coherence"
+site_description = "Accepted project concepts, commitments, and design decisions"
+docs_dir = ".coherence"
+site_dir = ".coherence-site"
+
+# Fail `build` on broken internal links or heading anchors. `serve` only warns.
+strict = true
+
+# Reading order. Individual decisions are reached through the index table in
+# decisions.md, so new decision files never require editing this config.
+nav = ["index.md", "domain.md", "commitments.md", "decisions.md"]
+
+# Do not add a [project.markdown_extensions] table: it replaces Zensical's
+# defaults (admonitions, {#id} heading anchors, permalinks, Mermaid) rather
+# than extending them.
