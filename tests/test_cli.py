@@ -2129,3 +2129,80 @@ def _fresh_err_console():
     from rich.console import Console
 
     return Console(stderr=True, width=80)
+
+
+class TestPushHoldsBackUnapproved:
+    """C1: conflicting values and over-points grades need explicit approval."""
+
+    @pytest.fixture
+    def renamed(self, project_dir, monkeypatch):
+        monkeypatch.chdir(project_dir)
+        sdb = sqlite_utils.Database(str(project_dir / "cass.db"))
+        db.init_schema(sdb)
+        monkeypatch.setattr("cass.db.core._db", sdb)
+        monkeypatch.setattr("cass.db.core._db_path", None)
+        sdb["canvas_assignments"].insert(
+            {"canvas_id": 7, "name": "HW1", "points_possible": 10, "published": 1}
+        )
+        db.snapshot_canvas_synced(sdb)
+        sdb.execute("UPDATE canvas_assignments SET name = 'HW 1'")
+        return sdb
+
+    def stub(self, monkeypatch, **flags):
+        row = {
+            "table": "canvas_assignments",
+            "canvas_id": 7,
+            "name": "HW1",
+            "column": "name",
+            "baseline": "HW1",
+            "current": "HW 1",
+            "live": "Homework 1",
+            **flags,
+        }
+        monkeypatch.setattr(
+            "cass.db.canvas_preview",
+            lambda conn, pending: {"ok": True, "changes": [row]},
+        )
+        apply_mock = MagicMock(return_value={"ok": True, "results": []})
+        monkeypatch.setattr("cass.db.canvas_apply", apply_mock)
+        return apply_mock
+
+    def test_yes_holds_back_conflict(self, renamed, monkeypatch):
+        apply_mock = self.stub(monkeypatch, conflict=True)
+        result = runner.invoke(app, ["push", "--yes"])
+        assert result.exit_code == 1
+        assert "Held back 1 change(s)" in result.stderr
+        apply_mock.assert_not_called()
+        assert db.get_pending_changes(renamed)
+
+    def test_overwrite_conflicts_flag_pushes(self, renamed, monkeypatch):
+        apply_mock = self.stub(monkeypatch, conflict=True)
+        result = runner.invoke(app, ["push", "--yes", "--overwrite-conflicts"])
+        assert result.exit_code == 0
+        pushed = apply_mock.call_args.args[1]
+        assert pushed["canvas_assignments"]["7"]["name"]["current"] == "HW 1"
+
+    def test_prompt_approves_conflict(self, renamed, monkeypatch):
+        apply_mock = self.stub(monkeypatch, conflict=True)
+        monkeypatch.setattr("cass.cli.prompts._stdin_is_tty", lambda: True)
+        result = runner.invoke(app, ["push"], input="y\ny\n")
+        assert result.exit_code == 0
+        apply_mock.assert_called_once()
+
+    def test_prompt_declines_conflict(self, renamed, monkeypatch):
+        apply_mock = self.stub(monkeypatch, conflict=True)
+        monkeypatch.setattr("cass.cli.prompts._stdin_is_tty", lambda: True)
+        result = runner.invoke(app, ["push"], input="n\n")
+        assert result.exit_code == 1
+        apply_mock.assert_not_called()
+
+    def test_yes_holds_back_over_points(self, renamed, monkeypatch):
+        apply_mock = self.stub(monkeypatch, over_points=True, points_possible=10)
+        result = runner.invoke(app, ["push", "--yes"])
+        assert result.exit_code == 1
+        assert "points possible" in result.stderr
+        apply_mock.assert_not_called()
+
+        result = runner.invoke(app, ["push", "--yes", "--allow-over-points"])
+        assert result.exit_code == 0
+        apply_mock.assert_called_once()
