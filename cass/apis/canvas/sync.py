@@ -349,6 +349,8 @@ def push_assignments(
     Before sending a points change, checks that the assignment is not a quiz
     students have finished (commitment C2). A refused assignment is not updated
     and gets a failed result, as does one whose new points Canvas did not keep.
+    In that case Canvas may have applied the other fields sent with the points,
+    and the error names them.
 
     Args:
         client: Authenticated Canvas API client.
@@ -366,15 +368,22 @@ def push_assignments(
                 )
             updated = client.update_assignment(canvas_id, **kwargs)
             if "points_possible" in kwargs:
-                _require_points_kept(updated, kwargs["points_possible"])
+                _require_points_kept(updated, kwargs)
             results.append({"canvas_id": canvas_id, "ok": True})
         except Exception as e:
             results.append({"canvas_id": canvas_id, "ok": False, "error": str(e)})
     return results
 
 
-def _require_points_kept(updated: CanvasAssignmentResponse, sent: object) -> None:
+def _require_points_kept(
+    updated: CanvasAssignmentResponse, sent: dict[str, object]
+) -> None:
     """Raise if Canvas kept other points, as it does on a published quiz."""
-    sent_points = float(cast(float | str | None, sent) or 0)
-    if (updated.points_possible or 0.0) != sent_points:
-        raise RuntimeError(f"Canvas kept points_possible at {updated.points_possible}")
+    sent_points = float(cast(float | str | None, sent["points_possible"]) or 0)
+    if (updated.points_possible or 0.0) == sent_points:
+        return
+    message = f"Canvas kept points_possible at {updated.points_possible}"
+    other_fields = ", ".join(name for name in sent if name != "points_possible")
+    if other_fields:
+        message += f"; the other fields sent ({other_fields}) may have been applied"
+    raise RuntimeError(message)

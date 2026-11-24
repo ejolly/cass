@@ -4,6 +4,7 @@ from __future__ import annotations
 
 __docformat__ = "google"
 
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from ..apis.canvas.attempts import (
@@ -81,7 +82,8 @@ def sync_assignments(
     differ; its group and submission types are left alone. A spec without
     ``published`` leaves the live assignment as it is, and a new assignment
     stays unpublished. Writes always go through ``client``; dry runs pass a
-    dry-run client.
+    dry-run client. Every spec is compared before anything is sent; a create or
+    update that then fails does not stop the rest.
 
     Args:
         group_ids: Canvas group ids by lower-cased name, from
@@ -95,51 +97,99 @@ def sync_assignments(
         finished student attempts, or whose attempts cannot be checked, gets a
         ``refuse`` row for a points change, which is not sent; its other
         changes still are (commitment C2).
+
+    Raises:
+        RuntimeError: A due date cannot be parsed. No assignment was written.
     """
     live_by_name = {a.name.lower(): a for a in client.list_assignments()}
+    plans = [
+        _plan_assignment(client, spec, live_by_name.get(spec.name.lower()), tz)
+        for spec in specs
+    ]
     rows: list[tuple[str, str, str]] = []
-    for spec in specs:
-        wanted_due = parse_when(spec.due_at, tz)
-        live = live_by_name.get(spec.name.lower())
-        if live is None:
+    for plan in plans:
+        spec = plan.spec
+        if plan.live is None:
+            try:
+                new_assignment = _create_assignment(client, plan, group_ids)
+            except Exception as e:
+                rows.append(("fail", "assignment", f"{spec.name} (create: {e})"))
+                continue
             rows.append(("create", "assignment", spec.name))
-            group_id = group_ids.get(spec.group.lower()) if spec.group else None
-            new_assignment = client.create_assignment(
-                spec.name,
-                points_possible=spec.points,
-                due_at=wanted_due or None,
-                submission_types=spec.submission_types,
-                published=bool(spec.published),
-                assignment_group_id=group_id,
-            )
             if created is not None:
                 created.append(new_assignment)
             continue
-        changes: dict[str, object] = {}
-        if spec.points and (live.points_possible or 0.0) != spec.points:
-            changes["points_possible"] = spec.points
-        if wanted_due and not same_instant(live.due_at, wanted_due):
-            changes["due_at"] = wanted_due
-        if spec.published is not None and live.published != spec.published:
-            changes["published"] = spec.published
-        refusal = None
-        if "points_possible" in changes:
-            refusal = _points_refusal(client, live)
-        if refusal is not None:
-            detail = f"points_possible: {refusal}; change it in the Canvas web app"
+        if plan.refusal is not None:
+            detail = f"points_possible: {plan.refusal}; change it in the Canvas web app"
             rows.append(("refuse", "assignment", f"{spec.name} ({detail})"))
-            del changes["points_possible"]
-        if not changes:
-            if refusal is None:
+        if not plan.changes:
+            if plan.refusal is None:
                 rows.append(("skip", "assignment", spec.name))
             continue
-        (result,) = push_assignments(client, {live.id: changes})
+        (result,) = push_assignments(client, {plan.live.id: plan.changes})
         if not result["ok"]:
             rows.append(("fail", "assignment", f"{spec.name} ({result['error']})"))
             continue
-        detail = ", ".join(f"{k}: {v}" for k, v in changes.items())
+        detail = ", ".join(f"{k}: {v}" for k, v in plan.changes.items())
         rows.append(("update", "assignment", f"{spec.name} ({detail})"))
     return rows
+
+
+@dataclass
+class _AssignmentPlan:
+    """What sync will send for one spec.
+
+    Attributes:
+        live: The assignment to update, or None to create one.
+        due_at: The wanted due date with an offset, or empty.
+        changes: Fields to update on ``live``.
+        refusal: Why a points change is left out of ``changes``, or None.
+    """
+
+    spec: CanvasAssignmentSpec
+    live: CanvasAssignmentResponse | None
+    due_at: str
+    changes: dict[str, object] = field(default_factory=dict)
+    refusal: str | None = None
+
+
+def _plan_assignment(
+    client: CanvasClient,
+    spec: CanvasAssignmentSpec,
+    live: CanvasAssignmentResponse | None,
+    tz: str,
+) -> _AssignmentPlan:
+    """Compare a spec with its live assignment; only reads from Canvas.
+
+    Raises:
+        RuntimeError: The spec's due date cannot be parsed.
+    """
+    plan = _AssignmentPlan(spec, live, parse_when(spec.due_at, tz))
+    if live is None:
+        return plan
+    if spec.points and (live.points_possible or 0.0) != spec.points:
+        plan.refusal = _points_refusal(client, live)
+        if plan.refusal is None:
+            plan.changes["points_possible"] = spec.points
+    if plan.due_at and not same_instant(live.due_at, plan.due_at):
+        plan.changes["due_at"] = plan.due_at
+    if spec.published is not None and live.published != spec.published:
+        plan.changes["published"] = spec.published
+    return plan
+
+
+def _create_assignment(
+    client: CanvasClient, plan: _AssignmentPlan, group_ids: dict[str, int]
+) -> CanvasAssignmentResponse:
+    spec = plan.spec
+    return client.create_assignment(
+        spec.name,
+        points_possible=spec.points,
+        due_at=plan.due_at or None,
+        submission_types=spec.submission_types,
+        published=bool(spec.published),
+        assignment_group_id=group_ids.get(spec.group.lower()) if spec.group else None,
+    )
 
 
 def _points_refusal(

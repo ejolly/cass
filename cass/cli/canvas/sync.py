@@ -4,6 +4,8 @@ from __future__ import annotations
 
 __docformat__ = "google"
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
 import typer
@@ -60,7 +62,6 @@ def sync(
     Undeclared items are reported as extra; --prune removes them.
     """
     from rich.markup import escape
-    from rich.table import Table
 
     from ...actions.assignments import (
         MissingAssignmentGroupsError,
@@ -95,9 +96,9 @@ def sync(
         q.group for q in quiz_specs if q.group
     ]
 
-    with _common.client(dry_run=dry_run) as c:
+    actions: list[tuple[str, str, str]] = []  # (action, type, name)
+    with _list_actions_on_error(actions, dry_run), _common.client(dry_run=dry_run) as c:
         tz = c.time_zone
-        actions: list[tuple[str, str, str]] = []  # (action, type, name)
         module_ids: dict[str, int] = {}
         created_assignments: list[CanvasAssignmentResponse] = []
         created_quizzes: list[CanvasQuiz] = []
@@ -159,22 +160,62 @@ def sync(
             if dry_run:
                 raise
             raise ModuleItemLookupError(
-                f"{exc}\nModules, assignments and quizzes above were already "
-                "applied; no module item changes were sent."
+                f"{exc}\nExcept any that failed, module, assignment and quiz changes "
+                "were already applied; no module item changes were sent."
             ) from exc
         if items_plan is not None:
-            actions.extend(items_plan.rows)
             # A ModuleItemApplyError lists the steps it applied; let it propagate.
             apply_sync_items(c, items_plan)
+            actions.extend(items_plan.rows)
 
         plan_client = c
 
     # --- Display results ---
-    table = Table(
-        title="Canvas Sync" + (" (dry run)" if dry_run else ""),
-        show_edge=False,
-        pad_edge=False,
-    )
+    _print_actions(actions, "Canvas Sync" + (" (dry run)" if dry_run else ""))
+
+    creates = sum(1 for a, _, _ in actions if a == "create")
+    updates = sum(1 for a, _, _ in actions if a == "update")
+    skips = sum(1 for a, _, _ in actions if a == "skip")
+    summary = f"  {creates} create, {updates} update, {skips} skip"
+    if items_plan is not None:
+        summary += "".join(
+            f", {count} {action}" for action, count in items_plan.counts.items()
+        )
+    console.print(summary)
+
+    if dry_run:
+        _common.print_plan(plan_client)
+
+    refused = sum(1 for a, _, _ in actions if a == "refuse")
+    failed = sum(1 for a, _, _ in actions if a == "fail")
+    item_changes = items_plan is not None and items_plan.has_changes
+    if dry_run and (creates or updates or item_changes):
+        err_console.print(
+            "\n  [yellow]Dry run — no changes made. Use --apply to sync.[/yellow]"
+        )
+    elif not dry_run and not (refused or failed):
+        console.print("\n  [green]Sync complete.[/green]")
+
+    if refused:
+        err_console.print(
+            f"  [red]Refused {refused} change(s) to quizzes or their assignments, "
+            "because students have finished the quiz or their attempts could not "
+            "be checked; make them in the Canvas web app.[/red]",
+            soft_wrap=True,
+        )
+    if failed:
+        err_console.print(
+            f"  [red]{failed} assignment change(s) failed; see above.[/red]"
+        )
+    if refused or failed:
+        raise typer.Exit(code=1)
+
+
+def _print_actions(actions: list[tuple[str, str, str]], title: str) -> None:
+    from rich.markup import escape
+    from rich.table import Table
+
+    table = Table(title=title, show_edge=False, pad_edge=False)
     table.add_column("Action")
     table.add_column("Type")
     table.add_column("Name")
@@ -190,39 +231,20 @@ def sync(
     console.print(table)
     console.print()
 
-    creates = sum(1 for a, _, _ in actions if a == "create")
-    updates = sum(1 for a, _, _ in actions if a == "update")
-    skips = sum(1 for a, _, _ in actions if a == "skip")
-    summary = f"  {creates} create, {updates} update, {skips} skip"
-    if items_plan is not None:
-        summary += "".join(
-            f", {count} {action}" for action, count in items_plan.counts.items()
-        )
-    console.print(summary)
 
-    if dry_run:
-        _common.print_plan(plan_client)
-
-    item_changes = items_plan is not None and items_plan.has_changes
-    if dry_run and (creates or updates or item_changes):
-        err_console.print(
-            "\n  [yellow]Dry run — no changes made. Use --apply to sync.[/yellow]"
-        )
-    elif not dry_run:
-        console.print("\n  [green]Sync complete.[/green]")
-
-    refused = sum(1 for a, _, _ in actions if a == "refuse")
-    if refused:
-        err_console.print(
-            f"  [red]Refused {refused} change(s) to quizzes or their assignments, "
-            "because students have finished the quiz or their attempts could not "
-            "be checked; make them in the Canvas web app.[/red]",
-            soft_wrap=True,
-        )
-    failed = sum(1 for a, _, _ in actions if a == "fail")
-    if failed:
-        err_console.print(
-            f"  [red]{failed} assignment update(s) failed; see above.[/red]"
-        )
-    if refused or failed:
-        raise typer.Exit(code=1)
+@contextmanager
+def _list_actions_on_error(
+    actions: list[tuple[str, str, str]], dry_run: bool
+) -> Iterator[None]:
+    """Print the actions taken so far when an error stops ``sync --apply``."""
+    try:
+        yield
+    except Exception:
+        if actions and not dry_run:
+            _print_actions(actions, "Canvas Sync (stopped by an error)")
+            err_console.print(
+                "  [red]Stopped by an error. The rows above are the results in the "
+                "steps that finished.[/red]",
+                soft_wrap=True,
+            )
+        raise

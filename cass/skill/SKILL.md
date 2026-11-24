@@ -12,7 +12,7 @@ cass is a CLI over the Canvas REST API for one course, set by `cass.toml`. `--he
 
 1. Run `cass status` first. It shows the config path, course, auth source and pending local edits. `cass status --json` gives the same thing as one object.
 2. To target another course, pass `--config PATH` before the subcommand, as in `cass --config ../f25/cass.toml canvas quizzes list`, or set `CASS_CONFIG`. Credentials and `cass.db` resolve beside that file.
-3. On an error, rerun with `cass --debug …` for the traceback. Exit 1 means the command failed, or that `cass push` or `cass canvas sync` held back or refused part of the work and did the rest. Exit 2 means a usage error. `cass push` exits 0 when Canvas rejects an update, so read its stderr.
+3. On an error, rerun with `cass --debug …` for the traceback. Exit 1 means the command failed, or that `cass push` or `cass canvas sync` held back, refused or failed part of the work and did the rest. Exit 2 means a usage error.
 
 ## Safety rules
 

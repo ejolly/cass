@@ -386,3 +386,65 @@ def test_markup_in_item_titles_prints_literally(sync_course):
 
     assert result.exit_code == 0, result.output
     assert "SubHeader '[bold]x[/bold] [/b]'" in result.stdout
+
+
+def test_sync_exits_1_on_failed_update(sync_course):
+    write_toml('\n[[canvas.assignments]]\nname = "HW1"\npublished = false\n')
+    sync_course.fail_writes.add("/courses/1/assignments/7")
+
+    result = runner.invoke(app, ["canvas", "sync", "--apply"])
+
+    assert result.exit_code == 1, result.output
+    row_index(table_rows(result.stdout), r"^fail assignment HW1 \(.*rejected")
+    assert "1 assignment change(s) failed" in result.stderr
+    assert "Sync complete." not in result.stdout
+
+
+NEW_HW2 = '\n[[canvas.assignments]]\nname = "HW2"\n'
+WEEK_2_UNPUBLISH = '\n[[canvas.modules]]\nname = "Week 2"\npublished = false\n'
+
+
+def test_failed_create_is_listed_when_its_item_is_then_missing(sync_course):
+    write_toml(
+        WEEK_2_UNPUBLISH
+        + '\n[[canvas.modules.items]]\ntype = "Assignment"\ntitle = "HW2"\n'
+        + NEW_HW2
+    )
+    sync_course.fail_writes.add("/courses/1/assignments")
+
+    result = runner.invoke(app, ["canvas", "sync", "--apply"])
+
+    assert isinstance(result.exception, ModuleItemLookupError)
+    rows = table_rows(result.stdout)
+    row_index(rows, r"^update module Week 2")
+    row_index(rows, r"^fail assignment HW2 \(create: .*rejected")
+    assert "in the steps that finished" in result.stderr
+    assert "Sync complete." not in result.stdout
+    assert item_or_file_writes(sync_course) == []
+
+
+def test_bad_due_date_lists_sent_modules_and_sends_no_assignment(sync_course):
+    write_toml(
+        WEEK_2_UNPUBLISH
+        + NEW_HW2
+        + '\n[[canvas.assignments]]\nname = "HW1"\ndue_at = "next Friday"\n'
+    )
+
+    result = runner.invoke(app, ["canvas", "sync", "--apply"])
+
+    assert "Unrecognized time" in str(result.exception)
+    row_index(table_rows(result.stdout), r"^update module Week 2")
+    sent = [(r.method, r.url.path) for r in sync_course.writes()]
+    assert sent == [("PUT", f"{API}/courses/1/modules/6")]
+
+
+def test_item_rows_not_listed_when_applying_items_fails(sync_course):
+    write_toml(NEW_HW2 + WEEK_1_ITEMS)
+    sync_course.fail_writes.add("/courses/1/modules/5/items")
+
+    result = runner.invoke(app, ["canvas", "sync", "--apply"])
+
+    assert isinstance(result.exception, ModuleItemApplyError)
+    rows = table_rows(result.stdout)
+    row_index(rows, r"^create assignment HW2")
+    assert not any(row.startswith("create item") for row in rows)

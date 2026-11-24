@@ -467,6 +467,7 @@ class TestPush:
             assert text in result.stderr
             assert text not in result.stdout
         assert "Pushed 0 grades/updates" in result.stdout
+        assert result.exit_code == 1
 
 
 class TestRevert:
@@ -2402,13 +2403,15 @@ class TestAssignmentRoutesToAttemptedQuiz:
         assert result.exit_code == 1, result.output
         assert "refuse" in result.stdout
         assert "Refused 1 change(s) to quizzes or their assignments" in result.stderr
+        assert "Sync complete." not in result.stdout
         assert canvas["writes"] == []
 
     def test_sync_reports_points_canvas_kept(self, canvas):
         result = runner.invoke(app, ["canvas", "sync", "--apply"])
         assert result.exit_code == 1, result.output
         assert "Canvas kept points_possible at" in " ".join(result.stdout.split())
-        assert "1 assignment update(s) failed" in result.stderr
+        assert "1 assignment change(s) failed" in result.stderr
+        assert "Sync complete." not in result.stdout
         assert canvas["writes"] == ["PUT /assignments/7"]
 
     def test_sync_dry_run_without_attempts(self, canvas):

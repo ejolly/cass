@@ -577,6 +577,7 @@ def push(
     Values changed on Canvas since your last pull, grades above an assignment's
     points possible, and cleared grades are held back unless you approve them
     at the prompt or pass the matching flag. Held-back changes stay pending.
+    Exits 1 if any change was held back or failed.
     """
     from .. import db
     from ..actions.status import count_pending
@@ -631,7 +632,7 @@ def push(
 
     result = db.canvas_apply(conn, to_push)
     _render_push_results(cast(list[dict[str, object]], result.get("results", [])))
-    if held:
+    if held or not result["ok"]:
         raise typer.Exit(code=1)
 
 

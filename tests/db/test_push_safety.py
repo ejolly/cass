@@ -811,7 +811,8 @@ class TestQuizPoints:
             {
                 "canvas_id": 7,
                 "ok": False,
-                "error": f"Canvas kept points_possible at {kept}",
+                "error": f"Canvas kept points_possible at {kept}; the other "
+                "fields sent (name) may have been applied",
             }
         ]
         assert db.get_pending_changes(edited)

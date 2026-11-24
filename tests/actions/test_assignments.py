@@ -21,6 +21,7 @@ from cass.apis.canvas.attempts import (
     QuizHasAttemptsError,
     refuse_if_assignment_attempted,
 )
+from cass.apis.canvas.auth import CanvasAuthError
 from cass.apis.canvas.schema import CanvasAssignmentGroup, CanvasAssignmentResponse
 
 TZ = "America/Los_Angeles"
@@ -243,6 +244,94 @@ def test_reverted_points_reported():
     assert rows == [
         ("fail", "assignment", "Quiz 1 (Canvas kept points_possible at 5.0)")
     ]
+
+
+def test_kept_points_row_names_other_sent_fields():
+    client = client_with(quiz_assignment())
+    client.update_assignment.side_effect = None
+    client.update_assignment.return_value = quiz_assignment()
+    specs = [CanvasAssignmentSpec(name="Quiz 1", points=10, published=True)]
+    ((action, _, detail),) = sync_assignments(client, specs, {}, TZ)
+    assert action == "fail"
+    assert detail == (
+        "Quiz 1 (Canvas kept points_possible at 5.0; the other fields sent "
+        "(published) may have been applied)"
+    )
+
+
+@pytest.mark.parametrize("last_is_live", [True, False], ids=["update", "create"])
+def test_bad_due_date_stops_before_any_write(last_is_live):
+    client = client_with(
+        CanvasAssignmentResponse(id=1, name="HW1", points_possible=5),
+        *([CanvasAssignmentResponse(id=2, name="Last")] if last_is_live else []),
+    )
+    specs = [
+        CanvasAssignmentSpec(name="HW1", points=10),
+        CanvasAssignmentSpec(name="New"),
+        CanvasAssignmentSpec(name="Last", due_at="next Friday"),
+    ]
+    with pytest.raises(RuntimeError, match="Unrecognized time"):
+        sync_assignments(client, specs, {}, TZ)
+    client.update_assignment.assert_not_called()
+    client.create_assignment.assert_not_called()
+
+
+def test_auth_error_while_checking_attempts_stops_before_any_write():
+    client = client_with(
+        CanvasAssignmentResponse(id=1, name="HW1", points_possible=5),
+        quiz_assignment(id=2),
+    )
+    client.list_students.side_effect = CanvasAuthError("expired")
+    specs = [
+        CanvasAssignmentSpec(name="HW1", points=10),
+        CanvasAssignmentSpec(name="Quiz 1", points=10),
+    ]
+    with pytest.raises(CanvasAuthError):
+        sync_assignments(client, specs, {}, TZ)
+    client.update_assignment.assert_not_called()
+
+
+def test_failed_update_is_reported():
+    client = client_with(
+        CanvasAssignmentResponse(id=1, name="HW1", points_possible=5),
+        CanvasAssignmentResponse(id=2, name="HW2", points_possible=5),
+    )
+    send = client.update_assignment.side_effect
+
+    def expire_on_second(id: int, **fields: Any) -> CanvasAssignmentResponse:
+        if id == 2:
+            raise CanvasAuthError("expired")
+        return send(id, **fields)
+
+    client.update_assignment.side_effect = expire_on_second
+    specs = [
+        CanvasAssignmentSpec(name="HW1", points=10),
+        CanvasAssignmentSpec(name="HW2", points=10),
+    ]
+    assert sync_assignments(client, specs, {}, TZ) == [
+        ("update", "assignment", "HW1 (points_possible: 10)"),
+        ("fail", "assignment", "HW2 (expired)"),
+    ]
+
+
+def test_failed_create_is_reported_and_the_rest_sent():
+    client = client_with(CanvasAssignmentResponse(id=1, name="HW1", points_possible=5))
+    client.create_assignment.side_effect = [
+        CanvasAuthError("expired"),
+        CanvasAssignmentResponse(id=9, name="New 2"),
+    ]
+    specs = [
+        CanvasAssignmentSpec(name="New 1"),
+        CanvasAssignmentSpec(name="HW1", points=10),
+        CanvasAssignmentSpec(name="New 2"),
+    ]
+    created: list[CanvasAssignmentResponse] = []
+    assert sync_assignments(client, specs, {}, TZ, created=created) == [
+        ("fail", "assignment", "New 1 (create: expired)"),
+        ("update", "assignment", "HW1 (points_possible: 10)"),
+        ("create", "assignment", "New 2"),
+    ]
+    assert [a.name for a in created] == ["New 2"]
 
 
 def test_group_delete_checks_every_assignment():

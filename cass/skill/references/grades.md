@@ -32,6 +32,6 @@
 
 With 0 points possible, percentages and letters are held back, and so is a change between complete and incomplete: the user can clear the grade, push that, then enter the new one. A grade must fit the live points and any pending points edit.
 
-- Held-back changes stay pending and the rest is sent. Push exits 1 if it held anything back; a dry run exits 0. It exits 0 when only Canvas updates fail; those print `✗` on stderr and stay pending. A failed update may be partly applied, for example when waiting for Canvas timed out, so check Canvas before retrying. When a post to students fails, the grades are already pushed.
+- Held-back changes stay pending and the rest is sent. Push exits 1 if it held anything back or any Canvas update failed; a dry run exits 0. Failed updates print `✗` on stderr and stay pending. A failed update may be partly applied, for example when waiting for Canvas timed out or when Canvas kept an assignment's points but took its other fields, so check Canvas before retrying. When a post to students fails, the grades are already pushed.
 - cass rechecks quiz attempts just before sending points. A refusal then is a failed update.
 - **Manual posting:** after pushing grades to an assignment that posts manually (as of the last pull), cass posts every graded submission on it, not only the pushed ones. The dry run doesn't show this. Tell the user before pushing.
