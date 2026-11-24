@@ -124,8 +124,9 @@ def _kept_grade_notice(
     if canvas_grade is None:
         return (
             f"{name}: kept your local grade, which may be unpushed; Canvas lists no "
-            "grade to compare it with. After a full pull it is pending: push or "
-            "revert it with `cass push` or `cass revert`."
+            "grade to compare it with. After a full pull it is pending: `cass push` "
+            "cannot send it while Canvas lists none. Only `cass revert`, which deletes "
+            "it, clears it, so record the grade or run `cass backup` first."
         )
     on_canvas = f"has {canvas_grade}" if canvas_grade else "has no grade"
     return (

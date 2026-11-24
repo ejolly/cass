@@ -753,6 +753,10 @@ class TestRemovalBeforeBaselines:
             assert step == "kept"
             assert "Bob Jones — HW 02" in notice
             assert "may be unpushed" in notice
+            assert "cannot send it while Canvas lists none" in notice
+            assert "`cass revert`, which deletes it" in notice
+            assert "record the grade or run `cass backup` first" in notice
+            assert "cass push` or" not in notice
             assert db.get_meta("grade_baselines") == "1"
             assert db.load_canvas_student_ids() == {100, 200}
             assert db.load_canvas_assignment_ids() == [42, 43]
