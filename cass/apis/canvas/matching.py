@@ -11,7 +11,11 @@ from datetime import datetime
 
 from ...db.schema import CanvasSubmission
 from .client import CanvasClient, get_token, save_token
-from .schema import CanvasAssignmentResponse, CanvasStudentResponse
+from .schema import (
+    CURRENT_STUDENT_STATES,
+    CanvasAssignmentResponse,
+    CanvasStudentResponse,
+)
 
 # Re-export for backwards compatibility (used by cli.py init)
 __all__ = [
@@ -63,7 +67,7 @@ def fetch_students_with_sections(
         students = c.list_students()
 
         # Fetch users with enrollment data to get course_section_id
-        users = c.list_users(enrollment_type="student")
+        users = c.list_users(enrollment_type="student", states=CURRENT_STUDENT_STATES)
         user_section: dict[int, int] = {}
         for u in users:
             for e in u.enrollments:

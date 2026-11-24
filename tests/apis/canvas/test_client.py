@@ -1944,6 +1944,19 @@ class TestEnrollmentsAndSubmissions:
             ("state[]", "deleted"),
         ]
 
+    def test_list_students_requests_active_and_invited(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data=[])
+        client.list_students()
+        params = self._params(transport.requests[0])
+        assert ("enrollment_type[]", "student") in params
+        assert ("enrollment_state[]", "active") in params
+        assert ("enrollment_state[]", "invited") in params
+        assert [v for k, v in params if k == "enrollment_state[]"] == [
+            "active",
+            "invited",
+        ]
+
     def test_list_users_enrollment_states(self, mock_client):
         client, transport = mock_client
         transport.add(json_data=[])

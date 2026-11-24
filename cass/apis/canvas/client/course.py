@@ -9,6 +9,7 @@ from collections.abc import Sequence
 import msgspec
 
 from ..schema import (
+    CURRENT_STUDENT_STATES,
     CanvasCourse,
     CanvasEnrollment,
     CanvasGradingStandard,
@@ -55,14 +56,17 @@ class CourseMixin(BaseClient):
         return msgspec.convert(data, list[CanvasUser], strict=False)
 
     def list_students(self) -> list[CanvasStudentResponse]:
-        """List students enrolled in the course.
+        """List current students: active and invited enrollments.
 
         Returns:
             Students sorted by Canvas enrollment order.
         """
-        data = self._get_paginated(
-            self._course("/users?enrollment_type[]=student&include[]=email")
-        )
+        params: list[tuple[str, object]] = [
+            ("enrollment_type[]", "student"),
+            ("include[]", "email"),
+        ]
+        params.extend(("enrollment_state[]", state) for state in CURRENT_STUDENT_STATES)
+        data = self.get_all(self._course("/users"), params)
         return msgspec.convert(data, list[CanvasStudentResponse], strict=False)
 
     def list_sections(self) -> list[CanvasSection]:

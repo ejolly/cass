@@ -6,6 +6,9 @@ __docformat__ = "google"
 
 import msgspec
 
+# Enrollment states of a current student (see "Student" in .coherence/domain.md).
+CURRENT_STUDENT_STATES = ("active", "invited")
+
 # --- Course ---
 
 

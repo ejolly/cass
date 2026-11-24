@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 import msgspec
 
+from ..apis.canvas.schema import CURRENT_STUDENT_STATES
 from ..apis.canvas.times import check_when, parse_when
 
 if TYPE_CHECKING:
@@ -42,7 +43,6 @@ ALL_ENROLLMENT_STATES = (
     "rejected",
     "deleted",
 )
-CURRENT_STUDENT_STATES = ("active", "invited")
 
 
 @dataclass

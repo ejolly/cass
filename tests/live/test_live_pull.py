@@ -112,3 +112,14 @@ def test_pull_edit_push_round_trip(
         assert cleared.entered_grade is None
     finally:
         practice.delete_assignment(assignment.id)
+
+
+def test_roster_matches_enrollments(real_course: CanvasClient):
+    roster_ids = {student.id for student in real_course.list_students()}
+    enrollment_ids = {
+        enrollment.user_id
+        for enrollment in real_course.list_enrollments(
+            states=("active", "invited"), include_scores=False
+        )
+    }
+    assert roster_ids == enrollment_ids
