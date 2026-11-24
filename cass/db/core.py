@@ -28,6 +28,7 @@ from .schema import (
 
 DB_FILENAME = "cass.db"
 _SCHEMA_VERSION = 16
+GRADE_BASELINES_KEY = "grade_baselines"  # meta key, set by the first full pull
 _SAFE_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 # Tables excluded from the viewer entirely
@@ -463,6 +464,72 @@ def save_canvas_grades(grades: list[CanvasGrade]) -> int:
         replace=True,
     )
     return len(grades)
+
+
+def save_pulled_grades(grades: list[CanvasGrade]) -> list[tuple[int, int]]:
+    """Store grades pulled from Canvas as working values and as baselines.
+
+    Baselines written before pull stored grades may hold grades Canvas never
+    had. Until a full pull sets the ``grade_baselines`` meta key, a local grade
+    that differs from Canvas is therefore kept and loses its baseline, which
+    makes it a pending conflict. Otherwise the Canvas value wins.
+
+    Returns:
+        ``(canvas_user_id, canvas_assignment_id)`` of each local grade kept.
+    """
+    sdb = get_db()
+    local_grades: dict[tuple[int, int], str] = {}
+    if get_meta(GRADE_BASELINES_KEY, sdb) is None:
+        local_grades = {
+            (g.canvas_user_id, g.canvas_assignment_id): g.posted_grade
+            for g in load_canvas_grades()
+        }
+    kept: list[tuple[int, int]] = []
+    to_store: list[CanvasGrade] = []
+    for grade in grades:
+        key = (grade.canvas_user_id, grade.canvas_assignment_id)
+        local_grade = local_grades.get(key, "")
+        if local_grade and local_grade != grade.posted_grade:
+            kept.append(key)
+        else:
+            to_store.append(grade)
+
+    now = time.time()
+    with _connection(sdb) as transaction:
+        transaction.executemany(
+            """
+            INSERT OR REPLACE INTO canvas_grades
+                (canvas_user_id, canvas_assignment_id, score, posted_grade, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    g.canvas_user_id,
+                    g.canvas_assignment_id,
+                    g.score,
+                    g.posted_grade,
+                    now,
+                )
+                for g in to_store
+            ],
+        )
+        transaction.executemany(
+            """
+            INSERT OR REPLACE INTO _canvas_grades_synced
+                (canvas_user_id, canvas_assignment_id, posted_grade)
+            VALUES (?, ?, ?)
+            """,
+            [
+                (g.canvas_user_id, g.canvas_assignment_id, g.posted_grade)
+                for g in to_store
+            ],
+        )
+        transaction.executemany(
+            "DELETE FROM _canvas_grades_synced "
+            "WHERE canvas_user_id = ? AND canvas_assignment_id = ?",
+            kept,
+        )
+    return kept
 
 
 def load_canvas_grades(canvas_assignment_id: int | None = None) -> list[CanvasGrade]:

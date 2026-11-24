@@ -71,7 +71,7 @@ cass canvas quizzes responses "Survey 1" --all-attempts --csv responses.csv
 cass canvas quizzes responses "Survey 1" --wide --csv report.csv              # Canvas's report unchanged
 ```
 
-- The report takes about 30 seconds, and it works on concluded courses. `cass pull --submissions` syncs scores only, not answers.
+- The report takes about 30 seconds, and it works on concluded courses. `cass pull --submissions` syncs grades and scores, not answers.
 - The long CSV has one row per student, attempt and question, with the columns `student`, `user_id`, `sis_id`, `section`, `attempt`, `submitted_at`, `due_at` (the student's own), `late`, `started_at`, `auto_submitted`, `question_id`, `position`, `question`, `answer` and `score`. Times are ISO 8601 in course time.
 - `auto_submitted = true` means Canvas closed the attempt itself: a time limit ran out, or the course concluded on an attempt the student never submitted. The flag alone doesn't tell them apart. A timed-out attempt holds real answers; keep it. An attempt stamped at the term end is the conclusion case and is not a real submission.
 - The Test Student never appears. Calculated questions don't show the randomized values the student saw.

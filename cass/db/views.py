@@ -92,6 +92,7 @@ def build_canvas_gradebook_matrix(
     for student in data.students:
         row = [student.sortable_name]
         for assignment in data.assignments:
-            row.append(data.grades.get((student.canvas_id, assignment.canvas_id), "-"))
+            grade = data.grades.get((student.canvas_id, assignment.canvas_id))
+            row.append(grade or "-")
         rows.append(row)
     return headers, rows

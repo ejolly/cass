@@ -117,7 +117,7 @@ file = "quizzes/09-25-participation.toml"   # relative to cass.toml
 
 ## Downloading responses
 
-`cass canvas quizzes responses` downloads every student's answers to a classic quiz or survey. `cass pull --submissions` syncs scores only; use this when you need the answers themselves, for example to analyze a survey.
+`cass canvas quizzes responses` downloads every student's answers to a classic quiz or survey. `cass pull --submissions` syncs grades and scores only; use this when you need the answers themselves, for example to analyze a survey.
 
 ```bash
 cass canvas quizzes responses "Survey 1" --csv responses.csv                  # latest attempt per student

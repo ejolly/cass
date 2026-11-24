@@ -12,7 +12,12 @@ import sqlite_utils
 
 from cass.actions.assignments import push_new_assignment, validate_assignment_fields
 from cass.apis.canvas.schema import CanvasAssignmentGroup, CanvasAssignmentResponse
-from cass.db import create_local_assignment, replace_local_id
+from cass.db import (
+    create_local_assignment,
+    get_pending_changes,
+    replace_local_id,
+    update_cell,
+)
 
 
 @pytest.fixture
@@ -34,6 +39,15 @@ def ca_conn() -> sqlite_utils.Database:
         "INSERT INTO canvas_assignments VALUES "
         "(101, 'Homework 1', 10.0, NULL, true, 'Assignments', false),"
         "(102, 'Homework 2', 20.0, NULL, true, 'Assignments', false)"
+    )
+    conn.execute(
+        "CREATE TABLE _canvas_assignments_synced ("
+        "  canvas_id INTEGER PRIMARY KEY,"
+        "  name TEXT NOT NULL,"
+        "  points_possible DOUBLE NOT NULL DEFAULT 0,"
+        "  due_at TEXT,"
+        "  published BOOLEAN NOT NULL DEFAULT false"
+        ")"
     )
     return conn
 
@@ -230,6 +244,22 @@ class TestPushNewAssignment:
             "SELECT name FROM canvas_assignments WHERE canvas_id = ?", [500]
         ).fetchone()
         assert new[0] == "Quiz 3"
+
+    def test_edit_after_create_is_pending(self, ca_conn):
+        local_id = create_local_assignment(ca_conn, name="Quiz 3")
+        mock_client = MagicMock()
+        mock_client.create_assignment.return_value = _make_canvas_assignment(
+            500, "Quiz 3"
+        )
+        push_new_assignment(ca_conn, local_id, mock_client)
+        assert get_pending_changes(ca_conn) == {}
+
+        update_cell(
+            ca_conn, "canvas_assignments", {"canvas_id": 500}, "name", "Quiz 3b"
+        )
+        assert get_pending_changes(ca_conn)["canvas_assignments"]["500"] == {
+            "name": {"baseline": "Quiz 3", "current": "Quiz 3b"}
+        }
 
     def test_push_resolves_group_name_to_id(self, ca_conn):
         local_id = create_local_assignment(

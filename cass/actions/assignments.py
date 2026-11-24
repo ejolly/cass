@@ -13,6 +13,7 @@ from ..db.assignments import (
     get_local_assignment,
     replace_local_id,
 )
+from ..db.sync import mark_synced_assignments
 
 if TYPE_CHECKING:
     import sqlite_utils
@@ -190,6 +191,7 @@ def push_new_assignment(
             assignment_group_id=group_id,
         )
         replace_local_id(conn, local_id, created.id)
+        mark_synced_assignments(conn, [created.id])
         return {"ok": True, "canvas_id": created.id}
     except Exception as e:
         return {"ok": False, "error": str(e)}

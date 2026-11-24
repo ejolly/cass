@@ -107,6 +107,9 @@ def revert_changes(
 ) -> int:
     """Revert all pending changes in the DB by restoring baseline values.
 
+    A grade whose baseline is unknown (None) is removed; the next pull restores
+    the Canvas value.
+
     Returns:
         Number of field changes reverted.
     """
@@ -123,6 +126,9 @@ def revert_changes(
             for col_name, change in cols.items():
                 if col_name not in valid_cols:
                     continue
+                if table == "canvas_grades" and change["baseline"] is None:
+                    sdb.execute(f"DELETE FROM {table} WHERE {where_clause}", pk_values)
+                    break
                 sql_stmt = f"UPDATE {table} SET {col_name} = ? WHERE {where_clause}"
                 sdb.execute(sql_stmt, [change["baseline"], *pk_values])
     _connection(sdb).commit()

@@ -10,6 +10,8 @@ from unittest.mock import patch
 import pytest
 from nicegui import ui
 
+from cass import db
+
 
 @pytest.fixture
 def mock_grid():
@@ -197,3 +199,68 @@ class TestDetectState:
             patch("cass.viewer.nicegui_app.DB_FILENAME", "cass.db"),
         ):
             assert _detect_state() == "ready"
+
+
+class TestGradebookEdit:
+    @staticmethod
+    def edit(conn, pending, value) -> None:
+        """Send a gradebook cell edit for student 100 on assignment 42."""
+        from cass.viewer.grid import handlers
+
+        listeners = []
+        grid = SimpleNamespace(on=lambda name, handler: listeners.append(handler))
+        with (
+            patch.object(handlers, "notify"),
+            patch.object(handlers, "mark_pending_cell"),
+        ):
+            handlers.attach_gradebook_edit_handler(
+                grid,  # ty: ignore[invalid-argument-type]
+                conn,
+                pending,
+                lambda: None,
+            )
+            listeners[0](
+                SimpleNamespace(
+                    args={
+                        "colId": "_a42",
+                        "value": value,
+                        "data": {"_canvas_user_id": 100},
+                    }
+                )
+            )
+
+    @pytest.fixture
+    def pulled_conn(self, db_conn):
+        db.save_pulled_grades(
+            [
+                db.CanvasGrade(
+                    canvas_user_id=100, canvas_assignment_id=42, posted_grade="8"
+                )
+            ]
+        )
+        return db_conn
+
+    @pytest.mark.parametrize(
+        ("value", "current"), [("9", "9"), (0, "0"), ("B+", "B+"), (None, "")]
+    )
+    def test_gradebook_edit_uses_pulled_baseline(self, pulled_conn, value, current):
+        pending = {}
+        self.edit(pulled_conn, pending, value)
+
+        (row,) = pending["canvas_grades"].values()
+        assert row == {"posted_grade": {"baseline": "8", "current": current}}
+
+    def test_editing_back_to_baseline_clears_pending(self, pulled_conn):
+        pending = {}
+        self.edit(pulled_conn, pending, "9")
+        self.edit(pulled_conn, pending, "8")
+        assert pending == {}
+
+    def test_gradebook_cells_accept_letter_grades(self, pulled_conn):
+        """A number editor would turn a pulled "B+" into a cleared grade."""
+        from cass.viewer.grid import build_gradebook_view
+
+        pulled_conn["canvas_assignments"].insert({"canvas_id": 42, "name": "HW 1"})
+        _, col_defs = build_gradebook_view(pulled_conn)
+        (column,) = [c for c in col_defs if c.get("field") == "_a42"]
+        assert column["cellEditor"] == "agTextCellEditor"

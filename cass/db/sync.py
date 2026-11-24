@@ -31,7 +31,8 @@ PendingChanges = dict[str, TableChanges]
 def snapshot_canvas_synced(sdb: sqlite_utils.Database | None = None) -> None:
     """Copy current canvas tables into synced shadow tables.
 
-    Called after a successful pull to record what Canvas has.
+    This makes every local value its own baseline, so pull must not call it: an
+    unpushed edit would stop being pending.
     """
     c = sdb or get_db()
     c.execute("""
@@ -95,6 +96,8 @@ def get_pending_changes(
 
     Returns the same ``PendingChanges`` structure used by the viewer:
     ``{table: {pk_key: {column: {"baseline": ..., "current": ...}}}}``.
+    A grade whose value on Canvas was never recorded has baseline ``None``; a
+    blank one is not pending.
     """
     c = sdb or get_db()
     pending: dict[str, dict[str, dict[str, dict[str, object]]]] = {}
@@ -139,10 +142,10 @@ def get_pending_changes(
             SELECT m.canvas_user_id, m.canvas_assignment_id,
                    m.posted_grade, s.posted_grade
             FROM canvas_grades m
-            JOIN _canvas_grades_synced s
+            LEFT JOIN _canvas_grades_synced s
               ON m.canvas_user_id = s.canvas_user_id
              AND m.canvas_assignment_id = s.canvas_assignment_id
-            WHERE m.posted_grade != s.posted_grade
+            WHERE m.posted_grade != IFNULL(s.posted_grade, '')
         """).fetchall()
 
         for uid, aid, m_grade, s_grade in rows:
@@ -156,6 +159,12 @@ def get_pending_changes(
             }
 
     return pending
+
+
+def refresh_pending(pending: PendingChanges, sdb: sqlite_utils.Database) -> None:
+    """Replace the contents of ``pending`` in place with the current changes."""
+    pending.clear()
+    pending.update(get_pending_changes(sdb))
 
 
 def get_pull_blocking_tables(
@@ -216,6 +225,15 @@ def preview_assignments(
     return results
 
 
+def grade_conflicts(live: object, baseline: object) -> bool:
+    """Return whether a live Canvas grade may differ from the last pulled one.
+
+    An unknown baseline (None) always conflicts. Canvas reports an ungraded
+    submission as None, which equals a blank baseline.
+    """
+    return baseline is None or not values_equal("" if live is None else live, baseline)
+
+
 def exceeds_points(grade: object, points_possible: float | None) -> bool:
     """Return whether a grade is above the assignment's points possible.
 
@@ -270,7 +288,7 @@ def preview_grades(
                     live_val = None
                     if live_sub is not None:
                         if col == "posted_grade":
-                            live_val = live_sub.grade
+                            live_val = live_sub.entered_grade
                         elif col == "score":
                             live_val = live_sub.score
                     results.append(
@@ -283,7 +301,7 @@ def preview_grades(
                             "baseline": vals["baseline"],
                             "current": vals["current"],
                             "live": live_val,
-                            "conflict": not values_equal(live_val, vals["baseline"]),
+                            "conflict": grade_conflicts(live_val, vals["baseline"]),
                             "points_possible": points_possible,
                             "over_points": col == "posted_grade"
                             and exceeds_points(vals["current"], points_possible),

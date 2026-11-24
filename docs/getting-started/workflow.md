@@ -6,7 +6,9 @@
 cass pull
 ```
 
-Fetches students, assignments, and submissions from Canvas into `cass.db`. cass blocks a pull while you have unpushed edits; push or revert first.
+Fetches students, assignments, submissions, and grades from Canvas into `cass.db`. Grades are pulled as entered, before late deductions: points, a percentage, a letter, or complete/incomplete. cass blocks a pull while you have unpushed edits; push or revert first.
+
+If `cass.db` comes from a version that did not pull grades, the first pull keeps each local grade that differs from Canvas, names it, and leaves it pending as a conflict. Push it to overwrite Canvas, or revert it and pull again to take the Canvas grade.
 
 ## Edit
 
@@ -29,7 +31,7 @@ cass push --yes    # skip the confirmation
 
 Three kinds of change are held back unless you approve them, and stay pending until you do:
 
-- **Conflicts:** values that changed on Canvas since your last pull, for example a grade a TA entered in SpeedGrader. Pushing would overwrite them.
+- **Conflicts:** values that changed on Canvas since your last pull, for example a grade a TA entered in SpeedGrader. A grade cass has no last pulled value for also counts. Pushing would overwrite them.
 - **Grades above points possible:** usually a typo, sometimes extra credit.
 - **Cleared grades:** a grade you deleted in a cell. Pushing it removes the grade on Canvas.
 
@@ -43,7 +45,7 @@ Sends every pending change to Canvas. The viewer's **Push** button does the same
 cass revert
 ```
 
-Discards all pending local edits and restores the last pulled values.
+Discards all pending local edits and restores the last pulled values. A grade with no last pulled value is removed until the next pull.
 
 ## Status
 

@@ -30,6 +30,7 @@ from .catalog import (
 from .core import (
     DB_FILENAME,
     EXCLUDED_TABLES,
+    GRADE_BASELINES_KEY,
     connect_db,
     db_path,
     editable_canvas_tables,
@@ -49,6 +50,7 @@ from .core import (
     save_canvas_students,
     save_canvas_submissions,
     save_meta,
+    save_pulled_grades,
     upsert_canvas_grade,
 )
 from .core import _db as _db
@@ -92,6 +94,7 @@ from .sync import (
     preview_grades,
     pull_block_reason,
     purge_pending_for_assignment,
+    refresh_pending,
     snapshot_canvas_synced,
     track_change,
 )
@@ -110,6 +113,7 @@ __all__ = [
     "ENRICHED_QUERIES",
     "EXCLUDED_TABLES",
     "EXPORTABLE_TABLES",
+    "GRADE_BASELINES_KEY",
     "IMPORT_SIGNATURES",
     "PULL_GUARDED_TABLES",
     "QUERY_DATASETS",
@@ -165,6 +169,7 @@ __all__ = [
     "pull_block_reason",
     "purge_pending_for_assignment",
     "read_backup_summary",
+    "refresh_pending",
     "replace_local_id",
     "reset",
     "revert_changes",
@@ -174,6 +179,7 @@ __all__ = [
     "save_canvas_students",
     "save_canvas_submissions",
     "save_meta",
+    "save_pulled_grades",
     "snapshot_canvas_synced",
     "sql",
     "track_change",

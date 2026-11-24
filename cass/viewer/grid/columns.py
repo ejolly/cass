@@ -283,7 +283,8 @@ def build_gradebook_view(
             "filter": False,
             "resizable": True,
             "editable": True,
-            "cellEditor": "agNumberCellEditor",
+            # Grades may be letters, percentages, or complete/incomplete.
+            "cellEditor": "agTextCellEditor",
             "headerTooltip": f"{assignment.name} — {subtitle}",
             "wrapHeaderText": True,
             "autoHeaderHeight": True,

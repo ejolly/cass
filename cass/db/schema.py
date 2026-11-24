@@ -89,6 +89,7 @@ class CanvasSubmission(msgspec.Struct):
     lateness_seconds: int = 0
     score: float | None = None
     workflow_state: str = ""
+    entered_grade: str = ""  # stored in canvas_grades, not canvas_submissions
 
 
 class CanvasGrade(msgspec.Struct):

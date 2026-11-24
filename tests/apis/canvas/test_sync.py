@@ -180,7 +180,7 @@ def _make_submission(
     score: float | None = None,
 ) -> SimpleNamespace:
     """Create a mock CanvasSubmissionResponse-like object."""
-    return SimpleNamespace(user_id=user_id, grade=grade, score=score)
+    return SimpleNamespace(user_id=user_id, entered_grade=grade, score=score)
 
 
 # ---------------------------------------------------------------------------
@@ -330,7 +330,7 @@ class TestPreviewGrades:
         assert "Alice Smith" in str(r["name"])
         assert "Homework 1" in str(r["name"])
         assert r["conflict"] is False
-        assert r["live"] == "9"  # posted_grade maps to .grade
+        assert r["live"] == "9"  # posted_grade maps to .entered_grade
 
     def test_conflict_detected(self, sync_conn):
         """Conflict when live grade differs from baseline."""

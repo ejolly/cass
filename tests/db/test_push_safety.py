@@ -8,7 +8,8 @@ import json
 
 import pytest
 
-from cass.db import exceeds_points, hold_back_unapproved
+from cass.apis.canvas.schema import CanvasSubmissionResponse
+from cass.db import CanvasGrade, exceeds_points, hold_back_unapproved
 from cass.db.sync import (
     HELD_CLEAR,
     HELD_CONFLICT,
@@ -146,8 +147,8 @@ class TestPreviewGradesFlagsOverPoints:
         )
         client = MagicMock()
         client.list_submissions.return_value = [
-            SimpleNamespace(user_id=1, grade="8", score=8.0),
-            SimpleNamespace(user_id=2, grade="8", score=8.0),
+            SimpleNamespace(user_id=1, entered_grade="8", score=8.0),
+            SimpleNamespace(user_id=2, entered_grade="8", score=8.0),
         ]
         changes = {
             grade_key(7, 1): {"posted_grade": {"baseline": "8", "current": "9"}},
@@ -215,3 +216,81 @@ class TestClearedGrades:
             "baseline": "8",
             "current": "",
         }
+
+
+class TestGradeBaselines:
+    @staticmethod
+    def preview(conn, *live) -> list[dict[str, object]]:
+        """Preview pending grades against these live submissions."""
+        from unittest.mock import MagicMock
+
+        from cass import db
+
+        client = MagicMock()
+        client.list_submissions.return_value = list(live)
+        changes = db.get_pending_changes(conn)["canvas_grades"]
+        return db.preview_grades(conn, changes, client)
+
+    @staticmethod
+    def baselined(conn, baseline: str, current: str) -> None:
+        """Store student 1's grade on assignment 7 with a baseline, then edit it."""
+        from cass import db
+
+        db.upsert_canvas_grade(conn, 1, 7, baseline)
+        db.mark_synced_grades(conn, [(1, 7)])
+        db.upsert_canvas_grade(conn, 1, 7, current)
+
+    def test_clear_after_pull_is_a_pending_clear(self, db_conn):
+        from cass import db
+
+        db.save_pulled_grades(
+            [CanvasGrade(canvas_user_id=1, canvas_assignment_id=7, posted_grade="8")]
+        )
+        db.upsert_canvas_grade(db_conn, 1, 7, "")
+        live = CanvasSubmissionResponse(user_id=1, entered_grade="8")
+        (row,) = self.preview(db_conn, live)
+        assert row["clears"] is True
+        assert row["conflict"] is False
+
+    @pytest.mark.parametrize("live_grade", [None, "5"])
+    def test_grade_without_baseline_is_pending_conflict(self, db_conn, live_grade):
+        from cass import db
+
+        db.upsert_canvas_grade(db_conn, 1, 7, "9")
+        pending = db.get_pending_changes(db_conn)
+        assert pending["canvas_grades"][grade_key(7, 1)]["posted_grade"] == {
+            "baseline": None,
+            "current": "9",
+        }
+        live = CanvasSubmissionResponse(user_id=1, entered_grade=live_grade)
+        (row,) = self.preview(db_conn, live)
+        assert row["conflict"] is True
+
+    def test_blank_grade_without_baseline_is_not_pending(self, db_conn):
+        from cass import db
+
+        db.upsert_canvas_grade(db_conn, 1, 7, "")
+        assert db.get_pending_changes(db_conn) == {}
+
+    def test_revert_without_baseline_removes_row(self, db_conn):
+        from cass import db
+
+        db.upsert_canvas_grade(db_conn, 1, 7, "9")
+        db.upsert_canvas_grade(db_conn, 2, 7, "8")
+        db.mark_synced_grades(db_conn, [(2, 7)])
+
+        assert db.revert_changes(db_conn, db.get_pending_changes(db_conn)) == 1
+        assert [g.canvas_user_id for g in db.load_canvas_grades()] == [2]
+        assert db.get_pending_changes(db_conn) == {}
+
+    def test_preview_ignores_late_deduction(self, db_conn):
+        self.baselined(db_conn, "8", "9")
+        live = CanvasSubmissionResponse(user_id=1, grade="7", entered_grade="8")
+        (row,) = self.preview(db_conn, live)
+        assert row["conflict"] is False
+        assert row["live"] == "8"
+
+    def test_first_grade_is_not_a_conflict_when_canvas_is_ungraded(self, db_conn):
+        self.baselined(db_conn, "", "9")
+        (row,) = self.preview(db_conn, CanvasSubmissionResponse(user_id=1))
+        assert row["conflict"] is False

@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, cast
 
 from nicegui import ui
 
-from ...db import count_pending, get_pending_changes, hold_back_unapproved
+from ...db import count_pending, hold_back_unapproved, refresh_pending
 from .. import canvas_apply, canvas_preview
 from ..actions import build_preview_html
 from ..grid import (
@@ -229,8 +229,7 @@ class PushModal:
             result = await asyncio.get_event_loop().run_in_executor(None, _blocking)
             # Pending changes now live in the DB diff; reload them so pushed
             # changes drop out and held-back ones stay highlighted.
-            p.pending.clear()
-            p.pending.update(get_pending_changes(p.conn))
+            refresh_pending(p.pending, p.conn)
             clear_pending_cells()
             p.update_pending_display()
             reload_current_grid(

@@ -382,6 +382,7 @@ class CanvasSubmissionResponse(msgspec.Struct):
     missing: bool = False
     seconds_late: float = 0.0
     grade: str | None = None
+    entered_grade: str | None = None  # the grade before late deductions
     score: float | None = None
     workflow_state: str = ""
     cached_due_date: str | None = None  # per-student due, after overrides

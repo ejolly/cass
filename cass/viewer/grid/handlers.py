@@ -10,7 +10,7 @@ from typing import Any
 import sqlite_utils
 from nicegui import ui
 
-from ...db import track_change, update_cell, upsert_canvas_grade
+from ...db import refresh_pending, update_cell, upsert_canvas_grade
 from ..config import PendingChanges
 from .pending import mark_pending_cell
 from .utils import notify
@@ -83,14 +83,7 @@ def attach_edit_handler(
         result = update_cell(conn, table_name, pk, col_field, new_value)
 
         if result["ok"]:
-            track_change(
-                pending,
-                table_name,
-                pk,
-                col_field,
-                result["old_value"],
-                new_value,
-            )
+            refresh_pending(pending, conn)
             update_pending_display()
             notify(f"Saved {col_field}")
 
@@ -99,7 +92,7 @@ def attach_edit_handler(
                 row_id = str(row[pk_cols[0]])
             else:
                 row_id = "::".join(str(row[c]) for c in pk_cols)
-            # Check if change is still pending after track_change
+            # Check if change is still pending after the save
             pk_key = (
                 str(next(iter(pk.values())))
                 if len(pk) == 1
@@ -144,24 +137,16 @@ def attach_gradebook_edit_handler(
 
         canvas_assignment_id = int(col_field[2:])  # strip "_a" prefix
         canvas_user_id = data["data"]["_canvas_user_id"]
-        new_grade = data["value"] or ""
+        # A grade of 0 is a grade; only an empty cell clears it.
+        new_grade = "" if data["value"] is None else str(data["value"])
 
-        old_value = upsert_canvas_grade(
-            conn, canvas_user_id, canvas_assignment_id, new_grade
-        )
+        upsert_canvas_grade(conn, canvas_user_id, canvas_assignment_id, new_grade)
+        refresh_pending(pending, conn)
 
         pk: dict[str, object] = {
             "canvas_user_id": canvas_user_id,
             "canvas_assignment_id": canvas_assignment_id,
         }
-        track_change(
-            pending,
-            "canvas_grades",
-            pk,
-            "posted_grade",
-            old_value,
-            new_grade,
-        )
         update_pending_display()
         notify("Saved grade")
 

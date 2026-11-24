@@ -143,6 +143,7 @@ def fetch_canvas_submissions(
                 lateness_seconds=int(r.seconds_late),
                 score=r.score,
                 workflow_state=r.workflow_state,
+                entered_grade=r.entered_grade or "",
             )
         )
 

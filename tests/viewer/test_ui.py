@@ -16,7 +16,14 @@ from nicegui import ui
 from nicegui.testing import User
 
 from cass.db import count_pending as pending_count
-from cass.db import get_primary_keys, get_tables, is_editable, track_change, update_cell
+from cass.db import (
+    get_primary_keys,
+    get_tables,
+    is_editable,
+    snapshot_canvas_synced,
+    track_change,
+    update_cell,
+)
 from cass.viewer.config import DEV_TABLES, PendingChanges, display_name, group_tables
 from cass.viewer.grid import (
     _grid_to_markdown,
@@ -110,6 +117,24 @@ def ui_conn() -> sqlite_utils.Database:
         "(100, 1, '2026-02-01 12:00:00', 9.0, 'graded', false),"
         "(200, 1, '2026-02-02 14:00:00', 7.0, 'graded', true)"
     )
+    conn.execute(
+        "CREATE TABLE _canvas_assignments_synced ("
+        "  canvas_id INTEGER PRIMARY KEY,"
+        "  name TEXT NOT NULL,"
+        "  points_possible DOUBLE NOT NULL DEFAULT 0,"
+        "  due_at TEXT,"
+        "  published BOOLEAN NOT NULL DEFAULT false"
+        ")"
+    )
+    conn.execute(
+        "CREATE TABLE _canvas_grades_synced ("
+        "  canvas_user_id INTEGER NOT NULL,"
+        "  canvas_assignment_id INTEGER NOT NULL,"
+        "  posted_grade TEXT NOT NULL DEFAULT '',"
+        "  PRIMARY KEY (canvas_user_id, canvas_assignment_id)"
+        ")"
+    )
+    snapshot_canvas_synced(conn)
     return conn
 
 

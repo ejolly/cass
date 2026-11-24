@@ -509,7 +509,7 @@ def pull(
         False, "--assignments", help="Pull assignments only"
     ),
     do_submissions: bool = typer.Option(
-        False, "--submissions", help="Pull submissions only"
+        False, "--submissions", help="Pull submissions and grades only"
     ),
 ) -> None:
     """Fetch from Canvas and update the local database."""
