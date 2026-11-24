@@ -39,12 +39,20 @@ class MissingAssignmentGroupsError(RuntimeError):
 
 
 def sync_assignment_groups(
-    client: CanvasClient, wanted: list[str], *, create: bool
+    client: CanvasClient,
+    wanted: list[str],
+    *,
+    create: bool,
+    rows: list[tuple[str, str, str]] | None = None,
 ) -> tuple[list[tuple[str, str, str]], dict[str, int]]:
     """Resolve assignment groups by name and create the missing ones when asked.
 
     Groups match by name, case-insensitively. Writes always go through
     ``client``; dry runs pass a dry-run client.
+
+    Args:
+        rows: When given, each row is appended to it as soon as its change is
+            made, so it is complete up to an error; it is also the list returned.
 
     Raises:
         MissingAssignmentGroupsError: Some groups are missing and ``create``
@@ -55,15 +63,15 @@ def sync_assignment_groups(
         and the Canvas id of every wanted group by lower-cased name (a dry-run
         placeholder for a group this call creates).
     """
+    rows = [] if rows is None else rows
     if not wanted:
-        return [], {}
+        return rows, {}
     group_ids, missing = resolve_group_ids(client, wanted)
     if missing and not create:
         raise MissingAssignmentGroupsError(missing)
-    rows: list[tuple[str, str, str]] = []
     for name in missing:
-        rows.append(("create", "group", name))
         group_ids[name.lower()] = client.create_assignment_group(name).id
+        rows.append(("create", "group", name))
     return rows, group_ids
 
 
@@ -74,6 +82,7 @@ def sync_assignments(
     tz: str,
     *,
     created: list[CanvasAssignmentResponse] | None = None,
+    rows: list[tuple[str, str, str]] | None = None,
 ) -> list[tuple[str, str, str]]:
     """Reconcile assignment specs against live assignments, matched by name.
 
@@ -90,6 +99,8 @@ def sync_assignments(
             `sync_assignment_groups`; used only for new assignments.
         tz: Course time zone, for due dates written without an offset.
         created: When given, each assignment this call creates is appended to it.
+        rows: When given, each row is appended to it as soon as its change is
+            made, so it is complete up to an error; it is also the list returned.
 
     Returns:
         ``(action, "assignment", name)`` rows: create, update (with the
@@ -106,7 +117,7 @@ def sync_assignments(
         _plan_assignment(client, spec, live_by_name.get(spec.name.lower()), tz)
         for spec in specs
     ]
-    rows: list[tuple[str, str, str]] = []
+    rows = [] if rows is None else rows
     for plan in plans:
         spec = plan.spec
         if plan.live is None:

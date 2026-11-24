@@ -6,6 +6,8 @@ __docformat__ = "google"
 
 from unittest.mock import MagicMock
 
+import pytest
+
 from cass.actions.config import CanvasModuleSpec
 from cass.actions.modules import sync_modules
 from cass.apis.canvas.schema import CanvasModule
@@ -58,3 +60,26 @@ def test_sync_modules_leaves_published_alone_when_omitted():
     ]
     client.publish.assert_not_called()
     client.unpublish.assert_not_called()
+
+
+def test_sync_modules_lists_a_module_created_but_not_published():
+    client = MagicMock()
+    client.list_modules.return_value = []
+    client.create_module.side_effect = [
+        CanvasModule(id=8, name="Week 1"),
+        CanvasModule(id=9, name="Week 2"),
+    ]
+    client.publish.side_effect = RuntimeError("boom")
+    specs = [
+        CanvasModuleSpec(name="Week 1"),
+        CanvasModuleSpec(name="Week 2", published=True),
+    ]
+    rows: list[tuple[str, str, str]] = []
+
+    with pytest.raises(RuntimeError, match="boom"):
+        sync_modules(client, specs, rows=rows)
+
+    assert rows == [
+        ("create", "module", "Week 1"),
+        ("create", "module", "Week 2 (publishing it failed; check Canvas)"),
+    ]

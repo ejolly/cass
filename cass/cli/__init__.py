@@ -233,7 +233,8 @@ def _render_push_results(results: list[dict[str, object]]) -> None:
 
     if failed:
         err_console.print(f"\n[red]Failed {len(failed)} operation(s).[/red]")
-    console.print(f"\n[green]Pushed {total_posted} grades/updates.[/green]")
+    if not failed or len(failed) < len(results):
+        console.print(f"\n[green]Pushed {total_posted} grades/updates.[/green]")
 
 
 @app.command()

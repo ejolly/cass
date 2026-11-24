@@ -418,7 +418,7 @@ def test_failed_create_is_listed_when_its_item_is_then_missing(sync_course):
     rows = table_rows(result.stdout)
     row_index(rows, r"^update module Week 2")
     row_index(rows, r"^fail assignment HW2 \(create: .*rejected")
-    assert "in the steps that finished" in result.stderr
+    assert "The rows above are the results up to it" in result.stderr
     assert "Sync complete." not in result.stdout
     assert item_or_file_writes(sync_course) == []
 
@@ -448,3 +448,71 @@ def test_item_rows_not_listed_when_applying_items_fails(sync_course):
     rows = table_rows(result.stdout)
     row_index(rows, r"^create assignment HW2")
     assert not any(row.startswith("create item") for row in rows)
+
+
+GROUPS_TOML = """
+[[canvas.assignments]]
+name = "A"
+group = "First"
+
+[[canvas.assignments]]
+name = "B"
+group = "Second"
+"""
+
+
+def test_created_group_listed_when_the_next_fails(sync_course, monkeypatch):
+    write_toml(GROUPS_TOML)
+    real_create = CanvasClient.create_assignment_group
+
+    def create(self, name):
+        if name == "Second":
+            raise RuntimeError("boom")
+        return real_create(self, name)
+
+    monkeypatch.setattr(CanvasClient, "create_assignment_group", create)
+    monkeypatch.setattr(CanvasClient, "list_assignment_groups", lambda self: [])
+
+    result = runner.invoke(app, ["canvas", "sync", "--apply", "--create-groups"])
+
+    rows = table_rows(result.stdout)
+    row_index(rows, r"^create group First")
+    assert not any(re.search("group Second", row) for row in rows)
+    assert "may also have been applied" in result.stderr
+
+
+def test_updated_module_listed_when_the_next_fails(sync_course):
+    write_toml(
+        WEEK_2_UNPUBLISH + '\n[[canvas.modules]]\nname = "Week 1"\npublished = false\n'
+    )
+    sync_course.fail_writes.add("/courses/1/modules/5")
+
+    result = runner.invoke(app, ["canvas", "sync", "--apply"])
+
+    assert result.exit_code == 1
+    rows = table_rows(result.stdout)
+    row_index(rows, r"^update module Week 2")
+    assert not any(re.search("module Week 1", row) for row in rows)
+
+
+def test_module_items_applied_before_a_later_module_fails_are_listed(sync_course):
+    write_toml(
+        WEEK_1_ITEMS
+        + '\n[[canvas.modules]]\nname = "Week 2"\npublished = true\n'
+        + '\n[[canvas.modules.items]]\ntype = "SubHeader"\ntitle = "Two"\n'
+    )
+    sync_course.fail_writes.add("/courses/1/modules/6/items")
+
+    result = runner.invoke(app, ["canvas", "sync", "--apply"])
+
+    assert isinstance(result.exception, ModuleItemApplyError)
+    message = str(result.exception)
+    assert "Week 1: create Assignment 'HW1'" in message
+    assert "Week 2" not in message
+    assert "Stopped before any" not in message
+
+
+def test_refused_rows_are_excepted_from_the_applied_note(sync_course):
+    write_toml(LOOKUP_ERROR_TOML)
+    result = runner.invoke(app, ["canvas", "sync", "--apply"])
+    assert "Except any that failed or were refused" in str(result.exception)

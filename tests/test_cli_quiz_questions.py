@@ -118,7 +118,7 @@ def canvas(tmp_path, monkeypatch) -> FakeCanvas:
             return httpx.Response(200, json={"id": 900})
         if request.method == "PUT" and "/questions/" in path:
             return httpx.Response(200, json={"id": int(path.rsplit("/", 1)[1])})
-        if request.method == "PUT" and path == QUIZ_PATH:
+        if request.method == "PUT" and re.fullmatch(r"/courses/1/quizzes/\d+", path):
             return httpx.Response(200, json=QUIZ)
         return httpx.Response(200, json={})
 
@@ -590,6 +590,32 @@ def test_statistics_failure_is_a_clean_refusal(
     assert "private" not in error
     assert ("already applied" in error) == (args[0] == "sync")
     assert canvas.writes == []
+
+
+def test_sync_stopped_by_unknown_attempts_lists_earlier_quizzes(
+    canvas, quiz_file, tmp_path
+):
+    quiz_file(("attempts = 1", "attempts = 3"))
+    (tmp_path / "first.toml").write_text(
+        'title = "First"\ntype = "survey"\ndescription = "New"\n'
+        '[[questions]]\ntext = "x"\ntype = "essay"\n'
+    )
+    (tmp_path / "cass.toml").write_text(
+        CASS_TOML
+        + '[[canvas.quizzes]]\nfile = "first.toml"\n'
+        + '[[canvas.quizzes]]\nfile = "q.toml"\n'
+    )
+    reset_config()
+    first = {"id": 21, "title": "First", "quiz_type": "survey", "description": ""}
+    canvas.routes["/courses/1/quizzes"] = [first, QUIZ]
+    canvas.routes[f"{QUIZ_PATH}/statistics"] = httpx.Response(204)
+
+    result = runner.invoke(app, ["canvas", "sync", "--apply"])
+
+    assert result.exit_code == 1
+    assert "already applied" in str(result.exception)
+    assert canvas.write_lines() == [f"PUT {API}/courses/1/quizzes/21"]
+    assert re.search(r"update .*quiz .*First", result.stdout)
 
 
 def test_delete_with_current_attempts_and_failing_statistics(canvas):

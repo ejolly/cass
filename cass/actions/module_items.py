@@ -631,7 +631,7 @@ class ModuleItemApplyError(RuntimeError):
             done = "\n".join(f"  {step}" for step in applied)
             message = f"{cause}\nStopped; applied before the failure:\n{done}"
         else:
-            message = f"{cause}\nStopped before any change was applied."
+            message = f"{cause}\nStopped before any module item change was applied."
         super().__init__(message)
 
 
@@ -974,7 +974,17 @@ def apply_sync_items(client: CanvasClient, plan: SyncItemsPlan) -> None:
     """Apply each module's item plan in config order; stop at the first failure.
 
     Raises:
-        ModuleItemApplyError: When a request fails.
+        ModuleItemApplyError: When a request fails; it lists the steps completed
+            in every module, each with its module's name.
     """
+    applied: list[str] = []
     for module in plan.modules:
-        apply_module_item_plan(client, module.module_id, module.plan, plan.index)
+        try:
+            steps = apply_module_item_plan(
+                client, module.module_id, module.plan, plan.index
+            )
+        except ModuleItemApplyError as exc:
+            applied += [f"{module.name}: {step}" for step in exc.applied]
+            cause = exc.__cause__ or exc
+            raise ModuleItemApplyError(cause, applied) from cause
+        applied += [f"{module.name}: {step}" for step in steps]

@@ -502,6 +502,61 @@ class TestSyncQuizzes:
         assert [r[0] for r in rows] == ["create"]
         assert created == [new_quiz]
 
+    def test_sync_quizzes_lists_a_possibly_partial_create(self):
+        client = MagicMock()
+        client.list_quizzes.return_value = []
+        client.create_quiz.side_effect = [
+            CanvasQuiz(id=1, title="One"),
+            RuntimeError("boom"),
+        ]
+        specs = [
+            QuizSpec(title="One", quiz_type="survey"),
+            QuizSpec(title="Two", quiz_type="survey"),
+        ]
+        rows: list[tuple[str, str, str]] = []
+
+        with pytest.raises(RuntimeError, match="boom"):
+            sync_quizzes(client, specs, {}, LA, rows=rows)
+
+        assert rows == [
+            ("create", "quiz", "One"),
+            (
+                "fail",
+                "quiz",
+                "Two (create: the quiz may be partly applied; check Canvas)",
+            ),
+        ]
+
+    def test_sync_quizzes_bad_date_is_not_a_partial_create(self):
+        client = MagicMock()
+        client.list_quizzes.return_value = []
+        spec = QuizSpec(title="One", quiz_type="survey", due_at="next Friday")
+        rows: list[tuple[str, str, str]] = []
+
+        with pytest.raises(RuntimeError, match="Unrecognized time"):
+            sync_quizzes(client, [spec], {}, LA, rows=rows)
+
+        assert rows == []
+        client.create_quiz.assert_not_called()
+
+    def test_sync_quizzes_failed_update_is_not_listed(self):
+        client = MagicMock()
+        client.list_quizzes.return_value = [
+            CanvasQuiz(id=1, title="One", quiz_type="survey"),
+            CanvasQuiz(id=2, title="Two", quiz_type="survey"),
+        ]
+        client.update_quiz.side_effect = [None, RuntimeError("boom")]
+        specs = [
+            QuizSpec(title=title, quiz_type="survey", description="New")
+            for title in ("One", "Two")
+        ]
+        rows: list[tuple[str, str, str]] = []
+
+        with pytest.raises(RuntimeError, match="boom"):
+            sync_quizzes(client, specs, {}, LA, rows=rows)
+
+        assert rows == [("update", "quiz", "One (description: New)")]
+
     def test_sync_create_ignores_ids(self):
         import httpx
 

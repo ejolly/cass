@@ -466,7 +466,7 @@ class TestPush:
         ):
             assert text in result.stderr
             assert text not in result.stdout
-        assert "Pushed 0 grades/updates" in result.stdout
+        assert "Pushed" not in result.stdout
         assert result.exit_code == 1
 
 
@@ -2199,6 +2199,36 @@ class TestPushHoldsBackUnapproved:
         assert result.exit_code == 0
         pushed = apply_mock.call_args.args[1]
         assert pushed["canvas_assignments"]["7"]["name"]["current"] == "HW 1"
+
+    def test_held_back_and_failed_exits_1(self, renamed, monkeypatch):
+        apply_mock = self.stub(monkeypatch)
+        renamed.execute("UPDATE canvas_assignments SET points_possible = 20")
+        row = {
+            "table": "canvas_assignments",
+            "canvas_id": 7,
+            "name": "HW1",
+            "baseline": "x",
+            "current": "y",
+            "live": "x",
+        }
+        changes = [
+            {**row, "column": "name"},
+            {**row, "column": "points_possible", "conflict": True},
+        ]
+        monkeypatch.setattr(
+            "cass.db.canvas_preview",
+            lambda conn, pending: {"ok": True, "changes": changes},
+        )
+        apply_mock.return_value = {
+            "ok": False,
+            "results": [{"ok": False, "canvas_id": 7, "error": "boom"}],
+        }
+        result = runner.invoke(app, ["push", "--yes"])
+        assert result.exit_code == 1
+        assert list(apply_mock.call_args.args[1]["canvas_assignments"]["7"]) == ["name"]
+        assert "Held back 1 change(s)" in result.stderr
+        assert "boom" in result.stderr
+        assert "Pushed" not in result.stdout
 
     def test_prompt_approves_conflict(self, renamed, monkeypatch):
         apply_mock = self.stub(monkeypatch, conflict=True)

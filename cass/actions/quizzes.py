@@ -795,6 +795,7 @@ def sync_quizzes(
     tz: str,
     *,
     created: list[CanvasQuiz] | None = None,
+    rows: list[tuple[str, str, str]] | None = None,
 ) -> list[tuple[str, str, str]]:
     """Reconcile quiz specs against live quizzes, matched by title.
 
@@ -803,6 +804,10 @@ def sync_quizzes(
 
     Args:
         created: When given, each quiz this call creates is appended to it.
+        rows: When given, each row is appended to it as soon as its change is
+            made, so it is complete up to an error; it is also the list returned.
+            A create that fails appends a ``fail`` row, because some of its
+            requests may have been applied.
 
     Returns:
         ``(action, "quiz", name)`` rows: create, update (with the changed
@@ -816,13 +821,20 @@ def sync_quizzes(
             or the specs after it.
     """
     live_by_title = {q.title.lower(): q for q in client.list_quizzes()}
-    rows: list[tuple[str, str, str]] = []
+    rows = [] if rows is None else rows
     for spec in specs:
         group_id = group_ids.get(spec.group.lower()) if spec.group else None
         live = live_by_title.get(spec.title.lower())
         if live is None:
+            # Raises on an unusable date before any request is sent.
+            quiz_form_fields(spec, tz)
+            try:
+                new_quiz = client.create_quiz(spec, assignment_group_id=group_id)
+            except BaseException:
+                detail = "create: the quiz may be partly applied; check Canvas"
+                rows.append(("fail", "quiz", f"{spec.title} ({detail})"))
+                raise
             rows.append(("create", "quiz", spec.title))
-            new_quiz = client.create_quiz(spec, assignment_group_id=group_id)
             if created is not None:
                 created.append(new_quiz)
             continue
@@ -845,6 +857,6 @@ def sync_quizzes(
                 rows.append(("skip", "quiz", spec.title))
             continue
         detail = ", ".join(f"{k}: {v}" for k, v in changes.items())
-        rows.append(("update", "quiz", f"{spec.title} ({detail})"))
         client.update_quiz(live.id, changes)
+        rows.append(("update", "quiz", f"{spec.title} ({detail})"))
     return rows

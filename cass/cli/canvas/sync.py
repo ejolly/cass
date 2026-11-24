@@ -105,45 +105,47 @@ def sync(
 
         # --- Assignment groups ---
         try:
-            group_rows, group_ids = sync_assignment_groups(
-                c, wanted_groups, create=create_groups
+            _, group_ids = sync_assignment_groups(
+                c, wanted_groups, create=create_groups, rows=actions
             )
         except MissingAssignmentGroupsError as exc:
             err_console.print(
                 f"[red]{escape(str(exc))}[/red] (pass --create-groups to create them)"
             )
             raise typer.Exit(code=1) from None
-        actions.extend(group_rows)
 
         # --- Modules ---
         if cfg.canvas_modules:
-            module_rows, module_ids = sync_modules(c, cfg.canvas_modules)
-            actions.extend(module_rows)
+            _, module_ids = sync_modules(c, cfg.canvas_modules, rows=actions)
 
         # --- Assignments ---
         if cfg.canvas_assignments:
-            actions.extend(
-                sync_assignments(
-                    c,
-                    cfg.canvas_assignments,
-                    group_ids,
-                    tz,
-                    created=created_assignments,
-                )
+            sync_assignments(
+                c,
+                cfg.canvas_assignments,
+                group_ids,
+                tz,
+                created=created_assignments,
+                rows=actions,
             )
 
         # --- Quizzes ---
         if quiz_specs:
             try:
-                actions.extend(
-                    sync_quizzes(c, quiz_specs, group_ids, tz, created=created_quizzes)
+                sync_quizzes(
+                    c,
+                    quiz_specs,
+                    group_ids,
+                    tz,
+                    created=created_quizzes,
+                    rows=actions,
                 )
             except QuizAttemptsUnknownError as exc:
                 if dry_run:
                     raise
                 raise RuntimeError(
-                    f"{exc}\nAny changes before this quiz were already applied; "
-                    "nothing after it was sent."
+                    f"{exc}\nExcept any that failed or were refused, changes before "
+                    "this quiz were already applied; nothing after it was sent."
                 ) from None
 
         # --- Module items ---
@@ -160,8 +162,9 @@ def sync(
             if dry_run:
                 raise
             raise ModuleItemLookupError(
-                f"{exc}\nExcept any that failed, module, assignment and quiz changes "
-                "were already applied; no module item changes were sent."
+                f"{exc}\nExcept any that failed or were refused, module, "
+                "assignment and quiz changes were already applied; no module item "
+                "changes were sent."
             ) from exc
         if items_plan is not None:
             # A ModuleItemApplyError lists the steps it applied; let it propagate.
@@ -239,12 +242,13 @@ def _list_actions_on_error(
     """Print the actions taken so far when an error stops ``sync --apply``."""
     try:
         yield
-    except Exception:
+    except BaseException:  # also an interrupt
         if actions and not dry_run:
             _print_actions(actions, "Canvas Sync (stopped by an error)")
             err_console.print(
-                "  [red]Stopped by an error. The rows above are the results in the "
-                "steps that finished.[/red]",
+                "  [red]Stopped by an error. The rows above are the results up to "
+                "it. If a change failed, it may also have been applied, so check "
+                "Canvas.[/red]",
                 soft_wrap=True,
             )
         raise

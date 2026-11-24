@@ -731,7 +731,7 @@ def test_apply_failure_before_any_change_says_so(monkeypatch):
         apply_module_item_plan(client, 5, plan, index)
 
     assert raised.value.applied == []
-    assert "Stopped before any change was applied." in str(raised.value)
+    assert "Stopped before any module item change was applied." in str(raised.value)
 
 
 def test_apply_all_keep_sends_nothing(monkeypatch):
