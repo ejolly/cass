@@ -20,6 +20,13 @@ make the change in the Canvas web app instead. Such changes can destroy or alter
 student work, and Canvas's own interface handles their consequences, such as
 regrading, which cass does not.
 
+For this commitment, attempts by people whose student enrollment is concluded or
+inactive also count. Attempts by people whose enrollment was deleted do not,
+because Canvas does not report them.
+
+Exception: `cass canvas api` sends the request the user wrote, for scripting, and
+does not check for attempts.
+
 ## C3. Quizzes behave on Canvas as their quiz file declares {#c3}
 
 A [quiz](domain.md#quiz) cass creates or updates must have, on Canvas, exactly the questions,

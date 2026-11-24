@@ -43,6 +43,9 @@ assignment, quiz, or page; an unlocked file; and any announcement or calendar
 event, which have no unpublished state. For a file, a module item's `published`
 setting controls the file's lock, not the item.
 
+A grade is visible once Canvas has posted it to the student; on an assignment
+with a manual posting policy, entering a grade does not post it.
+
 ## Module
 
 A named, ordered section of the course that students work through, holding
