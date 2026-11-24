@@ -21,7 +21,7 @@ The skill is `SKILL.md`, reproduced below, plus reference files the agent reads 
 | `references/quirks.md` | Canvas behaviors cass has verified, and what cass does about each one |
 | `references/files-and-modules.md` | Uploads, folders, duplicate handling, module items, declared assignments, `sync` and `--prune` |
 | `references/quizzes.md` | Quiz file format, question editing, previews, responses |
-| `references/grades.md` | What pull removes and keeps, what push holds back, accepted grades, posting |
+| `references/grades.md` | What pull removes and keeps, what push holds back, accepted grades, releasing grades to students |
 | `references/late-enrollments.md` | Finding late-enrolled students, `excuse` and `clear-late` |
 
 The sources are in `cass/skill/` in the repository. A test checks that every `cass …` command they mention exists and accepts the options shown.

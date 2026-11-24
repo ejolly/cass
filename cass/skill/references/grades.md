@@ -32,6 +32,16 @@
 
 With 0 points possible, percentages and letters are held back, and so is a change between complete and incomplete: the user can clear the grade, push that, then enter the new one. A grade must fit the live points and any pending points edit.
 
-- Held-back changes stay pending and the rest is sent. Push exits 1 if it held anything back or any Canvas update failed; a dry run exits 0. Failed updates print `✗` on stderr and stay pending. A failed update may be partly applied, for example when waiting for Canvas timed out or when Canvas kept an assignment's points but took its other fields, so check Canvas before retrying. When a post to students fails, the grades are already pushed.
+- Held-back changes stay pending and the rest is sent. Push exits 1 if it held anything back or any Canvas update failed; a dry run exits 0. Failed updates print `✗` on stderr and stay pending. A failed update may be partly applied, for example when waiting for Canvas timed out or when Canvas kept an assignment's points but took its other fields, so check Canvas before retrying.
 - cass rechecks quiz attempts just before sending points. A refusal then is a failed update.
-- **Manual posting:** after pushing grades to an assignment that posts manually (as of the last pull), cass posts every graded submission on it, not only the pushed ones. The dry run doesn't show this. Tell the user before pushing.
+
+## Release to students
+
+On an assignment that posts grades automatically, pushing a grade shows it to the student. On one that posts manually, a pushed grade stays hidden until it is released. cass reads the posting policy from Canvas at the preview and again just before pushing.
+
+- Without `--post`, `--yes` releases nothing, and push says how many grades it pushed but did not release. `cass push --dry-run` gives that number beforehand.
+- `--post` releases the grades this push sends, only for the students pushed, never cleared or held-back ones. Pass it only when the user asked to release them. It covers every manual-post assignment in the push.
+- `--post` releases only grades it pushes. A grade pushed without it must be released in the Canvas gradebook.
+- A student whose grade was released before sees a changed grade as soon as it is pushed, with or without `--post`.
+- If an assignment stops posting manually after the preview, push without `--post` sends it nothing, because that would release the grades. If it starts posting manually, its grades are pushed but not released. If cass can't read the policy, nothing is sent for that assignment.
+- A release that fails prints `✗` and exits 1, but the grades are pushed and no longer pending. Tell the user to check and post them in the Canvas gradebook.

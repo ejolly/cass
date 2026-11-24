@@ -166,7 +166,11 @@ class TestPreviewGradesFlagsOverPoints:
             SimpleNamespace(user_id=2, entered_grade="8", score=8.0),
         ]
         client.get_assignment.return_value = CanvasAssignmentResponse(
-            id=7, name="HW1", points_possible=10, grading_type="points"
+            id=7,
+            name="HW1",
+            points_possible=10,
+            grading_type="points",
+            post_manually=False,
         )
         changes = {
             grade_key(7, 1): {"posted_grade": {"baseline": "8", "current": "9"}},
@@ -248,7 +252,11 @@ class TestGradeBaselines:
         client = MagicMock()
         client.list_submissions.return_value = list(live)
         client.get_assignment.return_value = CanvasAssignmentResponse(
-            id=7, name="HW1", grading_type="points", points_possible=10
+            id=7,
+            name="HW1",
+            grading_type="points",
+            points_possible=10,
+            post_manually=False,
         )
         changes = db.get_pending_changes(conn)["canvas_grades"]
         return db.preview_grades(conn, changes, client)
@@ -530,7 +538,11 @@ class TestPreviewUsesLivePoints:
         db.upsert_canvas_grade(db_conn, 1, 7, grade)
         client = MagicMock()
         client.get_assignment.return_value = CanvasAssignmentResponse(
-            id=7, name="HW1", grading_type="points", points_possible=live
+            id=7,
+            name="HW1",
+            grading_type="points",
+            points_possible=live,
+            post_manually=False,
         )
         client.list_submissions.return_value = [CanvasSubmissionResponse(user_id=1)]
         changes = db.get_pending_changes(db_conn)["canvas_grades"]
@@ -580,7 +592,11 @@ class TestPreviewUsesLivePoints:
         client = MagicMock()
         client.__enter__.return_value = client
         client.get_assignment.return_value = CanvasAssignmentResponse(
-            id=7, name="HW1", grading_type="points", points_possible=10
+            id=7,
+            name="HW1",
+            grading_type="points",
+            points_possible=10,
+            post_manually=False,
         )
         client.list_submissions.return_value = [CanvasSubmissionResponse(user_id=1)]
         monkeypatch.setattr("cass.apis.canvas.client.CanvasClient", lambda: client)
@@ -626,7 +642,11 @@ class TestPassFailWithoutPoints:
 
         client = MagicMock()
         client.get_assignment.return_value = CanvasAssignmentResponse(
-            id=7, name="HW1", grading_type="pass_fail", points_possible=points
+            id=7,
+            name="HW1",
+            grading_type="pass_fail",
+            points_possible=points,
+            post_manually=False,
         )
         client.list_submissions.return_value = [
             CanvasSubmissionResponse(user_id=1, entered_grade=live_grade)

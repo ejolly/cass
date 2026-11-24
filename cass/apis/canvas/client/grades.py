@@ -228,8 +228,12 @@ class GradesMixin(BaseClient):
         return body.get("data", {})
 
     _POST_GRADES_MUTATION = """
-mutation ($assignmentId: ID!, $gradedOnly: Boolean) {
-  postAssignmentGrades(input: {assignmentId: $assignmentId, gradedOnly: $gradedOnly}) {
+mutation ($assignmentId: ID!, $gradedOnly: Boolean, $onlyStudentIds: [ID!]) {
+  postAssignmentGrades(input: {
+    assignmentId: $assignmentId
+    gradedOnly: $gradedOnly
+    onlyStudentIds: $onlyStudentIds
+  }) {
     progress { _id state }
     errors { attribute message }
   }
@@ -246,7 +250,11 @@ mutation ($assignmentId: ID!) {
 """
 
     def post_assignment_grades(
-        self, assignment_id: int, *, graded_only: bool = True
+        self,
+        assignment_id: int,
+        *,
+        graded_only: bool = True,
+        only_student_ids: Sequence[int] | None = None,
     ) -> CanvasProgress | None:
         """Post (reveal) grades to students for a manual-post assignment.
 
@@ -255,17 +263,25 @@ mutation ($assignmentId: ID!) {
         Args:
             assignment_id: Canvas assignment ID.
             graded_only: If True, only post grades for graded submissions.
+            only_student_ids: Post only these students' grades; None posts
+                every student's.
 
         Returns:
             Progress object for tracking, or None if no progress was started.
 
         Raises:
+            ValueError: If ``only_student_ids`` is empty.
             RuntimeError: If the mutation returns validation errors.
         """
-        data = self._graphql(
-            self._POST_GRADES_MUTATION,
-            {"assignmentId": str(assignment_id), "gradedOnly": graded_only},
-        )
+        variables: dict[str, object] = {
+            "assignmentId": str(assignment_id),
+            "gradedOnly": graded_only,
+        }
+        if only_student_ids is not None:
+            if not only_student_ids:
+                raise ValueError("only_student_ids is empty: no grades to post")
+            variables["onlyStudentIds"] = [str(uid) for uid in only_student_ids]
+        data = self._graphql(self._POST_GRADES_MUTATION, variables)
         result = data.get("postAssignmentGrades", {})
         errors: list[Any] = result.get("errors") or []
         if errors:

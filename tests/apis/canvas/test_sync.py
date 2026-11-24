@@ -9,6 +9,7 @@ from __future__ import annotations
 __docformat__ = "google"
 
 import json
+from contextlib import nullcontext
 from types import SimpleNamespace
 from typing import cast
 from unittest.mock import MagicMock, patch
@@ -16,7 +17,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 import sqlite_utils
 
+from cass import db
+from cass.apis.canvas.schema import (
+    CanvasAssignmentResponse,
+    CanvasSubmissionResponse,
+)
 from cass.db import canvas_apply, canvas_preview
+from cass.db.sync import HELD_NOT_COMPARED
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -163,6 +170,7 @@ def _make_assignment(
     points_possible: float = 10.0,
     due_at: str | None = "2026-02-01T23:59",
     published: bool = True,
+    post_manually: bool | None = False,
 ) -> SimpleNamespace:
     """Create a mock CanvasAssignmentResponse-like object."""
     return SimpleNamespace(
@@ -172,6 +180,7 @@ def _make_assignment(
         due_at=due_at,
         published=published,
         quiz_id=None,
+        post_manually=post_manually,
     )
 
 
@@ -573,6 +582,7 @@ class TestCanvasApply:
     def test_grade_push_success(self, sync_conn):
         """Successful grade push clears pending and updates synced."""
         mock_client = MagicMock()
+        mock_client.get_assignment.return_value = _make_assignment()
         mock_progress = SimpleNamespace(id=42)
         mock_client.bulk_push_grades.return_value = mock_progress
         mock_client.wait_for_progress.return_value = None
@@ -645,6 +655,7 @@ class TestCanvasApply:
     def test_grade_push_partial_failure(self, sync_conn):
         """Failed grade push per-assignment keeps those entries pending."""
         mock_client = MagicMock()
+        mock_client.get_assignment.return_value = _make_assignment()
         mock_client.bulk_push_grades.side_effect = RuntimeError("Bulk fail")
 
         pk_key = json.dumps(
@@ -666,51 +677,6 @@ class TestCanvasApply:
         assert result["ok"] is False
         # Grade still in pending
         assert pk_key in pending["canvas_grades"]
-
-    def test_post_manually_grades_posted(self, sync_conn):
-        """Grades for post_manually assignments trigger post_assignment_grades."""
-        # Set assignment 1 to post_manually
-        sync_conn.execute(
-            "UPDATE canvas_assignments SET post_manually = true WHERE canvas_id = 1"
-        )
-
-        mock_client = MagicMock()
-        mock_progress = SimpleNamespace(id=42)
-        mock_client.bulk_push_grades.return_value = mock_progress
-        mock_client.wait_for_progress.return_value = None
-        mock_post_progress = SimpleNamespace(id=43)
-        mock_client.post_assignment_grades.return_value = mock_post_progress
-
-        pk_key = json.dumps(
-            {"canvas_assignment_id": 1, "canvas_user_id": 100},
-            sort_keys=True,
-        )
-        pending = {
-            "canvas_grades": {
-                pk_key: {"posted_grade": {"baseline": "9", "current": "10"}},
-            },
-        }
-
-        with patch("cass.apis.canvas.client.CanvasClient") as MockClient:
-            MockClient.return_value.__enter__ = lambda s: mock_client
-            MockClient.return_value.__exit__ = lambda s, *a: None
-
-            sync_conn.execute(
-                "UPDATE canvas_grades SET posted_grade = '10' "
-                "WHERE canvas_user_id = 100 AND canvas_assignment_id = 1"
-            )
-
-            result = canvas_apply(sync_conn, pending)
-
-        assert result["ok"] is True
-        mock_client.post_assignment_grades.assert_called_once_with(1, graded_only=True)
-        # Should have "posted_to_students" action result
-        all_results = cast(list[dict[str, object]], result["results"])
-        posted_results = [
-            r for r in all_results if r.get("action") == "posted_to_students"
-        ]
-        assert len(posted_results) == 1
-        assert posted_results[0]["ok"] is True
 
     def test_empty_tables_cleaned_from_pending(self, sync_conn):
         """Empty table entries are removed from pending dict after push."""
@@ -734,3 +700,216 @@ class TestCanvasApply:
 
         # Entire canvas_assignments key should be gone
         assert "canvas_assignments" not in pending
+
+
+# ---------------------------------------------------------------------------
+# Releasing grades on manual-post assignments
+# ---------------------------------------------------------------------------
+
+
+class TestReleaseGrades:
+    """Grades become visible to students only with separate approval (C5)."""
+
+    @pytest.fixture
+    def policies(self) -> dict[int, bool | None]:
+        """Canvas's live posting policy by assignment; tests change it."""
+        return {1: True, 2: True}
+
+    @pytest.fixture
+    def client(self, policies, monkeypatch) -> MagicMock:
+        client = MagicMock()
+        client.get_assignment.side_effect = lambda aid: CanvasAssignmentResponse(
+            id=aid,
+            name=f"Homework {aid}",
+            points_possible=10,
+            grading_type="points",
+            post_manually=policies[aid],
+        )
+        client.list_submissions.side_effect = lambda aid: [
+            CanvasSubmissionResponse(user_id=uid, entered_grade="5")
+            for uid in (1, 2, 3)
+        ]
+        monkeypatch.setattr(
+            "cass.apis.canvas.client.CanvasClient", lambda: nullcontext(client)
+        )
+        return client
+
+    @pytest.fixture
+    def edit(self, db_conn):
+        """Return a function that stores an unpushed grade edit (Canvas has 5)."""
+
+        def _edit(uid: int, aid: int, grade: str) -> None:
+            db.upsert_canvas_grade(db_conn, uid, aid, "5")
+            db.mark_synced_grades(db_conn, [(uid, aid)])
+            db.upsert_canvas_grade(db_conn, uid, aid, grade)
+
+        return _edit
+
+    @staticmethod
+    def rows(result: dict[str, object]) -> list[dict[str, object]]:
+        return cast(list[dict[str, object]], result["results"])
+
+    def test_push_does_not_post_by_default(self, client, edit, db_conn):
+        edit(1, 1, "9")
+        result = canvas_apply(db_conn, db.get_pending_changes(db_conn))
+        assert result["ok"] is True
+        client.bulk_push_grades.assert_called_once_with(1, {1: "9"})
+        client.post_assignment_grades.assert_not_called()
+        assert db.count_unreleased(result) == 1
+        assert db.get_pending_changes(db_conn) == {}
+
+    def test_post_limited_to_pushed_students(self, client, edit, db_conn):
+        edit(1, 1, "9")
+        edit(2, 1, "8")
+        result = canvas_apply(
+            db_conn, db.get_pending_changes(db_conn), post_grades=True
+        )
+        assert result["ok"] is True
+        client.post_assignment_grades.assert_called_once_with(
+            1, graded_only=True, only_student_ids=[1, 2]
+        )
+        assert self.rows(result)[-1]["action"] == "posted_to_students"
+        assert db.count_unreleased(result) == 0
+
+    @pytest.mark.parametrize(("other", "posted"), [("9", [1]), ("", None)])
+    def test_clears_never_post(self, client, edit, db_conn, other, posted):
+        edit(1, 1, other)
+        edit(2, 1, "")
+        canvas_apply(db_conn, db.get_pending_changes(db_conn), post_grades=True)
+        assert client.bulk_push_grades.call_args.args == (1, {1: other, 2: ""})
+        if posted is None:
+            client.post_assignment_grades.assert_not_called()
+        else:
+            client.post_assignment_grades.assert_called_once_with(
+                1, graded_only=True, only_student_ids=posted
+            )
+
+    def test_automatic_policy_never_posts(self, client, policies, edit, db_conn):
+        policies[1] = False
+        edit(1, 1, "9")
+        result = canvas_apply(
+            db_conn, db.get_pending_changes(db_conn), post_grades=True
+        )
+        client.post_assignment_grades.assert_not_called()
+        assert db.count_unreleased(result) == 0
+
+    def test_stored_policy_is_not_used(self, client, edit, db_conn):
+        db_conn["canvas_assignments"].insert(
+            {"canvas_id": 1, "name": "Homework 1", "post_manually": False}
+        )
+        edit(1, 1, "9")
+        canvas_apply(
+            db_conn,
+            {"canvas_grades": db.get_pending_changes(db_conn)["canvas_grades"]},
+            post_grades=True,
+        )
+        client.post_assignment_grades.assert_called_once()
+
+    def test_failed_push_is_never_posted(self, client, edit, db_conn):
+        edit(1, 1, "9")
+        edit(1, 2, "8")
+        client.bulk_push_grades.side_effect = [
+            RuntimeError("Bulk fail"),
+            SimpleNamespace(id=42),
+        ]
+        result = canvas_apply(
+            db_conn, db.get_pending_changes(db_conn), post_grades=True
+        )
+        assert result["ok"] is False
+        client.post_assignment_grades.assert_called_once_with(
+            2, graded_only=True, only_student_ids=[1]
+        )
+
+    @pytest.mark.parametrize(
+        "failure", [{"side_effect": RuntimeError("no job")}, {"return_value": None}]
+    )
+    def test_posting_failure_keeps_grades_pushed(self, client, edit, db_conn, failure):
+        edit(1, 1, "9")
+        client.post_assignment_grades.configure_mock(**failure)
+        result = canvas_apply(
+            db_conn, db.get_pending_changes(db_conn), post_grades=True
+        )
+        assert result["ok"] is False
+        assert db.get_pending_changes(db_conn) == {}
+        pushed, posted = self.rows(result)
+        assert pushed["ok"] is True
+        assert posted["ok"] is False
+        assert "1 grade(s) pushed but not released to students" in str(posted["error"])
+        assert "Canvas gradebook" in str(posted["error"])
+
+    def test_failed_policy_read_sends_nothing(self, client, policies, edit, db_conn):
+        edit(1, 1, "9")
+        edit(1, 2, "8")
+        pending = db.get_pending_changes(db_conn)
+        policies[1] = None  # Canvas left the policy out
+        result = canvas_apply(db_conn, pending, post_grades=True)
+        failed, *_ = self.rows(result)
+        assert (failed["canvas_assignment_id"], failed["ok"]) == (1, False)
+        assert "posting policy" in str(failed["error"])
+        client.bulk_push_grades.assert_called_once_with(2, {1: "8"})
+        assert len(db.get_pending_changes(db_conn)["canvas_grades"]) == 1
+
+    def test_failed_policy_read_at_preview_is_held(
+        self, client, policies, edit, db_conn
+    ):
+        edit(1, 1, "9")
+        edit(1, 2, "8")
+        policies[1] = None
+        pending = db.get_pending_changes(db_conn)
+        preview = canvas_preview(db_conn, pending)
+        to_push, held = db.hold_back_unapproved(pending, preview)
+        assert [h["held"] for h in held] == [HELD_NOT_COMPARED]
+        assert not db.can_be_approved(held[0])
+        assert db.count_postable(to_push, preview) == 1
+
+    def test_held_back_grades_not_counted(self, client, policies, edit, db_conn):
+        policies[2] = False
+        edit(1, 1, "9")
+        edit(2, 1, "95")  # above points possible
+        edit(3, 1, "")
+        edit(1, 2, "8")  # posts automatically
+        pending = db.get_pending_changes(db_conn)
+        preview = canvas_preview(db_conn, pending)
+
+        def count(**approved: bool) -> int:
+            to_push, _ = db.hold_back_unapproved(pending, preview, **approved)
+            return db.count_postable(to_push, preview)
+
+        assert count() == 1
+        assert count(allow_clears=True) == 1
+        assert count(allow_over_points=True, allow_clears=True) == 2
+
+    def test_became_manual_after_preview_is_not_posted(
+        self, client, policies, edit, db_conn
+    ):
+        policies[2] = False
+        edit(1, 1, "9")
+        edit(1, 2, "8")
+        pending = db.get_pending_changes(db_conn)
+        preview = canvas_preview(db_conn, pending)
+        policies[2] = True
+        result = canvas_apply(db_conn, pending, post_grades=True, preview=preview)
+        assert result["ok"] is True
+        client.post_assignment_grades.assert_called_once_with(
+            1, graded_only=True, only_student_ids=[1]
+        )
+        assert [r.get("unreleased") for r in self.rows(result)] == [0, None, 1]
+        assert db.count_unreleased(result) == 1
+
+    @pytest.mark.parametrize("approved", [True, False])
+    def test_became_automatic_after_preview(
+        self, client, policies, edit, db_conn, approved
+    ):
+        edit(1, 1, "9")
+        pending = db.get_pending_changes(db_conn)
+        preview = canvas_preview(db_conn, pending)
+        policies[1] = False
+        result = canvas_apply(db_conn, pending, post_grades=approved, preview=preview)
+        client.post_assignment_grades.assert_not_called()
+        assert result["ok"] is approved
+        if approved:
+            client.bulk_push_grades.assert_called_once()
+        else:
+            client.bulk_push_grades.assert_not_called()
+            assert "now post automatically" in str(self.rows(result)[0]["error"])
+            assert db.get_pending_changes(db_conn)

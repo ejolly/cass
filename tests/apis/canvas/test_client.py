@@ -1367,6 +1367,36 @@ class TestCanvasClient:
         p = client.post_assignment_grades(200)
         assert p is None
 
+    def test_graphql_post_limited_to_students(self, mock_client):
+        client, transport = mock_client
+        for _ in range(2):
+            transport.add(
+                json_data={
+                    "data": {
+                        "postAssignmentGrades": {
+                            "progress": {"_id": "77", "state": "queued"},
+                            "errors": [],
+                        }
+                    }
+                }
+            )
+        client.post_assignment_grades(200, only_student_ids=[1, 2])
+        client.post_assignment_grades(200)
+        limited, everyone = (json.loads(r.content) for r in transport.requests)
+        assert "onlyStudentIds: $onlyStudentIds" in limited["query"]
+        assert limited["variables"] == {
+            "assignmentId": "200",
+            "gradedOnly": True,
+            "onlyStudentIds": ["1", "2"],
+        }
+        assert "onlyStudentIds" not in everyone["variables"]
+
+    def test_post_with_no_students_sends_nothing(self, mock_client):
+        client, transport = mock_client
+        with pytest.raises(ValueError, match="only_student_ids"):
+            client.post_assignment_grades(200, only_student_ids=[])
+        assert transport.requests == []
+
     def test_graphql_post_assignment_grades_error(self, mock_client):
         """postAssignmentGrades raises on validation errors."""
         client, transport = mock_client

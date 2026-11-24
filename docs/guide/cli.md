@@ -11,6 +11,7 @@ cass status       # local state and sync status
 cass view         # open the browser viewer
 cass push         # preview and confirm pending Canvas changes
 cass push --yes   # skip confirmation
+cass push --post  # also release the pushed grades to students
 cass revert       # discard pending local changes
 ```
 
@@ -91,7 +92,7 @@ cass status --json | jq '.pending_changes'
 - `quizzes show --json` adds `questions` and `questions_source`: `questions` when read from the quiz's questions endpoint, `statistics` when that endpoint is closed (concluded courses) and the questions come from the quiz statistics.
 - `status --json` has the keys `config_path`, `course_url`, `course_id`, `auth_source`, `db_path`, `course_name`, `counts` (`students`, `assignments`, `submissions`), and `pending_changes`.
 
-stdout carries only data. Hints, progress, prompts, and errors go to stderr, so pipes and redirects receive clean output. A failed command exits 1 with one message; a usage error (unknown option, missing argument) exits 2. `cass push` also exits 1 when it held back or failed to send any change, and `cass canvas sync` when it refused or failed any; both send the rest. To see the full traceback, pass the global `--debug` flag before the subcommand (`cass --debug canvas quizzes list`) or set `CASS_DEBUG=1`.
+stdout carries only data. Hints, progress, prompts, and errors go to stderr, so pipes and redirects receive clean output. A failed command exits 1 with one message; a usage error (unknown option, missing argument) exits 2. `cass push` also exits 1 when it held back or failed to send any change, or failed to release grades to students, and `cass canvas sync` when it refused or failed any; both send the rest. To see the full traceback, pass the global `--debug` flag before the subcommand (`cass --debug canvas quizzes list`) or set `CASS_DEBUG=1`.
 
 ## Previewing changes
 

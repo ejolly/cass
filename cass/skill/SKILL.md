@@ -23,7 +23,7 @@ cass is a CLI over the Canvas REST API for one course, set by `cass.toml`. `--he
 - **Never publish unless asked.** Don't pass `--publish` or run `publish` verbs unless the user asked. `cass canvas files upload` locks a new file unless you pass `--publish`, and an overwrite keeps the existing file's lock. Announcements and calendar events are visible to students as soon as they're created; there is no unpublished state.
 - **Leave out what you don't mean to change.** In `cass.toml` and quiz files, an omitted `published`, or any other omitted quiz setting, leaves the live value as it is. Only new content gets defaults: unpublished, one attempt. Write `published` only when the user asked to publish or unpublish.
 - **Quizzes students have finished are locked.** cass refuses to delete such a quiz, its assignment or its assignment group, or to change its questions, points or scoring settings. It also refuses when it can't check for attempts. No flag overrides this; tell the user to use the Canvas web app. `cass canvas api` doesn't check, so never use it to get around a refusal.
-- **Pushing can post grades.** On assignments that post manually, `cass push` makes every graded submission visible to students, and the dry run doesn't show it. Tell the user first.
+- **Never release grades unless asked.** On assignments that post grades manually, a pushed grade stays hidden until it is released; `cass push --dry-run` counts these. Add `--post`, which releases the pushed grades, only when the user asked to release them. Two pushes show grades at once without it: to an assignment that posts automatically, and a change to a grade already released.
 - **Use the public API only.** In Python, use `CanvasClient` public methods. Never `_client`.
 
 ## Task → command
@@ -52,7 +52,7 @@ cass is a CLI over the Canvas REST API for one course, set by `cass.toml`. `--he
 | Calendar | `cass canvas calendar create "Review" --start "2026-10-20 10:00" --dry-run` |
 | Navigation tabs | `cass canvas tabs list`; `cass canvas tabs hide Grades --dry-run` |
 | Read grades | `cass pull`, then `cass query submissions --where "score < 50"`; `cass query gradebook` for the student × assignment matrix. Grades are as entered, before late deductions; `score` is after them. Relay the students and assignments pull removed and the local grades it kept; reverting a kept grade can lose it (`references/grades.md`) |
-| Push grade and assignment edits made in `cass view` | `cass push --dry-run`, then `cass push --yes`. Conflicts, grades above points possible and cleared grades are held back and stay pending; add `--overwrite-conflicts`, `--allow-over-points` or `--allow-clears` only after the user approves every such row. Some rows no flag can send. Read `references/grades.md` first |
+| Push grade and assignment edits made in `cass view` | `cass push --dry-run`, then `cass push --yes`. Conflicts, grades above points possible and cleared grades are held back and stay pending; add `--overwrite-conflicts`, `--allow-over-points` or `--allow-clears` only after the user approves every such row. Some rows no flag can send. `--post` also releases the grades on manual-post assignments. Read `references/grades.md` first |
 | Anything else | `cass canvas api` (see below) |
 
 Commands take an ID or a name, and an ambiguous name fails and lists the matching IDs. Calendar events and `--student` take IDs only. Times are course-local (`YYYY-MM-DD HH:MM`) unless they carry an offset.
@@ -102,6 +102,6 @@ Read these when the task needs them:
 - `references/quirks.md`: every verified Canvas quirk, with what cass does about it.
 - `references/files-and-modules.md`: uploads, folders, duplicates, module items, declared assignments, `sync` and `--prune`.
 - `references/quizzes.md`: quiz file format, question editing, previews, responses.
-- `references/grades.md`: what pull removes and keeps, what push holds back, accepted grades, posting.
+- `references/grades.md`: what pull removes and keeps, what push holds back, accepted grades, releasing grades to students.
 - `references/late-enrollments.md`: `people list --enrolled-after`, `excuse`, `clear-late`.
 <!-- --8<-- [end:body] -->

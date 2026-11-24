@@ -74,7 +74,7 @@ class CanvasAssignment(msgspec.Struct):
             due_at=a.due_at or None,
             published=a.published,
             assignment_group=group_name,
-            post_manually=a.post_manually,
+            post_manually=bool(a.post_manually),
         )
 
 

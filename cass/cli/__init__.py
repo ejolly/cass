@@ -218,9 +218,10 @@ def _render_push_results(results: list[dict[str, object]]) -> None:
             else:
                 count = int(cast(int | str, result.get("count", 0)))
                 total_posted += count
+                note = ", not released to students" if result.get("unreleased") else ""
                 console.print(
                     "  [green]✓[/green] "
-                    f"Assignment {result['canvas_assignment_id']}: {count} grades"
+                    f"Assignment {result['canvas_assignment_id']}: {count} grades{note}"
                 )
         else:
             label = str(
@@ -572,17 +573,24 @@ def push(
         "--allow-clears",
         help="Also remove grades you cleared from Canvas",
     ),
+    post: bool = typer.Option(
+        False,
+        "--post",
+        help="Also release the pushed grades to students on manual-post assignments",
+    ),
 ) -> None:
     """Preview and push pending Canvas-managed changes.
 
     Values changed on Canvas since your last pull, grades above an assignment's
     points possible, and cleared grades are held back unless you approve them
     at the prompt or pass the matching flag. Held-back changes stay pending.
+    On assignments that post grades manually, pushed grades stay hidden from
+    students unless you approve their release at the prompt or pass --post.
     Exits 1 if any change was held back or failed.
     """
     from .. import db
     from ..actions.status import count_pending
-    from .prompts import confirm
+    from .prompts import ask, confirm
 
     require_canvas()
 
@@ -600,22 +608,22 @@ def push(
 
     _render_push_preview(preview)
 
-    if dry_run:
-        err_console.print("Dry run: nothing pushed; pending changes stay pending.")
-        return
-
+    no_prompts = yes or dry_run
     previewed = cast(list[dict[str, object]], changes)
     overwrite_conflicts = overwrite_conflicts or _approve_flagged(
         previewed,
         "conflict",
         "value(s) changed on Canvas since your last pull",
-        yes=yes,
+        yes=no_prompts,
     )
     allow_over_points = allow_over_points or _approve_flagged(
-        previewed, "over_points", "grade(s) above points possible", yes=yes
+        previewed, "over_points", "grade(s) above points possible", yes=no_prompts
     )
     allow_clears = allow_clears or _approve_flagged(
-        previewed, "clears", "cleared grade(s), removing them from Canvas", yes=yes
+        previewed,
+        "clears",
+        "cleared grade(s), removing them from Canvas",
+        yes=no_prompts,
     )
     to_push, held = db.hold_back_unapproved(
         pending,
@@ -624,15 +632,48 @@ def push(
         allow_over_points=allow_over_points,
         allow_clears=allow_clears,
     )
+    n_postable = db.count_postable(to_push, preview)
+    if dry_run:
+        if n_postable:
+            outcome = (
+                "released to students"
+                if post
+                else "pushed but not released to students "
+                "(pass --post, or post them in Canvas)"
+            )
+            err_console.print(
+                f"{n_postable} grade(s) would be {outcome}.", soft_wrap=True
+            )
+        err_console.print("Dry run: nothing pushed; pending changes stay pending.")
+        return
+
     _render_held_back(held)
     if count_pending(to_push) == 0:
         err_console.print("[yellow]Nothing left to push.[/yellow]")
         raise typer.Exit(code=1 if held else 0)
 
+    release_approved = post
+    if n_postable and not post and not yes:
+        release_approved = ask(
+            f"Release {n_postable} pushed grade(s) to students?", default=False
+        )
     confirm("Push these changes to Canvas?", yes=yes, default=False)
 
-    result = db.canvas_apply(conn, to_push)
+    result = db.canvas_apply(
+        conn,
+        to_push,
+        post_grades=release_approved,
+        # --post also covers assignments whose posting policy changes after the
+        # preview; an answer at the prompt covers only what the preview showed.
+        preview=None if post else preview,
+    )
     _render_push_results(cast(list[dict[str, object]], result.get("results", [])))
+    if n_unreleased := db.count_unreleased(result):
+        err_console.print(
+            f"{n_unreleased} grade(s) pushed but not released to students "
+            "(pass --post, or post them in Canvas).",
+            soft_wrap=True,
+        )
     if held or not result["ok"]:
         raise typer.Exit(code=1)
 

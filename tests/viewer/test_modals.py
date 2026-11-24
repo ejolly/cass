@@ -296,3 +296,102 @@ class TestPushModalHoldsBack:
         await user.open("/test-push-holds-back")
         await user.should_see("since your last pull")
         await user.should_see("1 held back")
+
+
+class TestPushModalReleasesGrades:
+    @pytest.fixture
+    def modal_page(self, ui_conn: sqlite_utils.Database, monkeypatch):
+        """Two grade edits on a manual-post assignment, one above its points."""
+        from cass.viewer.modals import push as push_module
+        from cass.viewer.modals.push import PushModal
+
+        monkeypatch.setattr("cass.db.connect_db", lambda root=None: ui_conn)
+        pending = {"canvas_grades": {}}
+        changes = []
+        for uid, grade in ((1, "9"), (2, "95")):
+            key = f'{{"canvas_assignment_id": 7, "canvas_user_id": {uid}}}'
+            pending["canvas_grades"][key] = {
+                "posted_grade": {"baseline": "8", "current": grade}
+            }
+            changes.append(
+                {
+                    "table": "canvas_grades",
+                    "canvas_assignment_id": 7,
+                    "canvas_user_id": uid,
+                    "name": f"Student {uid}",
+                    "column": "posted_grade",
+                    "baseline": "8",
+                    "current": grade,
+                    "live": "8",
+                    "over_points": grade == "95",
+                    "post_manually": True,
+                }
+            )
+        monkeypatch.setattr(
+            push_module,
+            "canvas_preview",
+            lambda conn, pending: {"ok": True, "changes": changes},
+        )
+        applied: list[dict[str, object]] = []
+        opened: list[PushModal] = []
+
+        def apply(conn, pending, **kwargs):
+            applied.append(kwargs)
+            unreleased = 0 if kwargs["post_grades"] else 1
+            row = {"ok": True, "canvas_assignment_id": 7, "unreleased": unreleased}
+            return {"ok": True, "results": [row]}
+
+        monkeypatch.setattr(push_module, "canvas_apply", apply)
+        monkeypatch.setattr(push_module, "refresh_pending", lambda *a: None)
+        monkeypatch.setattr(push_module, "reload_current_grid", lambda *a: None)
+
+        @ui.page("/test-push-release")
+        def page() -> None:
+            vp = _make_page(ui_conn)
+            vp.pending = pending
+            vp.update_pending_display = lambda: None
+            modal = PushModal(vp)
+            opened.append(modal)
+            modal.open()
+
+        return opened, applied
+
+    async def test_viewer_checkbox_default_off(self, user: User, modal_page) -> None:
+        opened, applied = modal_page
+        await user.open("/test-push-release")
+        await user.should_see("Release 1 pushed grade(s) to students")
+        await user.should_see("Push 1 change")
+        # A simulated click fails on a button that removes itself.
+        with user:
+            opened[0]._do_push()
+        await user.should_see("1 grade(s) pushed but not released to students")
+        assert applied[0]["post_grades"] is False
+        assert applied[0]["preview"] is not None
+
+    async def test_ticked_checkbox_posts(self, user: User, modal_page) -> None:
+        opened, applied = modal_page
+        await user.open("/test-push-release")
+        await user.should_see("Release 1 pushed grade(s) to students")
+        user.find("Release 1 pushed grade(s) to students").click()
+        await user.should_see("Push 1 change")
+        # A simulated click fails on a button that removes itself.
+        with user:
+            opened[0]._do_push()
+        await user.should_see("1 held back")
+        assert applied[0]["post_grades"] is True
+
+    async def test_count_change_needs_new_approval(
+        self, user: User, modal_page
+    ) -> None:
+        opened, applied = modal_page
+        await user.open("/test-push-release")
+        await user.should_see("Release 1 pushed grade(s) to students")
+        user.find("Release 1 pushed grade(s) to students").click()
+        user.find("Push 1 grade(s) above points possible").click()
+        await user.should_see("Release 2 pushed grade(s) to students")
+        await user.should_see("Push 2 changes")
+        # A simulated click fails on a button that removes itself.
+        with user:
+            opened[0]._do_push()
+        await user.should_see("not released to students")
+        assert applied[0]["post_grades"] is False

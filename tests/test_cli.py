@@ -410,7 +410,7 @@ class TestPush:
         )
         monkeypatch.setattr(
             "cass.db.canvas_apply",
-            lambda conn, pending: {
+            lambda conn, pending, **kwargs: {
                 "ok": True,
                 "results": [
                     {
@@ -450,7 +450,7 @@ class TestPush:
         )
         monkeypatch.setattr(
             "cass.db.canvas_apply",
-            lambda conn, pending: {
+            lambda conn, pending, **kwargs: {
                 "ok": False,
                 "results": [{"ok": False, "canvas_id": 7, "error": "boom"}],
             },
@@ -2299,6 +2299,134 @@ class TestPushClearsGrades:
         assert result.exit_code == 0, result.output
         pushed = cleared.call_args.args[1]["canvas_grades"]
         assert [c["posted_grade"]["current"] for c in pushed.values()] == [""]
+
+
+class TestPushReleasesGrades:
+    """#33: pushed grades are released only after separate approval."""
+
+    @pytest.fixture
+    def graded(self, project_dir, monkeypatch):
+        """Two grade edits on a manual-post assignment, one above its points."""
+        monkeypatch.chdir(project_dir)
+        sdb = sqlite_utils.Database(str(project_dir / "cass.db"))
+        db.init_schema(sdb)
+        monkeypatch.setattr("cass.db.core._db", sdb)
+        monkeypatch.setattr("cass.db.core._db_path", None)
+        rows = []
+        for uid, grade in ((1, "9"), (2, "95")):
+            db.upsert_canvas_grade(sdb, uid, 7, "8")
+            db.mark_synced_grades(sdb, [(uid, 7)])
+            db.upsert_canvas_grade(sdb, uid, 7, grade)
+            rows.append(
+                {
+                    "table": "canvas_grades",
+                    "canvas_assignment_id": 7,
+                    "canvas_user_id": uid,
+                    "name": f"Student {uid}",
+                    "column": "posted_grade",
+                    "baseline": "8",
+                    "current": grade,
+                    "live": "8",
+                    "over_points": grade == "95",
+                    "points_possible": 10,
+                    "post_manually": True,
+                }
+            )
+        monkeypatch.setattr(
+            "cass.db.canvas_preview",
+            lambda conn, pending: {"ok": True, "changes": rows},
+        )
+
+        def apply(conn, pending, *, post_grades=False, preview=None):
+            count = len(pending["canvas_grades"])
+            pushed = {
+                "ok": True,
+                "canvas_assignment_id": 7,
+                "count": count,
+                "unreleased": 0 if post_grades else count,
+            }
+            return {"ok": True, "results": [pushed]}
+
+        apply_mock = MagicMock(side_effect=apply)
+        monkeypatch.setattr("cass.db.canvas_apply", apply_mock)
+        return apply_mock
+
+    def test_yes_does_not_post(self, graded):
+        result = runner.invoke(app, ["push", "--yes", "--allow-over-points"])
+        assert result.exit_code == 0, result.output
+        assert graded.call_args.kwargs["post_grades"] is False
+        assert graded.call_args.kwargs["preview"] is not None
+        assert "Release" not in result.output
+        assert (
+            "2 grade(s) pushed but not released to students "
+            "(pass --post, or post them in Canvas)." in result.stderr
+        )
+
+    def test_post_flag_posts(self, graded):
+        result = runner.invoke(app, ["push", "--yes", "--allow-over-points", "--post"])
+        assert result.exit_code == 0, result.output
+        # No preview: --post covers assignments whose policy changes since.
+        assert graded.call_args.kwargs == {"post_grades": True, "preview": None}
+        assert "not released" not in result.output
+
+    @pytest.mark.parametrize(
+        ("answers", "count", "posts"),
+        [
+            ("n\ny\ny\n", 1, True),
+            ("y\ny\ny\n", 2, True),
+            ("y\nn\ny\n", 2, False),
+            ("y\n\ny\n", 2, False),
+        ],
+    )
+    def test_prompt(self, graded, monkeypatch, answers, count, posts):
+        monkeypatch.setattr("cass.cli.prompts._stdin_is_tty", lambda: True)
+        result = runner.invoke(app, ["push"], input=answers)
+        assert f"Release {count} pushed grade(s) to students?" in result.output
+        assert graded.call_args.kwargs["post_grades"] is posts
+        assert graded.call_args.kwargs["preview"] is not None
+        assert ("not released" in result.output) is not posts
+
+    def test_declined_push_sends_nothing(self, graded, monkeypatch):
+        monkeypatch.setattr("cass.cli.prompts._stdin_is_tty", lambda: True)
+        result = runner.invoke(app, ["push"], input="y\ny\nn\n")
+        assert result.exit_code == 1
+        graded.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("flags", "message"),
+        [
+            ([], "1 grade(s) would be pushed but not released to students"),
+            (
+                ["--allow-over-points"],
+                "2 grade(s) would be pushed but not released to students",
+            ),
+            (["--post"], "1 grade(s) would be released to students"),
+        ],
+    )
+    def test_dry_run_counts_unreleased(self, graded, flags, message):
+        result = runner.invoke(app, ["push", "--dry-run", *flags])
+        assert result.exit_code == 0, result.output
+        assert message in result.stderr
+        graded.assert_not_called()
+
+    def test_failed_release_exits_1(self, graded):
+        graded.side_effect = None
+        graded.return_value = {
+            "ok": False,
+            "results": [
+                {"ok": True, "canvas_assignment_id": 7, "count": 2, "unreleased": 0},
+                {
+                    "ok": False,
+                    "canvas_assignment_id": 7,
+                    "action": "posted_to_students",
+                    "error": "2 grade(s) pushed but not released to students",
+                },
+            ],
+        }
+        result = runner.invoke(app, ["push", "--yes", "--allow-over-points", "--post"])
+        assert result.exit_code == 1
+        assert "pushed but not released" in result.stderr
+        assert "Pushed 2" in result.stdout
 
 
 class TestAssignmentRoutesToAttemptedQuiz:

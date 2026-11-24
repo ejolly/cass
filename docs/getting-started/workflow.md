@@ -29,6 +29,7 @@ Or edit from the terminal with the `cass canvas` commands; see [CLI](../guide/cl
 ```bash
 cass push          # preview, then confirm
 cass push --yes    # skip the confirmation
+cass push --post   # also release the pushed grades to students
 ```
 
 Three kinds of change are held back unless you approve them, and stay pending until you do:
@@ -49,7 +50,17 @@ Three kinds of change are held back unless you approve them, and stay pending un
 
 Percentages and letters are also held back when the assignment has no points possible, because Canvas records them as 0. On a complete/incomplete assignment with no points possible, Canvas ignores a change from one result to the other, so cass holds that back too: clear the grade and push, then enter the new one. Points possible come from Canvas at push time, plus any pending edit to them.
 
-Sends every other pending change to Canvas. On an assignment whose grades post manually, pushing grades also posts every graded submission to students. The viewer's **Push** button does the same.
+Sends every other pending change to Canvas. The viewer's **Push** button does the same.
+
+### Releasing grades to students
+
+On an assignment that posts grades automatically, students see a grade as soon as you push it. On one that posts manually, pushed grades stay hidden until you release them. `cass push` asks whether to release the grades it is about to push, for those students only; the default is no. In the viewer, tick **Release N pushed grade(s) to students**. `--post` releases them without asking. `--yes` alone releases nothing, and `cass push --dry-run` shows how many grades would be pushed but not released.
+
+- A grade you push without releasing is released later in the Canvas gradebook. `--post` covers only grades in the same push.
+- Cleared and held-back grades are never released.
+- A student whose grade was already released sees a changed grade as soon as you push it.
+- cass reads the posting policy from Canvas at the preview and again when it pushes. If an assignment started posting automatically in between and you did not approve releasing its grades, nothing is sent for it. If it started posting manually, its grades are pushed but not released, unless you passed `--post`. If the policy can't be read, nothing is sent.
+- If releasing fails, the grades are still pushed. cass tells you to post them in Canvas and exits 1.
 
 ## Revert
 

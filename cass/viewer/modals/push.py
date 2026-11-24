@@ -8,7 +8,14 @@ from typing import TYPE_CHECKING, cast
 
 from nicegui import ui
 
-from ...db import can_be_approved, count_pending, hold_back_unapproved, refresh_pending
+from ...db import (
+    can_be_approved,
+    count_pending,
+    count_postable,
+    count_unreleased,
+    hold_back_unapproved,
+    refresh_pending,
+)
 from .. import canvas_apply, canvas_preview
 from ..actions import build_preview_html
 from ..grid import (
@@ -33,6 +40,8 @@ class PushModal:
         self._overwrite_conflicts = False
         self._allow_over_points = False
         self._allow_clears = False
+        self._release_grades = False
+        self._n_postable = 0
 
         with ui.dialog() as self.dialog, ui.card().classes("v-modal-card-lg"):
             ui.label("Push to Canvas").classes("v-modal-title")
@@ -44,6 +53,8 @@ class PushModal:
         self._overwrite_conflicts = False
         self._allow_over_points = False
         self._allow_clears = False
+        self._release_grades = False
+        self._n_postable = 0
         self._phase = "loading"
         self._render_loading()
         self.dialog.open()
@@ -100,6 +111,7 @@ class PushModal:
                     f"Remove {n_clears} cleared grade(s) from Canvas",
                     on_change=lambda e: self._approve("clears", bool(e.value)),
                 )
+            self._release_area = ui.element("div")
         self._render_preview_actions()
 
     def _approve(self, kind: str, value: bool) -> None:
@@ -110,6 +122,24 @@ class PushModal:
         else:
             self._allow_over_points = value
         self._render_preview_actions()
+
+    def _render_release_checkbox(self, to_push: PendingChanges) -> None:
+        """Offer to release the pushed grades, unticked whenever N changes."""
+        n_postable = count_postable(to_push, self._preview or {})
+        if n_postable == self._n_postable:
+            return
+        self._n_postable = n_postable
+        self._release_grades = False
+        self._release_area.clear()
+        if n_postable:
+            with self._release_area:
+                ui.checkbox(
+                    f"Release {n_postable} pushed grade(s) to students",
+                    on_change=lambda e: self._approve_release(bool(e.value)),
+                )
+
+    def _approve_release(self, value: bool) -> None:
+        self._release_grades = value
 
     def _split_pending(self) -> tuple[PendingChanges, list[dict[str, object]]]:
         return hold_back_unapproved(
@@ -123,6 +153,7 @@ class PushModal:
     def _render_preview_actions(self) -> None:
         to_push, held = self._split_pending()
         n = count_pending(to_push)
+        self._render_release_checkbox(to_push)
         self._action_area.clear()
         with self._action_area:
             if held:
@@ -151,7 +182,7 @@ class PushModal:
         results: list[dict[str, object]],
         held: list[dict[str, object]] | None = None,
     ) -> None:
-        succeeded = [r for r in results if r.get("ok")]
+        succeeded = [r for r in results if r.get("ok") and "action" not in r]
         failed = [r for r in results if not r.get("ok")]
         held = held or []
         self._content_area.clear()
@@ -166,13 +197,22 @@ class PushModal:
             for r in results:
                 aid = r.get("canvas_id") or r.get("canvas_assignment_id") or "?"
                 if r.get("ok"):
-                    ui.label(f"\u2713 Assignment {aid}").classes("v-text-success")
+                    note = ": released to students" if "action" in r else ""
+                    if r.get("unreleased"):
+                        note = ": " + self._unreleased_note(cast(int, r["unreleased"]))
+                    ui.label(f"\u2713 Assignment {aid}{note}").classes("v-text-success")
                 else:
                     err = r.get("error", "Unknown")
                     ui.label(f"\u2717 Assignment {aid}: {err}").classes("v-text-error")
         self._action_area.clear()
         with self._action_area:
             ui.button("Close", on_click=self.dialog.close).props("flat")
+
+    @staticmethod
+    def _unreleased_note(count: int) -> str:
+        return (
+            f"{count} grade(s) pushed but not released to students; post them in Canvas"
+        )
 
     def _render_error(self, message: str) -> None:
         self._content_area.clear()
@@ -220,10 +260,14 @@ class PushModal:
 
         p = self.page
         to_push, held = self._split_pending()
+        preview = self._preview
+        post_grades = self._release_grades
 
         def _blocking() -> dict[str, object]:
             thread_conn = connect_db(p._project_root)
-            return canvas_apply(thread_conn, to_push)
+            return canvas_apply(
+                thread_conn, to_push, post_grades=post_grades, preview=preview
+            )
 
         try:
             result = await asyncio.get_event_loop().run_in_executor(None, _blocking)
@@ -242,7 +286,11 @@ class PushModal:
                 grid.run_grid_method("refreshCells", {"force": True})  # pyright: ignore[reportUnknownMemberType]
             if result["ok"] and not held:
                 self.dialog.close()
-                notify("Pushed to Canvas")
+                n_unreleased = count_unreleased(result)
+                if n_unreleased:
+                    notify(self._unreleased_note(n_unreleased), "warning")
+                else:
+                    notify("Pushed to Canvas")
             else:
                 self._phase = "results"
                 self._render_results(

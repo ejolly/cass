@@ -181,7 +181,7 @@ class CanvasAssignmentResponse(msgspec.Struct):
     unlock_at: str | None = None
     has_submitted_submissions: bool = False
     workflow_state: str = ""
-    post_manually: bool = False
+    post_manually: bool | None = None  # None: Canvas left it out
     group_category_id: int | None = None
     grade_group_students_individually: bool = False
     created_at: str | None = None
