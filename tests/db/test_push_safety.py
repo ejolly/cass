@@ -527,8 +527,64 @@ class TestPreviewUsesLivePoints:
         )
         client.list_submissions.return_value = [CanvasSubmissionResponse(user_id=1)]
         changes = db.get_pending_changes(db_conn)["canvas_grades"]
-        (row,) = db.preview_grades(db_conn, changes, client)
+        pending = db.get_pending_changes(db_conn)
+        (row,) = db.preview_grades(
+            db_conn,
+            changes,
+            client,
+            assignment_changes=pending.get("canvas_assignments"),
+        )
         return row
+
+    @pytest.mark.parametrize("grade", ["1", "0.5"])
+    def test_no_points_on_canvas_counts_as_zero(self, db_conn, grade):
+        row = self.preview(db_conn, grade, live=None)
+        assert row["over_points"] is True
+        assert row["points_possible"] == 0
+
+    def test_zero_is_not_over_no_points(self, db_conn):
+        assert self.preview(db_conn, "0", live=None)["over_points"] is False
+
+    @pytest.mark.parametrize("in_database", [True, False])
+    def test_checks_the_points_edit_being_pushed(
+        self, db_conn, monkeypatch, in_database
+    ):
+        """canvas_apply sends the caller's pending changes, whatever is stored."""
+        from unittest.mock import MagicMock
+
+        from cass import db
+
+        db.save_pulled_assignments(
+            [db.CanvasAssignment(canvas_id=7, name="HW1", points_possible=10)]
+        )
+        edit = {"points_possible": {"baseline": 10.0, "current": 5.0}}
+        pending = {
+            "canvas_grades": {
+                grade_key(7, 1): {"posted_grade": {"baseline": "", "current": "8"}}
+            }
+        }
+        if in_database:
+            # Stored, but not part of this push.
+            db.update_cell(
+                db_conn, "canvas_assignments", {"canvas_id": 7}, "points_possible", 5
+            )
+        else:
+            pending["canvas_assignments"] = {"7": edit}
+        client = MagicMock()
+        client.__enter__.return_value = client
+        client.get_assignment.return_value = CanvasAssignmentResponse(
+            id=7, name="HW1", grading_type="points", points_possible=10
+        )
+        client.list_submissions.return_value = [CanvasSubmissionResponse(user_id=1)]
+        monkeypatch.setattr("cass.apis.canvas.client.CanvasClient", lambda: client)
+
+        rows = db.canvas_preview(db_conn, pending)["changes"]
+        (row,) = [
+            r
+            for r in rows  # ty: ignore[not-iterable]
+            if r["table"] == "canvas_grades"
+        ]
+        assert row["over_points"] is not in_database
 
     @pytest.mark.parametrize(("live", "over"), [(5, True), (20, False)])
     def test_points_changed_on_canvas_after_pull(self, db_conn, live, over):
@@ -548,3 +604,63 @@ class TestPreviewUsesLivePoints:
     def test_percentage_held_when_points_edit_is_zero(self, db_conn):
         row = self.preview(db_conn, "95%", live=10, edit=0)
         assert row["not_accepted"] is True
+
+
+class TestPassFailWithoutPoints:
+    """Canvas ignores a change between complete and incomplete at 0 points."""
+
+    @staticmethod
+    def preview(
+        grade: str, live_grade: str | None, points: float | None, edit: float | None
+    ):
+        from unittest.mock import MagicMock
+
+        from cass import db
+
+        client = MagicMock()
+        client.get_assignment.return_value = CanvasAssignmentResponse(
+            id=7, name="HW1", grading_type="pass_fail", points_possible=points
+        )
+        client.list_submissions.return_value = [
+            CanvasSubmissionResponse(user_id=1, entered_grade=live_grade)
+        ]
+        baseline = live_grade or ""
+        changes = {
+            grade_key(7, 1): {"posted_grade": {"baseline": baseline, "current": grade}}
+        }
+        edits = None
+        if edit is not None:
+            edits = {"7": {"points_possible": {"baseline": points, "current": edit}}}
+        (row,) = db.preview_grades(
+            db.get_db(), changes, client, assignment_changes=edits
+        )
+        return row, {"canvas_grades": changes}
+
+    @pytest.mark.parametrize(
+        ("grade", "live_grade", "points", "edit", "held"),
+        [
+            ("incomplete", "complete", 0, None, True),
+            ("fail", "complete", 0, None, True),
+            ("complete", "incomplete", None, None, True),
+            ("pass", "incomplete", 0, None, True),
+            ("incomplete", "complete", 10, 0, True),
+            ("pass", "complete", 0, None, False),
+            ("fail", "incomplete", 0, None, False),
+            ("complete", None, 0, None, False),
+            ("incomplete", "", None, None, False),
+            ("", "complete", 0, None, False),
+            ("-", "complete", 0, None, False),
+            ("incomplete", "complete", 10, None, False),
+        ],
+    )
+    def test_change_is_held(self, db_conn, grade, live_grade, points, edit, held):
+        row, pending = self.preview(grade, live_grade, points, edit)
+        assert row["not_accepted"] is held
+        _, held_rows = hold_back_unapproved(
+            pending,
+            {"changes": [row]},
+            overwrite_conflicts=True,
+            allow_over_points=True,
+            allow_clears=True,
+        )
+        assert [r["held"] for r in held_rows] == [HELD_NOT_ACCEPTED] * held

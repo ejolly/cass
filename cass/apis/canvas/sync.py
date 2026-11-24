@@ -29,6 +29,7 @@ __all__ = [
     "get_post_manually_map",
     "get_scheme_letters",
     "is_valid_grade",
+    "pass_fail_change_ignored",
     "push_assignments",
     "push_grades",
     "resolve_group_ids",
@@ -151,6 +152,26 @@ def accepts_grade(
         # Canvas looks a number up in the scheme before reading it as points.
         return bool(letters) and float(text) not in _scheme_numbers(letters)
     return bool(points_possible) and (text in letters or text.upper() in letters)
+
+
+def pass_fail_change_ignored(
+    grade: str,
+    live_grade: str | None,
+    grading_type: str,
+    points_possible: float | None,
+) -> bool:
+    """Return whether Canvas would ignore a change of a complete/incomplete grade.
+
+    Without points possible, both results score 0, and Canvas keeps the existing
+    grade when the score does not change.
+    """
+    if grading_type != "pass_fail" or points_possible:
+        return False
+    if not is_valid_grade(live_grade):
+        return False
+    same_result = {"pass": "complete", "fail": "incomplete"}
+    new = grade.strip()
+    return same_result.get(new, new) != same_result.get(live_grade, live_grade)
 
 
 def _scheme_numbers(letters: frozenset[str]) -> set[float]:

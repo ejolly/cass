@@ -14,6 +14,7 @@ from ..apis.canvas.sync import (
     accepts_grade,
     get_scheme_letters,
     is_valid_grade,
+    pass_fail_change_ignored,
     push_assignments,
     push_grades,
     resolve_row_name,
@@ -386,10 +387,18 @@ def preview_grades(
     conn: sqlite_utils.Database,
     table_changes: TableChanges,
     client: CanvasClient,
+    *,
+    assignment_changes: TableChanges | None = None,
 ) -> list[dict[str, object]]:
-    """Preview pending grade changes against live Canvas submissions."""
+    """Preview pending grade changes against live Canvas submissions.
+
+    Args:
+        conn: Local database.
+        table_changes: Pending grade changes.
+        client: Canvas client.
+        assignment_changes: Assignment changes pushed along with the grades.
+    """
     results: list[dict[str, object]] = []
-    pending_assignments = get_pending_changes(conn).get("canvas_assignments", {})
     by_assignment: dict[int, list[tuple[int, RowChanges]]] = {}
     for pk_key, columns in table_changes.items():
         pk = json.loads(pk_key)
@@ -402,12 +411,14 @@ def preview_grades(
         try:
             assignment = client.get_assignment(aid)
             letters = get_scheme_letters(client, assignment)
-            # A pending points edit may be pushed before the grades, so a grade
-            # must fit both the live points and the edited ones.
-            points_in_effect = [assignment.points_possible]
-            points_edit = pending_assignments.get(str(aid), {}).get("points_possible")
+            # A points edit is pushed before the grades but may be held back, so
+            # a grade must fit both the live points and the edited ones.
+            points_in_effect = [assignment.points_possible or 0.0]
+            assignment_edits = (assignment_changes or {}).get(str(aid), {})
+            points_edit = assignment_edits.get("points_possible")
             if points_edit is not None:
-                points_in_effect.append(cast(float, points_edit["current"]))
+                edited_points = cast(float | str | None, points_edit["current"])
+                points_in_effect.append(float(edited_points or 0.0))
             live_subs = client.list_submissions(aid)
             live_by_user = {submission.user_id: submission for submission in live_subs}
             for uid, columns in student_changes:
@@ -445,10 +456,7 @@ def preview_grades(
                             "current": vals["current"],
                             "live": live_val,
                             "conflict": grade_conflicts(live_val, vals["baseline"]),
-                            "points_possible": min(
-                                (p for p in points_in_effect if p is not None),
-                                default=None,
-                            ),
+                            "points_possible": min(points_in_effect),
                             "over_points": col == "posted_grade"
                             and any(
                                 exceeds_points(vals["current"], points)
@@ -458,11 +466,17 @@ def preview_grades(
                             and clears_grade(vals["baseline"], vals["current"]),
                             "not_accepted": col == "posted_grade"
                             and has_grade(vals["current"])
-                            and not all(
-                                accepts_grade(
+                            and any(
+                                not accepts_grade(
                                     str(vals["current"]),
                                     assignment.grading_type,
                                     letters,
+                                    points,
+                                )
+                                or pass_fail_change_ignored(
+                                    str(vals["current"]),
+                                    live_sub.entered_grade,
+                                    assignment.grading_type,
                                     points,
                                 )
                                 for points in points_in_effect
@@ -498,7 +512,14 @@ def canvas_preview(
         if assignment_changes:
             results.extend(preview_assignments(conn, assignment_changes, client))
         if grade_changes:
-            results.extend(preview_grades(conn, grade_changes, client))
+            results.extend(
+                preview_grades(
+                    conn,
+                    grade_changes,
+                    client,
+                    assignment_changes=assignment_changes,
+                )
+            )
 
     return {
         "ok": True,

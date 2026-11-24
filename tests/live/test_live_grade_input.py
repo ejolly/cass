@@ -15,7 +15,11 @@ import pytest
 from live_course import get_test_student_id
 
 from cass.apis.canvas.client import CanvasClient
-from cass.apis.canvas.sync import accepts_grade, get_scheme_letters
+from cass.apis.canvas.sync import (
+    accepts_grade,
+    get_scheme_letters,
+    pass_fail_change_ignored,
+)
 
 
 def _entered_grade(client: CanvasClient, assignment_id: int, user_id: int):
@@ -110,5 +114,37 @@ def test_accepts_grade_matches_canvas(
                 assert accepts_grade(
                     grade, grading_type, letters, live.points_possible
                 ) is (grade in accepted), grade
+    finally:
+        practice.delete_assignment(assignment.id)
+
+
+def test_pass_fail_change_is_ignored_without_points(practice: CanvasClient):
+    student_id = get_test_student_id(practice)
+    assignment = practice.create_assignment(
+        f"cass-live grade input {uuid4().hex[:8]}",
+        points_possible=0,
+        grading_type="pass_fail",
+        published=True,
+    )
+    try:
+        _entered_grade(practice, assignment.id, student_id)
+        # Each push, what Canvas then records, and whether cass must refuse it.
+        for grade, recorded, refused in [
+            ("complete", "complete", False),
+            ("pass", "complete", False),
+            ("incomplete", "complete", True),
+            ("", None, False),
+            ("fail", "incomplete", False),
+            ("incomplete", "incomplete", False),
+            ("complete", "incomplete", True),
+        ]:
+            before, _ = _entered_grade(practice, assignment.id, student_id)
+            progress = practice.bulk_push_grades(assignment.id, {student_id: grade})
+            practice.wait_for_progress(progress.id)
+            after, _ = _entered_grade(practice, assignment.id, student_id)
+            assert after == recorded, (before, grade)
+            assert (
+                bool(grade) and pass_fail_change_ignored(grade, before, "pass_fail", 0)
+            ) is refused, (before, grade)
     finally:
         practice.delete_assignment(assignment.id)
