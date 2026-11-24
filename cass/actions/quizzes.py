@@ -24,7 +24,12 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from ..apis.canvas.client import CanvasClient
-    from ..apis.canvas.schema import CanvasQuiz, CanvasQuizGroup, CanvasQuizQuestion
+    from ..apis.canvas.schema import (
+        CanvasQuiz,
+        CanvasQuizGroup,
+        CanvasQuizQuestion,
+        CanvasQuizSubmission,
+    )
 
 QUIZ_TYPES = ("practice_quiz", "assignment", "graded_survey", "survey")
 SURVEY_TYPES = ("survey", "graded_survey")
@@ -630,17 +635,30 @@ class QuizHasAttemptsError(RuntimeError):
 FINISHED_ATTEMPT_STATES = ("complete", "pending_review")
 
 
-def count_finished_attempts(client: CanvasClient, quiz_id: int) -> int:
-    """Count students' finished attempts on a quiz.
+def has_finished_attempt(submission: CanvasQuizSubmission) -> bool:
+    """Return whether a student has finished at least one attempt.
 
-    A finished attempt is ``complete`` or ``pending_review``. Only students on
-    the roster count, so teacher previews and the Test Student never do.
+    Canvas lists only each student's latest attempt and sets it back to
+    ``untaken`` when a retake starts, so a later attempt number also means an
+    earlier attempt is finished.
+    """
+    return (
+        submission.workflow_state in FINISHED_ATTEMPT_STATES
+        or (submission.attempt or 0) > 1
+    )
+
+
+def count_finished_attempts(client: CanvasClient, quiz_id: int) -> int:
+    """Count students with a finished attempt on a quiz, including mid-retake.
+
+    Only students on the roster count, so teacher previews and the Test
+    Student never do.
     """
     student_ids = {s.id for s in client.list_students()}
     return sum(
         1
         for sub in client.list_quiz_submissions(quiz_id)
-        if sub.workflow_state in FINISHED_ATTEMPT_STATES and sub.user_id in student_ids
+        if sub.user_id in student_ids and has_finished_attempt(sub)
     )
 
 
