@@ -388,7 +388,10 @@ class CanvasSubmissionResponse(msgspec.Struct):
     seconds_late: float = 0.0
     grade: str | None = None
     entered_grade: str | None = None  # the grade before late deductions
+    entered_score: float | None = None  # the score before late deductions
     score: float | None = None
+    # null until the grade is visible to the student; unset: Canvas left it out
+    posted_at: str | None | msgspec.UnsetType = msgspec.UNSET
     workflow_state: str = ""
     cached_due_date: str | None = None  # per-student due, after overrides
     assignment_id: int = 0

@@ -8,11 +8,14 @@ from __future__ import annotations
 __docformat__ = "google"
 
 import json
+import math
 import re
 from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from datetime import date, datetime
 from typing import TYPE_CHECKING, cast
 
+import msgspec
 import sqlite_utils
 
 from .attempts import refuse_if_assignment_attempted
@@ -21,12 +24,18 @@ from .times import same_instant
 if TYPE_CHECKING:
     from ...db.schema import CanvasGrade
     from .client import CanvasClient
-    from .schema import CanvasAssignmentResponse
+    from .schema import (
+        CanvasAssignmentResponse,
+        CanvasGradingSchemeEntry,
+        CanvasSubmissionResponse,
+    )
 
 __all__ = [
+    "PostingPreview",
     "accepts_grade",
     "build_grade_push_data",
     "get_post_manually",
+    "get_scheme",
     "get_scheme_letters",
     "is_valid_grade",
     "pass_fail_change_ignored",
@@ -35,6 +44,7 @@ __all__ = [
     "resolve_group_ids",
     "resolve_row_name",
     "same_instant",
+    "shows_pushed_grade",
     "values_equal",
 ]
 
@@ -93,26 +103,33 @@ _LETTER_GRADING_TYPES = ("letter_grade", "gpa_scale")
 _PASS_FAIL_GRADES = frozenset({"complete", "incomplete", "pass", "fail"})
 
 
-def get_scheme_letters(
+def get_scheme(
     client: CanvasClient, assignment: CanvasAssignmentResponse
-) -> frozenset[str]:
-    """Return the names in the letter scheme set on the assignment or the course.
+) -> list[CanvasGradingSchemeEntry]:
+    """Return the letter scheme set on the assignment or the course.
 
     Empty when no scheme is visible: neither sets one, Canvas does not list the
     one set, or it is 0. Canvas may then use an account's default scheme, which
     cass cannot read. Also empty for grading types that take no letters.
     """
     if assignment.grading_type not in _LETTER_GRADING_TYPES:
-        return frozenset()
+        return []
     standard_id = assignment.grading_standard_id
     if standard_id is None:
         standard_id = client.get_course().grading_standard_id
     if not standard_id:
-        return frozenset()
+        return []
     for standard in client.list_grading_standards():
         if standard.id == standard_id:
-            return frozenset(entry.name for entry in standard.grading_scheme)
-    return frozenset()
+            return standard.grading_scheme
+    return []
+
+
+def get_scheme_letters(
+    client: CanvasClient, assignment: CanvasAssignmentResponse
+) -> frozenset[str]:
+    """Return the names in the visible letter scheme (see ``get_scheme``)."""
+    return frozenset(entry.name for entry in get_scheme(client, assignment))
 
 
 def accepts_grade(
@@ -179,6 +196,72 @@ def _scheme_numbers(letters: frozenset[str]) -> set[float]:
     return {float(name) for name in letters if re.fullmatch(_NUMBER, name.strip())}
 
 
+def shows_pushed_grade(
+    sent: str,
+    submission: CanvasSubmissionResponse,
+    grading_type: str,
+    points_possible: float | None,
+    scheme: list[CanvasGradingSchemeEntry],
+) -> bool:
+    """Return whether Canvas shows the grade that was sent as the entered grade.
+
+    Allows for the forms Canvas gives a grade (checked in
+    ``tests/live/test_live_grade_posting.py``): ``8.50`` becomes ``8.5``, ``95%``
+    becomes points or a letter, and ``pass`` becomes ``complete``. Anything not
+    recognized does not match.
+    """
+    sent = sent.strip()
+    shown = (submission.entered_grade or "").strip()
+    if not is_valid_grade(sent) or not is_valid_grade(shown):
+        return False
+    if grading_type == "pass_fail":
+        return {"pass": "complete", "fail": "incomplete"}.get(sent, sent) == shown
+
+    is_percent = re.fullmatch(_NUMBER + "%", sent) is not None
+    if not is_percent and not re.fullmatch(_NUMBER, sent):
+        is_letter_type = grading_type in _LETTER_GRADING_TYPES
+        return is_letter_type and sent.upper() == shown.upper()
+
+    if is_percent:
+        if not points_possible:
+            return False
+        sent_score = float(sent.removesuffix("%")) / 100 * points_possible
+    else:
+        sent_score = float(sent)
+    entered_score = submission.entered_score
+    if entered_score is None or not math.isclose(
+        entered_score, sent_score, rel_tol=1e-9, abs_tol=1e-9
+    ):
+        return False
+    if grading_type == "points":
+        return re.fullmatch(_NUMBER, shown) is not None and math.isclose(
+            float(shown), sent_score, rel_tol=1e-9, abs_tol=1e-9
+        )
+    if grading_type == "percent":
+        # Canvas shows percentages to two decimals.
+        return (
+            is_percent
+            and re.fullmatch(_NUMBER + "%", shown) is not None
+            and abs(float(shown.removesuffix("%")) - float(sent.removesuffix("%")))
+            < 0.0051
+        )
+    if grading_type not in _LETTER_GRADING_TYPES or not points_possible:
+        return False
+    # Without a visible scheme, only the score can be compared.
+    return not scheme or shown == _scheme_letter(
+        entered_score / points_possible, scheme
+    )
+
+
+def _scheme_letter(share: float, scheme: list[CanvasGradingSchemeEntry]) -> str:
+    """Return the letter the scheme gives a share of the points possible."""
+    entries = sorted(scheme, key=lambda entry: entry.value, reverse=True)
+    for entry in entries:
+        if share >= entry.value:
+            return entry.name
+    return entries[-1].name
+
+
 def build_grade_push_data(
     grades: list[CanvasGrade],
 ) -> tuple[dict[int, dict[int, str]], int]:
@@ -217,57 +300,80 @@ def get_post_manually(assignment: CanvasAssignmentResponse) -> bool:
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class PostingPreview:
+    """What the push preview showed about releasing an assignment's grades.
+
+    Attributes:
+        post_manually: The assignment posted grades manually.
+        unposted_ids: Students whose previewed grade was not yet visible to them.
+    """
+
+    post_manually: bool
+    unposted_ids: frozenset[int]
+
+
 def push_grades(
     client: CanvasClient,
     conn: sqlite_utils.Database,
     grade_data_by_aid: dict[int, dict[int, str]],
     *,
     post_grades: bool = False,
-    previewed_policies: Mapping[int, bool] | None = None,
+    cover_policy_changes: bool = False,
+    previewed: Mapping[int, PostingPreview] | None = None,
 ) -> list[dict[str, object]]:
     """Bulk-push grades to Canvas, releasing them to students only if approved.
 
     On an assignment that posts automatically, the push itself releases grades.
-    On one that posts manually, the pushed grades of students who got one are
-    released only with ``post_grades`` (commitment C5). The posting policy is
-    read live just before each push.
+    On one that posts manually, pushed grades are released only with
+    ``post_grades`` (commitment C5), and only those Canvas shows as sent. The
+    posting policy is read live just before each push; a change between that
+    read and the push itself cannot be prevented.
 
-    ``previewed_policies`` limits ``post_grades`` to assignments that posted
-    manually when the user approved. It also fails, without sending it, an
-    assignment that has since started posting automatically if its release was
-    not approved.
+    An assignment that posts automatically now but did not at the preview, or
+    without a preview as last pulled, fails without being sent unless its
+    release was approved.
 
     Args:
         client: Authenticated Canvas API client.
-        conn: SQLite database connection. The stored posting policy is not used.
+        conn: SQLite database connection, for the last pulled posting policy.
         grade_data_by_aid: ``{assignment_id: {user_id: grade_string}}``. An
             empty grade removes the grade on Canvas and is never released.
-        post_grades: The user approved releasing the pushed grades.
-        previewed_policies: ``post_manually`` by assignment, as the user saw it.
-            None means the approval covers whatever the policy is now.
+        post_grades: The user approved releasing the pushed grades. With
+            ``previewed``, this covers only the grades that were unreleased on
+            manual-post assignments then.
+        cover_policy_changes: The approval covers every pushed grade, whatever
+            the preview showed.
+        previewed: Posting preview by assignment, as the user saw it.
 
     Returns:
         List of result dicts with ``ok`` and ``canvas_assignment_id``. A push
-        also has ``count``, and ``unreleased`` (grades pushed without trying to
-        release them) if it succeeded; a release has the ``action``
-        ``posted_to_students``. Failures have an ``error``.
+        also has ``count``, and if it succeeded ``unreleased`` (grades pushed
+        but not visible to students, whose release was not approved) and
+        ``release_unknown`` (those cass could not tell about). A release has
+        the ``action`` ``posted_to_students``. Failures have an ``error``.
     """
     results: list[dict[str, object]] = []
     for aid, grade_data in grade_data_by_aid.items():
-        release_approved = post_grades and (
-            previewed_policies is None or previewed_policies.get(aid) is True
-        )
-        previewed_automatic = (
-            previewed_policies is None or previewed_policies.get(aid) is False
+        seen = None if previewed is None else previewed.get(aid)
+        covers_all = post_grades and (cover_policy_changes or previewed is None)
+        release_approved = covers_all or (
+            post_grades and seen is not None and seen.post_manually
         )
         try:
-            post_manually = get_post_manually(client.get_assignment(aid))
-            if not (post_manually or release_approved or previewed_automatic):
-                raise RuntimeError(
-                    "grades now post automatically on this assignment, so pushing "
-                    "would release them to students without approval; "
-                    "nothing was sent. Push again to review it."
-                )
+            assignment = client.get_assignment(aid)
+            post_manually = get_post_manually(assignment)
+            if not post_manually and not release_approved:
+                if previewed is None:
+                    was_automatic = _stored_post_manually(conn, aid) is False
+                else:
+                    was_automatic = seen is not None and not seen.post_manually
+                if not was_automatic:
+                    raise RuntimeError(
+                        "grades now post automatically on this assignment, so "
+                        "pushing would release them to students without approval; "
+                        "nothing was sent. Push again to review it."
+                    )
             progress = client.bulk_push_grades(aid, grade_data)
             client.wait_for_progress(progress.id)
         except Exception as e:
@@ -281,43 +387,120 @@ def push_grades(
             )
             continue
 
-        graded_ids = [uid for uid, grade in grade_data.items() if is_valid_grade(grade)]
-        release = post_manually and release_approved
-        results.append(
-            {
-                "canvas_assignment_id": aid,
-                "ok": True,
-                "count": len(grade_data),
-                "unreleased": len(graded_ids) if post_manually and not release else 0,
-            }
-        )
-        if release and graded_ids:
-            results.append(_release_grades(client, aid, graded_ids))
+        pushed: dict[str, object] = {
+            "canvas_assignment_id": aid,
+            "ok": True,
+            "count": len(grade_data),
+            "unreleased": 0,
+            "release_unknown": 0,
+        }
+        results.append(pushed)
+        graded = {uid: g for uid, g in grade_data.items() if is_valid_grade(g)}
+        if not post_manually or not graded:
+            continue
+        if covers_all:
+            approved_ids = set(graded)
+        elif release_approved and seen is not None:
+            approved_ids = graded.keys() & seen.unposted_ids
+        else:
+            approved_ids = set()
+        try:
+            live = {s.user_id: s for s in client.list_submissions(aid)}
+        except Exception as e:
+            pushed["release_unknown"] = len(graded) - len(approved_ids)
+            if approved_ids:
+                results.append(_unread_release(aid, len(approved_ids), e))
+            continue
+        posted_at = {
+            uid: live[uid].posted_at if uid in live else msgspec.UNSET for uid in graded
+        }
+        rest = [uid for uid in graded if uid not in approved_ids]
+        pushed["unreleased"] = sum(posted_at[uid] is None for uid in rest)
+        pushed["release_unknown"] = sum(posted_at[uid] is msgspec.UNSET for uid in rest)
+        to_release = {
+            uid: grade
+            for uid, grade in graded.items()
+            if uid in approved_ids and not isinstance(posted_at[uid], str)
+        }
+        if to_release:
+            results.extend(_release_grades(client, assignment, to_release, live))
     return results
 
 
+def _stored_post_manually(conn: sqlite_utils.Database, aid: int) -> bool | None:
+    """Return the posting policy at the last pull, or None if not stored."""
+    row = conn.execute(
+        "SELECT post_manually FROM canvas_assignments WHERE canvas_id = ?", [aid]
+    ).fetchone()
+    return None if row is None or row[0] is None else bool(row[0])
+
+
+def _unread_release(aid: int, count: int, error: Exception) -> dict[str, object]:
+    """Return the result row for grades that could not be read back."""
+    return {
+        "canvas_assignment_id": aid,
+        "action": "posted_to_students",
+        "ok": False,
+        "error": f"cass released none of {count} pushed grade(s), because it could "
+        f"not check them on Canvas: {error}. Post them in the Canvas gradebook.",
+    }
+
+
 def _release_grades(
-    client: CanvasClient, assignment_id: int, student_ids: list[int]
-) -> dict[str, object]:
-    """Post these students' pushed grades; returns a push result row."""
+    client: CanvasClient,
+    assignment: CanvasAssignmentResponse,
+    grades: dict[int, str],
+    live: Mapping[int, CanvasSubmissionResponse],
+) -> list[dict[str, object]]:
+    """Post the pushed grades that Canvas shows as sent; returns result rows.
+
+    Canvas can complete a push yet ignore or remove a student's grade, and
+    someone else may have changed it since. Posting would then release a grade
+    the user did not push.
+    """
     result: dict[str, object] = {
-        "canvas_assignment_id": assignment_id,
+        "canvas_assignment_id": assignment.id,
         "action": "posted_to_students",
     }
     try:
-        progress = client.post_assignment_grades(
-            assignment_id, graded_only=True, only_student_ids=student_ids
-        )
-        if progress is None:
-            raise RuntimeError("Canvas did not start posting")
-        client.wait_for_progress(progress.id)
+        scheme = get_scheme(client, assignment)
     except Exception as e:
-        error = (
-            f"{len(student_ids)} grade(s) pushed but not released to students: "
-            f"{e}. Check the Canvas gradebook and post them there."
+        return [_unread_release(assignment.id, len(grades), e)]
+    confirmed = [
+        uid
+        for uid, grade in grades.items()
+        if uid in live
+        and shows_pushed_grade(
+            grade,
+            live[uid],
+            assignment.grading_type,
+            assignment.points_possible,
+            scheme,
         )
-        return {**result, "ok": False, "error": error}
-    return {**result, "ok": True}
+    ]
+    results: list[dict[str, object]] = []
+    if confirmed:
+        try:
+            progress = client.post_assignment_grades(
+                assignment.id, graded_only=True, only_student_ids=confirmed
+            )
+            if progress is None:
+                raise RuntimeError("Canvas did not start posting")
+            client.wait_for_progress(progress.id)
+            results.append({**result, "ok": True})
+        except Exception as e:
+            error = (
+                f"{len(confirmed)} grade(s) pushed but may not be released to "
+                f"students: {e}. Check the Canvas gradebook and post them there."
+            )
+            results.append({**result, "ok": False, "error": error})
+    if n_unconfirmed := len(grades) - len(confirmed):
+        error = (
+            f"{n_unconfirmed} grade(s) not released to students, because Canvas "
+            "does not show the pushed grade. Check them in the Canvas gradebook."
+        )
+        results.append({**result, "ok": False, "error": error})
+    return results
 
 
 def resolve_group_ids(

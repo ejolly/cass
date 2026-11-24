@@ -633,24 +633,26 @@ def push(
         allow_clears=allow_clears,
     )
     n_postable = db.count_postable(to_push, preview)
+    if not dry_run:
+        _render_held_back(held)
+        if count_pending(to_push) == 0:
+            err_console.print("[yellow]Nothing left to push.[/yellow]")
+            raise typer.Exit(code=1 if held else 0)
+
+    for notice in db.release_notices(to_push, preview):
+        err_console.print(notice, soft_wrap=True)
+    if n_postable and (dry_run or yes):
+        verb = "would" if dry_run else "will"
+        outcome = (
+            "released to students"
+            if post
+            else "pushed but not released to students "
+            "(pass --post, or post them in Canvas)"
+        )
+        err_console.print(f"{n_postable} grade(s) {verb} be {outcome}.", soft_wrap=True)
     if dry_run:
-        if n_postable:
-            outcome = (
-                "released to students"
-                if post
-                else "pushed but not released to students "
-                "(pass --post, or post them in Canvas)"
-            )
-            err_console.print(
-                f"{n_postable} grade(s) would be {outcome}.", soft_wrap=True
-            )
         err_console.print("Dry run: nothing pushed; pending changes stay pending.")
         return
-
-    _render_held_back(held)
-    if count_pending(to_push) == 0:
-        err_console.print("[yellow]Nothing left to push.[/yellow]")
-        raise typer.Exit(code=1 if held else 0)
 
     release_approved = post
     if n_postable and not post and not yes:
@@ -663,17 +665,12 @@ def push(
         conn,
         to_push,
         post_grades=release_approved,
-        # --post also covers assignments whose posting policy changes after the
-        # preview; an answer at the prompt covers only what the preview showed.
-        preview=None if post else preview,
+        cover_policy_changes=post,
+        preview=preview,
     )
     _render_push_results(cast(list[dict[str, object]], result.get("results", [])))
-    if n_unreleased := db.count_unreleased(result):
-        err_console.print(
-            f"{n_unreleased} grade(s) pushed but not released to students "
-            "(pass --post, or post them in Canvas).",
-            soft_wrap=True,
-        )
+    for notice in db.push_notices(result):
+        err_console.print(notice, soft_wrap=True)
     if held or not result["ok"]:
         raise typer.Exit(code=1)
 

@@ -9,10 +9,12 @@ import sqlite3
 import time
 from typing import TYPE_CHECKING, cast
 
+import msgspec
 import sqlite_utils
 
 from ..apis.canvas.attempts import QuizAttemptsUnknownError, count_finished_attempts
 from ..apis.canvas.sync import (
+    PostingPreview,
     accepts_grade,
     get_post_manually,
     get_scheme_letters,
@@ -625,6 +627,12 @@ def preview_grades(
                         }
                     )
                     continue
+                # Left out when Canvas did not say, so nothing is claimed about it.
+                posted = (
+                    {}
+                    if live_sub.posted_at is msgspec.UNSET
+                    else {"posted_at": live_sub.posted_at}
+                )
                 for col, vals in columns.items():
                     live_val = None
                     if col == "posted_grade":
@@ -643,6 +651,7 @@ def preview_grades(
                             "live": live_val,
                             "conflict": grade_conflicts(live_val, vals["baseline"]),
                             "post_manually": post_manually,
+                            **posted,
                             "points_possible": min(points_in_effect),
                             "over_points": col == "posted_grade"
                             and any(
@@ -774,6 +783,7 @@ def canvas_apply(
     pending: PendingChanges,
     *,
     post_grades: bool = False,
+    cover_policy_changes: bool = False,
     preview: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Push pending changes to Canvas and clear synced rows on success.
@@ -786,11 +796,13 @@ def canvas_apply(
     Args:
         conn: Local database.
         pending: Pending changes the user approved; synced ones are removed.
-        post_grades: The user approved releasing the pushed grades to students
-            on manual-post assignments.
+        post_grades: The user approved releasing the grades ``count_postable``
+            counted in the preview.
+        cover_policy_changes: With ``post_grades``, the approval covers every
+            pushed grade, whatever the preview showed, as ``--post`` does.
         preview: Result of ``canvas_preview`` that the user's approvals were
-            based on. None means ``post_grades`` covers every pushed grade,
-            whatever the posting policies were at the preview.
+            based on. Without it, posting policies are compared with the last
+            pull's, and ``post_grades`` covers every pushed grade.
 
     Returns:
         ``ok`` (False if anything failed) and the ``results`` rows.
@@ -832,9 +844,8 @@ def canvas_apply(
                 conn,
                 grade_data,
                 post_grades=post_grades,
-                previewed_policies=(
-                    None if preview is None else _previewed_policies(preview)
-                ),
+                cover_policy_changes=cover_policy_changes,
+                previewed=None if preview is None else _posting_previews(preview),
             )
             results.extend(grade_results)
             for result in grade_results:
@@ -984,13 +995,23 @@ def hold_back_unapproved(
     return to_push, held
 
 
-def _previewed_policies(preview: dict[str, object]) -> dict[int, bool]:
-    """Return ``post_manually`` by assignment, as read for the preview."""
-    changes = cast(list[dict[str, object]], preview.get("changes", []))
+def _posting_previews(preview: dict[str, object]) -> dict[int, PostingPreview]:
+    """Return what the preview showed about each assignment's posting."""
+    rows: dict[int, list[dict[str, object]]] = {}
+    for change in cast(list[dict[str, object]], preview.get("changes", [])):
+        if "post_manually" in change:
+            aid = cast(int, change["canvas_assignment_id"])
+            rows.setdefault(aid, []).append(change)
     return {
-        cast(int, change["canvas_assignment_id"]): bool(change["post_manually"])
-        for change in changes
-        if "post_manually" in change
+        aid: PostingPreview(
+            post_manually=bool(changes[0]["post_manually"]),
+            unposted_ids=frozenset(
+                cast(int, c["canvas_user_id"])
+                for c in changes
+                if "posted_at" in c and c["posted_at"] is None
+            ),
+        )
+        for aid, changes in rows.items()
     }
 
 
@@ -1002,23 +1023,86 @@ def count_postable(to_push: PendingChanges, preview: dict[str, object]) -> int:
         preview: Result of ``canvas_preview`` for them.
 
     Returns:
-        The number of grades, not counting clears, on manual-post assignments.
+        The number of grades, not counting clears, on manual-post assignments
+        for students whose grade is not already released.
     """
-    policies = _previewed_policies(preview)
+    previews = _posting_previews(preview)
     grade_data, _, _ = _extract_grade_data(to_push.get("canvas_grades", {}))
     return sum(
         1
         for aid, grades in grade_data.items()
-        if policies.get(aid)
-        for grade in grades.values()
-        if has_grade(grade)
+        if aid in previews and previews[aid].post_manually
+        for uid, grade in grades.items()
+        if has_grade(grade) and uid in previews[aid].unposted_ids
     )
 
 
+def release_notices(to_push: PendingChanges, preview: dict[str, object]) -> list[str]:
+    """Return what to tell the user, before pushing, about released grades.
+
+    Covers changes on manual-post assignments that students see without a
+    release, clears included, and those cass cannot tell about.
+
+    Args:
+        to_push: Pending changes without those held back.
+        preview: Result of ``canvas_preview`` for them.
+    """
+    grade_data, _, _ = _extract_grade_data(to_push.get("canvas_grades", {}))
+    released = 0
+    unknown = 0
+    seen: set[tuple[object, object]] = set()
+    for change in cast(list[dict[str, object]], preview.get("changes", [])):
+        aid, uid = change.get("canvas_assignment_id"), change.get("canvas_user_id")
+        pushed = uid in grade_data.get(cast(int, aid), {})
+        if not change.get("post_manually") or not pushed or (aid, uid) in seen:
+            continue
+        seen.add((aid, uid))
+        if "posted_at" not in change:
+            unknown += 1
+        elif change["posted_at"] is not None:
+            released += 1
+    notices = []
+    if released:
+        notices.append(
+            f"{released} changed grade(s) are already released; "
+            "students will see them when pushed."
+        )
+    if unknown:
+        notices.append(
+            f"cass could not tell whether {unknown} changed grade(s) are already "
+            "released; students may see them when pushed."
+        )
+    return notices
+
+
 def count_unreleased(result: dict[str, object]) -> int:
-    """Count grades ``canvas_apply`` pushed without trying to release them."""
+    """Count grades ``canvas_apply`` pushed that students cannot see yet.
+
+    Leaves out grades whose release was tried, which have their own results.
+    """
     rows = cast(list[dict[str, object]], result.get("results", []))
     return sum(cast(int, row.get("unreleased", 0)) for row in rows)
+
+
+def push_notices(result: dict[str, object]) -> list[str]:
+    """Return what to tell the user, after pushing, about unreleased grades.
+
+    Args:
+        result: Result of ``canvas_apply``.
+    """
+    notices = []
+    if n_unreleased := count_unreleased(result):
+        notices.append(
+            f"{n_unreleased} grade(s) pushed but not released to students; "
+            "post them in Canvas."
+        )
+    rows = cast(list[dict[str, object]], result.get("results", []))
+    if n_unknown := sum(cast(int, row.get("release_unknown", 0)) for row in rows):
+        notices.append(
+            f"{n_unknown} grade(s) pushed, but cass could not tell whether they are "
+            "released to students; check the Canvas gradebook."
+        )
+    return notices
 
 
 def can_be_approved(change: dict[str, object]) -> bool:

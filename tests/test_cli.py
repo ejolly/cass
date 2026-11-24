@@ -2330,14 +2330,16 @@ class TestPushReleasesGrades:
                     "over_points": grade == "95",
                     "points_possible": 10,
                     "post_manually": True,
+                    "posted_at": None,
                 }
             )
+        self.rows = rows
         monkeypatch.setattr(
             "cass.db.canvas_preview",
             lambda conn, pending: {"ok": True, "changes": rows},
         )
 
-        def apply(conn, pending, *, post_grades=False, preview=None):
+        def apply(conn, pending, *, post_grades=False, **kwargs):
             count = len(pending["canvas_grades"])
             pushed = {
                 "ok": True,
@@ -2358,15 +2360,20 @@ class TestPushReleasesGrades:
         assert graded.call_args.kwargs["preview"] is not None
         assert "Release" not in result.output
         assert (
-            "2 grade(s) pushed but not released to students "
+            "2 grade(s) will be pushed but not released to students "
             "(pass --post, or post them in Canvas)." in result.stderr
+        )
+        assert (
+            "2 grade(s) pushed but not released to students; "
+            "post them in Canvas." in result.stderr
         )
 
     def test_post_flag_posts(self, graded):
         result = runner.invoke(app, ["push", "--yes", "--allow-over-points", "--post"])
         assert result.exit_code == 0, result.output
-        # No preview: --post covers assignments whose policy changes since.
-        assert graded.call_args.kwargs == {"post_grades": True, "preview": None}
+        assert graded.call_args.kwargs["post_grades"] is True
+        assert graded.call_args.kwargs["cover_policy_changes"] is True
+        assert graded.call_args.kwargs["preview"] is not None
         assert "not released" not in result.output
 
     @pytest.mark.parametrize(
@@ -2384,6 +2391,7 @@ class TestPushReleasesGrades:
         assert f"Release {count} pushed grade(s) to students?" in result.output
         assert graded.call_args.kwargs["post_grades"] is posts
         assert graded.call_args.kwargs["preview"] is not None
+        assert graded.call_args.kwargs["cover_policy_changes"] is False
         assert ("not released" in result.output) is not posts
 
     def test_declined_push_sends_nothing(self, graded, monkeypatch):
@@ -2408,6 +2416,23 @@ class TestPushReleasesGrades:
         assert result.exit_code == 0, result.output
         assert message in result.stderr
         graded.assert_not_called()
+
+    @pytest.mark.parametrize("flags", [["--dry-run"], ["--yes"], []])
+    def test_already_released_shown_before_push(self, graded, monkeypatch, flags):
+        self.rows[0]["posted_at"] = "2026-10-01T00:00:00Z"
+        monkeypatch.setattr("cass.cli.prompts._stdin_is_tty", lambda: True)
+        result = runner.invoke(
+            app, ["push", "--allow-over-points", *flags], input="n\nn\n"
+        )
+        assert (
+            "1 changed grade(s) are already released; "
+            "students will see them when pushed." in result.stderr
+        )
+        if not flags:
+            notice = result.output.index("already released")
+            assert notice < result.output.index("Push these changes")
+            assert "Release 1 pushed" in result.output
+            graded.assert_not_called()
 
     def test_failed_release_exits_1(self, graded):
         graded.side_effect = None

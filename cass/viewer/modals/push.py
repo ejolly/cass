@@ -12,9 +12,10 @@ from ...db import (
     can_be_approved,
     count_pending,
     count_postable,
-    count_unreleased,
     hold_back_unapproved,
+    push_notices,
     refresh_pending,
+    release_notices,
 )
 from .. import canvas_apply, canvas_preview
 from ..actions import build_preview_html
@@ -111,6 +112,7 @@ class PushModal:
                     f"Remove {n_clears} cleared grade(s) from Canvas",
                     on_change=lambda e: self._approve("clears", bool(e.value)),
                 )
+            self._notice_area = ui.element("div")
             self._release_area = ui.element("div")
         self._render_preview_actions()
 
@@ -123,8 +125,15 @@ class PushModal:
             self._allow_over_points = value
         self._render_preview_actions()
 
-    def _render_release_checkbox(self, to_push: PendingChanges) -> None:
-        """Offer to release the pushed grades, unticked whenever N changes."""
+    def _render_release(self, to_push: PendingChanges) -> None:
+        """Say what is already released and offer to release the rest.
+
+        The checkbox is unticked whenever N changes.
+        """
+        self._notice_area.clear()
+        with self._notice_area:
+            for notice in release_notices(to_push, self._preview or {}):
+                ui.label(notice)
         n_postable = count_postable(to_push, self._preview or {})
         if n_postable == self._n_postable:
             return
@@ -153,7 +162,7 @@ class PushModal:
     def _render_preview_actions(self) -> None:
         to_push, held = self._split_pending()
         n = count_pending(to_push)
-        self._render_release_checkbox(to_push)
+        self._render_release(to_push)
         self._action_area.clear()
         with self._action_area:
             if held:
@@ -181,6 +190,7 @@ class PushModal:
         self,
         results: list[dict[str, object]],
         held: list[dict[str, object]] | None = None,
+        notices: list[str] | None = None,
     ) -> None:
         succeeded = [r for r in results if r.get("ok") and "action" not in r]
         failed = [r for r in results if not r.get("ok")]
@@ -190,6 +200,8 @@ class PushModal:
             ui.label(
                 f"{len(succeeded)} pushed, {len(failed)} failed, {len(held)} held back"
             ).classes("v-modal-result-header")
+            for notice in notices or []:
+                ui.label(notice)
             for h in held:
                 ui.label(f"\u23f8 {h.get('name', '?')}: {h.get('held')}").classes(
                     "opacity-70"
@@ -199,7 +211,7 @@ class PushModal:
                 if r.get("ok"):
                     note = ": released to students" if "action" in r else ""
                     if r.get("unreleased"):
-                        note = ": " + self._unreleased_note(cast(int, r["unreleased"]))
+                        note = f": {r['unreleased']} grade(s) not released to students"
                     ui.label(f"\u2713 Assignment {aid}{note}").classes("v-text-success")
                 else:
                     err = r.get("error", "Unknown")
@@ -207,12 +219,6 @@ class PushModal:
         self._action_area.clear()
         with self._action_area:
             ui.button("Close", on_click=self.dialog.close).props("flat")
-
-    @staticmethod
-    def _unreleased_note(count: int) -> str:
-        return (
-            f"{count} grade(s) pushed but not released to students; post them in Canvas"
-        )
 
     def _render_error(self, message: str) -> None:
         self._content_area.clear()
@@ -286,9 +292,9 @@ class PushModal:
                 grid.run_grid_method("refreshCells", {"force": True})  # pyright: ignore[reportUnknownMemberType]
             if result["ok"] and not held:
                 self.dialog.close()
-                n_unreleased = count_unreleased(result)
-                if n_unreleased:
-                    notify(self._unreleased_note(n_unreleased), "warning")
+                notices = push_notices(result)
+                if notices:
+                    notify(" ".join(notices), "warning")
                 else:
                     notify("Pushed to Canvas")
             else:
@@ -296,6 +302,7 @@ class PushModal:
                 self._render_results(
                     cast(list[dict[str, object]], result.get("results", [])),
                     held,
+                    push_notices(result),
                 )
         except Exception as exc:
             self.dialog.close()

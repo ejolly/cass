@@ -162,8 +162,8 @@ class TestPreviewGradesFlagsOverPoints:
         )
         client = MagicMock()
         client.list_submissions.return_value = [
-            SimpleNamespace(user_id=1, entered_grade="8", score=8.0),
-            SimpleNamespace(user_id=2, entered_grade="8", score=8.0),
+            SimpleNamespace(user_id=1, entered_grade="8", score=8.0, posted_at=None),
+            SimpleNamespace(user_id=2, entered_grade="8", score=8.0, posted_at=None),
         ]
         client.get_assignment.return_value = CanvasAssignmentResponse(
             id=7,

@@ -325,6 +325,7 @@ class TestPushModalReleasesGrades:
                     "live": "8",
                     "over_points": grade == "95",
                     "post_manually": True,
+                    "posted_at": None,
                 }
             )
         monkeypatch.setattr(
@@ -354,6 +355,7 @@ class TestPushModalReleasesGrades:
             opened.append(modal)
             modal.open()
 
+        self.changes = changes
         return opened, applied
 
     async def test_viewer_checkbox_default_off(self, user: User, modal_page) -> None:
@@ -395,3 +397,12 @@ class TestPushModalReleasesGrades:
             opened[0]._do_push()
         await user.should_see("not released to students")
         assert applied[0]["post_grades"] is False
+
+    async def test_already_released_shown(self, user: User, modal_page) -> None:
+        self.changes[0]["posted_at"] = "2026-10-01T00:00:00Z"
+        await user.open("/test-push-release")
+        await user.should_see("1 changed grade(s) are already released")
+        await user.should_not_see("pushed grade(s) to students")
+        user.find("Push 1 grade(s) above points possible").click()
+        await user.should_see("Release 1 pushed grade(s) to students")
+        await user.should_see("1 changed grade(s) are already released")

@@ -11,7 +11,7 @@ __docformat__ = "google"
 import json
 from contextlib import nullcontext
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -20,9 +20,11 @@ import sqlite_utils
 from cass import db
 from cass.apis.canvas.schema import (
     CanvasAssignmentResponse,
+    CanvasGradingSchemeEntry,
     CanvasSubmissionResponse,
 )
-from cass.db import canvas_apply, canvas_preview
+from cass.apis.canvas.sync import shows_pushed_grade
+from cass.db import CanvasAssignment, canvas_apply, canvas_preview
 from cass.db.sync import HELD_NOT_COMPARED
 
 # ---------------------------------------------------------------------------
@@ -190,7 +192,9 @@ def _make_submission(
     score: float | None = None,
 ) -> SimpleNamespace:
     """Create a mock CanvasSubmissionResponse-like object."""
-    return SimpleNamespace(user_id=user_id, entered_grade=grade, score=score)
+    return SimpleNamespace(
+        user_id=user_id, entered_grade=grade, score=score, posted_at=None
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -716,7 +720,22 @@ class TestReleaseGrades:
         return {1: True, 2: True}
 
     @pytest.fixture
-    def client(self, policies, monkeypatch) -> MagicMock:
+    def live(self) -> dict[tuple[int, int], dict[str, Any]]:
+        """Live submissions by (assignment, student), graded 5 and not posted."""
+        return {
+            (aid, uid): {
+                "user_id": uid,
+                "entered_grade": "5",
+                "entered_score": 5.0,
+                "posted_at": None,
+            }
+            for aid in (1, 2)
+            for uid in (1, 2, 3)
+        }
+
+    @pytest.fixture
+    def client(self, policies, live, monkeypatch) -> MagicMock:
+        """Mocked Canvas, which records every pushed grade as entered."""
         client = MagicMock()
         client.get_assignment.side_effect = lambda aid: CanvasAssignmentResponse(
             id=aid,
@@ -726,9 +745,18 @@ class TestReleaseGrades:
             post_manually=policies[aid],
         )
         client.list_submissions.side_effect = lambda aid: [
-            CanvasSubmissionResponse(user_id=uid, entered_grade="5")
-            for uid in (1, 2, 3)
+            CanvasSubmissionResponse(**fields)
+            for (assignment_id, _), fields in live.items()
+            if assignment_id == aid
         ]
+
+        def record(aid: int, grades: dict[int, str]) -> SimpleNamespace:
+            for uid, grade in grades.items():
+                live[aid, uid]["entered_grade"] = grade or None
+                live[aid, uid]["entered_score"] = float(grade) if grade else None
+            return SimpleNamespace(id=42)
+
+        client.bulk_push_grades.side_effect = record
         monkeypatch.setattr(
             "cass.apis.canvas.client.CanvasClient", lambda: nullcontext(client)
         )
@@ -787,8 +815,12 @@ class TestReleaseGrades:
     def test_automatic_policy_never_posts(self, client, policies, edit, db_conn):
         policies[1] = False
         edit(1, 1, "9")
+        pending = db.get_pending_changes(db_conn)
         result = canvas_apply(
-            db_conn, db.get_pending_changes(db_conn), post_grades=True
+            db_conn,
+            pending,
+            post_grades=True,
+            preview=canvas_preview(db_conn, pending),
         )
         client.post_assignment_grades.assert_not_called()
         assert db.count_unreleased(result) == 0
@@ -808,10 +840,14 @@ class TestReleaseGrades:
     def test_failed_push_is_never_posted(self, client, edit, db_conn):
         edit(1, 1, "9")
         edit(1, 2, "8")
-        client.bulk_push_grades.side_effect = [
-            RuntimeError("Bulk fail"),
-            SimpleNamespace(id=42),
-        ]
+        record = client.bulk_push_grades.side_effect
+
+        def fail_first(aid, grades):
+            if aid == 1:
+                raise RuntimeError("Bulk fail")
+            return record(aid, grades)
+
+        client.bulk_push_grades.side_effect = fail_first
         result = canvas_apply(
             db_conn, db.get_pending_changes(db_conn), post_grades=True
         )
@@ -834,7 +870,9 @@ class TestReleaseGrades:
         pushed, posted = self.rows(result)
         assert pushed["ok"] is True
         assert posted["ok"] is False
-        assert "1 grade(s) pushed but not released to students" in str(posted["error"])
+        assert "1 grade(s) pushed but may not be released to students" in str(
+            posted["error"]
+        )
         assert "Canvas gradebook" in str(posted["error"])
 
     def test_failed_policy_read_sends_nothing(self, client, policies, edit, db_conn):
@@ -913,3 +951,204 @@ class TestReleaseGrades:
             client.bulk_push_grades.assert_not_called()
             assert "now post automatically" in str(self.rows(result)[0]["error"])
             assert db.get_pending_changes(db_conn)
+
+    @pytest.mark.parametrize("covered", [True, False])
+    def test_post_flag_covers_policy_changes(
+        self, client, policies, edit, db_conn, covered
+    ):
+        policies[1] = False
+        edit(1, 1, "9")
+        pending = db.get_pending_changes(db_conn)
+        preview = canvas_preview(db_conn, pending)
+        policies[1] = True
+        result = canvas_apply(
+            db_conn,
+            pending,
+            post_grades=True,
+            cover_policy_changes=covered,
+            preview=preview,
+        )
+        assert client.post_assignment_grades.called is covered
+        assert db.count_unreleased(result) == (0 if covered else 1)
+
+    @pytest.mark.parametrize("stored", [True, False, None])
+    def test_no_preview_uses_stored_policy(
+        self, client, policies, edit, db_conn, stored
+    ):
+        """Without a preview, only a stored automatic policy allows the push."""
+        if stored is not None:
+            db.save_canvas_assignments(
+                [CanvasAssignment(canvas_id=1, name="HW", post_manually=stored)]
+            )
+        policies[1] = False
+        edit(1, 1, "9")
+        pending = {"canvas_grades": db.get_pending_changes(db_conn)["canvas_grades"]}
+        result = canvas_apply(db_conn, pending)
+        assert result["ok"] is (stored is False)
+        assert client.bulk_push_grades.called is (stored is False)
+
+    def test_only_grades_canvas_shows_are_posted(self, client, live, edit, db_conn):
+        """One applied, one ignored, one nulled."""
+        for uid in (1, 2, 3):
+            edit(uid, 1, "9")
+
+        def partly(aid, grades):
+            live[1, 1].update(entered_grade="9", entered_score=9.0)
+            live[1, 3].update(entered_grade=None, entered_score=None)
+            return SimpleNamespace(id=42)
+
+        client.bulk_push_grades.side_effect = partly
+        result = canvas_apply(
+            db_conn, db.get_pending_changes(db_conn), post_grades=True
+        )
+        assert result["ok"] is False
+        client.post_assignment_grades.assert_called_once_with(
+            1, graded_only=True, only_student_ids=[1]
+        )
+        pushed, posted, failed = self.rows(result)
+        assert pushed["ok"] is True
+        assert posted["ok"] is True
+        assert (failed["ok"], failed["action"]) == (False, "posted_to_students")
+        assert "2 grade(s) not released" in str(failed["error"])
+        assert "Canvas does not show the pushed grade" in str(failed["error"])
+
+    def test_grade_changed_by_someone_else_is_not_posted(
+        self, client, live, edit, db_conn
+    ):
+        edit(1, 1, "9")
+
+        def regraded(aid, grades):
+            live[1, 1].update(entered_grade="7", entered_score=7.0)
+            return SimpleNamespace(id=42)
+
+        client.bulk_push_grades.side_effect = regraded
+        result = canvas_apply(
+            db_conn, db.get_pending_changes(db_conn), post_grades=True
+        )
+        client.post_assignment_grades.assert_not_called()
+        assert result["ok"] is False
+
+    def test_failed_reread_posts_nobody(self, client, edit, db_conn):
+        edit(1, 1, "9")
+        client.list_submissions.side_effect = RuntimeError("read failed")
+        result = canvas_apply(
+            db_conn, db.get_pending_changes(db_conn), post_grades=True
+        )
+        client.post_assignment_grades.assert_not_called()
+        pushed, failed = self.rows(result)
+        assert pushed["ok"] is True
+        assert "cass released none" in str(failed["error"])
+        assert "read failed" in str(failed["error"])
+        assert db.get_pending_changes(db_conn) == {}
+
+    def test_failed_reread_claims_nothing(self, client, edit, db_conn):
+        edit(1, 1, "9")
+        client.list_submissions.side_effect = RuntimeError("read failed")
+        result = canvas_apply(db_conn, db.get_pending_changes(db_conn))
+        assert result["ok"] is True
+        assert db.count_unreleased(result) == 0
+        (notice,) = db.push_notices(result)
+        assert "could not tell" in notice
+
+    def test_released_grades_are_counted_apart(self, client, live, edit, db_conn):
+        live[1, 1]["posted_at"] = live[1, 2]["posted_at"] = "2026-10-01T00:00:00Z"
+        edit(1, 1, "9")
+        edit(2, 1, "")
+        edit(3, 1, "8")
+        pending = db.get_pending_changes(db_conn)
+        preview = canvas_preview(db_conn, pending)
+        changes = cast(list[dict[str, object]], preview["changes"])
+        assert [c["posted_at"] is None for c in changes] == [False, False, True]
+        assert db.count_postable(pending, preview) == 1
+        assert db.release_notices(pending, preview) == [
+            "2 changed grade(s) are already released; "
+            "students will see them when pushed."
+        ]
+        result = canvas_apply(db_conn, pending, post_grades=True, preview=preview)
+        client.post_assignment_grades.assert_called_once_with(
+            1, graded_only=True, only_student_ids=[3]
+        )
+        assert db.count_unreleased(result) == 0
+
+    def test_released_grade_is_not_reported_unreleased(
+        self, client, live, edit, db_conn
+    ):
+        live[1, 1]["posted_at"] = "2026-10-01T00:00:00Z"
+        edit(1, 1, "9")
+        edit(3, 1, "8")
+        result = canvas_apply(db_conn, db.get_pending_changes(db_conn))
+        assert db.count_unreleased(result) == 1
+
+    def test_unreadable_posted_at_claims_nothing(self, client, live, edit, db_conn):
+        del live[1, 1]["posted_at"]
+        edit(1, 1, "9")
+        pending = db.get_pending_changes(db_conn)
+        preview = canvas_preview(db_conn, pending)
+        assert db.count_postable(pending, preview) == 0
+        (notice,) = db.release_notices(pending, preview)
+        assert "could not tell" in notice
+        result = canvas_apply(db_conn, pending, preview=preview)
+        assert db.count_unreleased(result) == 0
+        assert "could not tell" in db.push_notices(result)[0]
+
+    def test_approval_covers_only_grades_counted(self, client, live, edit, db_conn):
+        """A grade hidden after the preview was not in the N approved."""
+        live[1, 1]["posted_at"] = "2026-10-01T00:00:00Z"
+        edit(1, 1, "9")
+        edit(2, 1, "8")
+        pending = db.get_pending_changes(db_conn)
+        preview = canvas_preview(db_conn, pending)
+        live[1, 1]["posted_at"] = None
+        result = canvas_apply(db_conn, pending, post_grades=True, preview=preview)
+        client.post_assignment_grades.assert_called_once_with(
+            1, graded_only=True, only_student_ids=[2]
+        )
+        assert db.count_unreleased(result) == 1
+
+
+class TestShowsPushedGrade:
+    """Canvas's normalised forms, as checked in test_live_grade_posting.py."""
+
+    @pytest.mark.parametrize(
+        ("grading_type", "sent", "entered", "score", "matches"),
+        [
+            ("points", "8.50", "8.5", 8.5, True),
+            ("points", "+3", "3", 3.0, True),
+            ("points", "95%", "9.5", 9.5, True),
+            ("points", "9", "8", 8.0, False),
+            ("points", "9", None, None, False),
+            ("points", "9", "9", None, False),
+            ("points", "9", "1,000", 9.0, False),
+            ("percent", "95.50%", "95.5%", 9.55, True),
+            ("percent", "33.333%", "33.33%", 3.3333, True),
+            ("percent", "33.333%", "33.33%", 3.333, False),
+            ("percent", "95%", "9.5", 9.5, False),
+            ("letter_grade", "b+", "B+", 8.9, True),
+            ("letter_grade", "B+", "B", 8.6, False),
+            ("letter_grade", "95%", "A", 9.5, True),
+            ("letter_grade", "9.5", "A", 9.5, True),
+            ("letter_grade", "95%", "B+", 9.5, False),
+            ("letter_grade", "95%", "A", 9.4, False),
+            ("pass_fail", "pass", "complete", 10.0, True),
+            ("pass_fail", "fail", "incomplete", 0.0, True),
+            ("pass_fail", "incomplete", "complete", 0.0, False),
+            ("not_graded", "9", "9", 9.0, False),
+        ],
+    )
+    def test_forms(self, grading_type, sent, entered, score, matches):
+        scheme = [
+            CanvasGradingSchemeEntry(name="A", value=0.94),
+            CanvasGradingSchemeEntry(name="B+", value=0.87),
+            CanvasGradingSchemeEntry(name="F", value=0.0),
+        ]
+        submission = CanvasSubmissionResponse(
+            user_id=1, entered_grade=entered, entered_score=score
+        )
+        assert shows_pushed_grade(sent, submission, grading_type, 10, scheme) is matches
+
+    def test_letter_from_an_unseen_scheme_is_matched_by_score(self):
+        submission = CanvasSubmissionResponse(
+            user_id=1, entered_grade="A", entered_score=9.5
+        )
+        assert shows_pushed_grade("95%", submission, "letter_grade", 10, [])
+        assert not shows_pushed_grade("95%", submission, "letter_grade", None, [])

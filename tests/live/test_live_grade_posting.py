@@ -19,6 +19,7 @@ from cass import db
 from cass.actions.config import get_config
 from cass.apis.canvas.client import CanvasClient
 from cass.apis.canvas.schema import CanvasAssignmentResponse
+from cass.apis.canvas.sync import get_scheme, push_grades, shows_pushed_grade
 
 _SET_POLICY = """
 mutation ($assignmentId: ID!, $postManually: Boolean!) {
@@ -158,6 +159,18 @@ def test_posting_needs_approval_and_names_students(
     assert posted_at is not None
     assert db.get_pending_changes(db_conn) == {}
 
+    # Released before: the change is visible without another release.
+    to_push, preview = edit_grade(db_conn, student_id, assignment.id, "9", "7")
+    assert db.count_postable(to_push, preview) == 0
+    assert "1 changed grade(s) are already released" in str(
+        db.release_notices(to_push, preview)
+    )
+    result = db.canvas_apply(db_conn, to_push, post_grades=True, preview=preview)
+    assert result["ok"]
+    assert db.push_notices(result) == []
+    assert posting_requests == [[student_id]]
+    assert live() == ("7", posted_at)
+
 
 def test_clear_only_push_posts_nothing(
     practice: CanvasClient,
@@ -199,3 +212,84 @@ def test_policy_change_after_preview_stops_unapproved_release(
     assert db.count_unreleased(result) == 1
     assert posting_requests == []
     assert grade_and_posted_at(practice, assignment.id, student_id) == ("8", None)
+
+
+def test_grade_canvas_ignores_is_not_released(
+    practice: CanvasClient, db_conn: sqlite_utils.Database, student_id: int
+):
+    """Without points, Canvas keeps ``complete`` when ``incomplete`` is pushed."""
+    created = practice.create_assignment(
+        f"cass-live posting {uuid4().hex[:8]}",
+        points_possible=0,
+        grading_type="pass_fail",
+        published=True,
+    )
+    try:
+        set_post_manually(practice, created.id, True)
+        grade_and_posted_at(practice, created.id, student_id)
+        for sent, releases in (("complete", False), ("incomplete", True)):
+            results = push_grades(
+                practice,
+                db_conn,
+                {created.id: {student_id: sent}},
+                post_grades=releases,
+            )
+            assert results[0]["ok"]
+        assert "does not show the pushed grade" in str(results[-1]["error"])
+        assert grade_and_posted_at(practice, created.id, student_id) == (
+            "complete",
+            None,
+        )
+    finally:
+        practice.delete_assignment(created.id)
+
+
+@pytest.mark.parametrize(
+    ("grading_type", "forms"),
+    [
+        (
+            "points",
+            {
+                "8.50": "8.5",
+                "+3": "3",
+                ".5": "0.5",
+                "95%": "6.65",
+                "33.333%": "2.33331",
+            },
+        ),
+        ("percent", {"95.50%": "95.5%", "33.333%": "33.33%", "33.335%": "33.34%"}),
+        ("letter_grade", {"95%": "A", "33.333%": "F"}),
+        ("gpa_scale", {"95%": "A"}),
+        ("pass_fail", {"pass": "complete", "fail": "incomplete"}),
+    ],
+)
+def test_normalized_grades_match(
+    practice: CanvasClient, student_id: int, grading_type: str, forms: dict[str, str]
+):
+    """The practice course shows no letter scheme, so letters match by score."""
+    created = practice.create_assignment(
+        f"cass-live posting {uuid4().hex[:8]}",
+        points_possible=7,
+        grading_type=grading_type,
+        published=True,
+    )
+    try:
+        set_post_manually(practice, created.id, True)
+        grade_and_posted_at(practice, created.id, student_id)
+        scheme = get_scheme(practice, practice.get_assignment(created.id))
+        for sent, shown in forms.items():
+            progress = practice.bulk_push_grades(created.id, {student_id: sent})
+            practice.wait_for_progress(progress.id)
+            (submission,) = [
+                s
+                for s in practice.list_submissions(created.id)
+                if s.user_id == student_id
+            ]
+            assert submission.entered_grade == shown
+            assert submission.posted_at is None
+            for pushed in forms:
+                assert shows_pushed_grade(
+                    pushed, submission, grading_type, 7, scheme
+                ) is (pushed == sent), (pushed, shown)
+    finally:
+        practice.delete_assignment(created.id)
