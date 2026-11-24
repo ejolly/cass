@@ -756,6 +756,25 @@ class TestQuizAttemptGuard:
         assert [r[0] for r in rows] == ["refuse"]
         client.update_quiz.assert_not_called()
 
+    @pytest.mark.parametrize(
+        ("state", "attempt", "expected"),
+        [
+            ("untaken", 1, 0),
+            ("untaken", 2, 1),  # attempt 1 is finished; a retake is under way
+            ("settings_only", None, 0),
+            ("complete", 1, 1),
+            ("pending_review", 2, 1),
+        ],
+    )
+    def test_count_finished_attempts(self, state, attempt, expected):
+        from cass.actions.quizzes import count_finished_attempts
+
+        client = self.attempted_client(CanvasQuiz(id=1, title="Quiz 1"))
+        client.list_quiz_submissions.return_value = [
+            CanvasQuizSubmission(id=1, user_id=1, attempt=attempt, workflow_state=state)
+        ]
+        assert count_finished_attempts(client, 1) == expected
+
     def test_refuse_if_attempted(self):
         from cass.actions.quizzes import QuizHasAttemptsError, refuse_if_attempted
 
