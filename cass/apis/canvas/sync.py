@@ -90,54 +90,72 @@ _NUMBER = r"[+-]?([0-9]+(\.[0-9]+)?|\.[0-9]+)"
 _LETTER_GRADING_TYPES = ("letter_grade", "gpa_scale")
 # Words Canvas reads as full or no credit, whatever the grading type.
 _PASS_FAIL_GRADES = frozenset({"complete", "incomplete", "pass", "fail"})
-# Canvas's built-in letter scheme, for courses that set none.
-_DEFAULT_LETTERS = frozenset(
-    ["A", "A-", "B+", "B", "B-", "C+", "C", "C-", "D+", "D", "D-", "F"]
-)
 
 
 def get_scheme_letters(
     client: CanvasClient, assignment: CanvasAssignmentResponse
 ) -> frozenset[str]:
-    """Return the letters an assignment's grading scheme defines.
+    """Return the names in the letter scheme set on the assignment or the course.
 
-    Empty when Canvas names a scheme it does not list, and for grading types
-    that take no letters.
+    Empty when no scheme is visible: neither sets one, Canvas does not list the
+    one set, or it is 0. Canvas may then use an account's default scheme, which
+    cass cannot read. Also empty for grading types that take no letters.
     """
     if assignment.grading_type not in _LETTER_GRADING_TYPES:
         return frozenset()
-    standard_id = (
-        assignment.grading_standard_id or client.get_course().grading_standard_id
-    )
+    standard_id = assignment.grading_standard_id
+    if standard_id is None:
+        standard_id = client.get_course().grading_standard_id
     if not standard_id:
-        return _DEFAULT_LETTERS
+        return frozenset()
     for standard in client.list_grading_standards():
         if standard.id == standard_id:
             return frozenset(entry.name for entry in standard.grading_scheme)
     return frozenset()
 
 
-def accepts_grade(grade: str, grading_type: str, letters: frozenset[str]) -> bool:
+def accepts_grade(
+    grade: str,
+    grading_type: str,
+    letters: frozenset[str],
+    points_possible: float | None,
+) -> bool:
     """Return whether Canvas records this grade as entered.
 
     Canvas does not reject other text: it removes the student's grade or turns
     it into a different one (checked in ``tests/live/test_live_grade_input.py``).
+    Percentages and letters are worth a share of the points possible, so
+    without points Canvas records them as 0.
+
+    Args:
+        grade: The grade to push.
+        grading_type: The assignment's live grading type.
+        letters: Names in the visible scheme, from ``get_scheme_letters``.
+        points_possible: The assignment's points possible.
     """
     text = grade.strip()
     is_number = re.fullmatch(_NUMBER, text) is not None
-    is_percent = re.fullmatch(_NUMBER + "%", text) is not None
+    if re.fullmatch(_NUMBER + "%", text):
+        takes_percent = grading_type in ("points", "percent", *_LETTER_GRADING_TYPES)
+        return takes_percent and bool(points_possible)
     if grading_type == "points":
-        return is_number or is_percent
+        return is_number
     if grading_type == "percent":
         # A plain number would be read as points: 95 out of 10 becomes 950%.
-        return is_percent
+        return False
     if grading_type == "pass_fail":
         return text in _PASS_FAIL_GRADES
-    if grading_type in _LETTER_GRADING_TYPES:
-        if text in _PASS_FAIL_GRADES:
-            return False
-        return is_number or is_percent or text in letters or text.upper() in letters
-    return False
+    if grading_type not in _LETTER_GRADING_TYPES or text in _PASS_FAIL_GRADES:
+        return False
+    if is_number:
+        # Canvas looks a number up in the scheme before reading it as points.
+        return bool(letters) and float(text) not in _scheme_numbers(letters)
+    return bool(points_possible) and (text in letters or text.upper() in letters)
+
+
+def _scheme_numbers(letters: frozenset[str]) -> set[float]:
+    """Return the scheme names that are numbers, as in a 4/3/2/1 scheme."""
+    return {float(name) for name in letters if re.fullmatch(_NUMBER, name.strip())}
 
 
 def build_grade_push_data(

@@ -158,6 +158,9 @@ class TestPreviewGradesFlagsOverPoints:
             SimpleNamespace(user_id=1, entered_grade="8", score=8.0),
             SimpleNamespace(user_id=2, entered_grade="8", score=8.0),
         ]
+        client.get_assignment.return_value = CanvasAssignmentResponse(
+            id=7, name="HW1", points_possible=10, grading_type="points"
+        )
         changes = {
             grade_key(7, 1): {"posted_grade": {"baseline": "8", "current": "9"}},
             grade_key(7, 2): {"posted_grade": {"baseline": "8", "current": "95"}},
@@ -238,7 +241,7 @@ class TestGradeBaselines:
         client = MagicMock()
         client.list_submissions.return_value = list(live)
         client.get_assignment.return_value = CanvasAssignmentResponse(
-            id=7, name="HW1", grading_type="points"
+            id=7, name="HW1", grading_type="points", points_possible=10
         )
         changes = db.get_pending_changes(conn)["canvas_grades"]
         return db.preview_grades(conn, changes, client)
@@ -390,9 +393,37 @@ class TestAcceptsGrade:
     )
     def test_by_grading_type(self, grading_type, accepted, refused):
         for grade in accepted.split():
-            assert accepts_grade(grade, grading_type, self.LETTERS), grade
+            assert accepts_grade(grade, grading_type, self.LETTERS, 10), grade
         for grade in refused.split():
-            assert not accepts_grade(grade, grading_type, self.LETTERS), grade
+            assert not accepts_grade(grade, grading_type, self.LETTERS, 10), grade
+
+    @pytest.mark.parametrize("points_possible", [0, 0.0, None])
+    @pytest.mark.parametrize(
+        ("grading_type", "accepted", "refused"),
+        [
+            ("points", "5 0", "95%"),
+            ("percent", "", "95% 0%"),
+            ("letter_grade", "5", "95% A b+"),
+            ("gpa_scale", "5", "95% A"),
+            ("pass_fail", "complete", "95%"),
+        ],
+    )
+    def test_without_points_possible(
+        self, grading_type, accepted, refused, points_possible
+    ):
+        for grade in accepted.split():
+            assert accepts_grade(grade, grading_type, self.LETTERS, points_possible)
+        for grade in refused.split():
+            assert not accepts_grade(grade, grading_type, self.LETTERS, points_possible)
+
+    @pytest.mark.parametrize("grading_type", ["letter_grade", "gpa_scale"])
+    def test_number_naming_a_scheme_entry_is_refused(self, grading_type):
+        scheme = frozenset({"4", "3", "2", "1"})
+        for grade in ("4", "3", "4.0", "+4"):
+            assert not accepts_grade(grade, grading_type, scheme, 10), grade
+        for grade in ("9", "3.5", "95%"):
+            assert accepts_grade(grade, grading_type, scheme, 10), grade
+        assert accepts_grade("4", "points", scheme, 10)
 
     @pytest.mark.parametrize(
         ("assignment_scheme", "course_scheme", "expected"),
@@ -423,14 +454,97 @@ class TestAcceptsGrade:
         )
         assert get_scheme_letters(client, assignment) == expected
 
-    def test_default_letters_without_a_scheme(self):
+    @pytest.mark.parametrize(
+        ("assignment_scheme", "course_scheme"),
+        [(None, None), (None, 0), (0, None), (0, 0)],
+    )
+    def test_no_visible_scheme_means_no_letters(self, assignment_scheme, course_scheme):
         from unittest.mock import MagicMock
 
         client = MagicMock()
-        client.get_course.return_value = CanvasCourse(id=1, name="C")
+        client.get_course.return_value = CanvasCourse(
+            id=1, name="C", grading_standard_id=course_scheme
+        )
+        client.list_grading_standards.return_value = []
         assignment = CanvasAssignmentResponse(
-            id=7, name="HW", grading_type="letter_grade"
+            id=7,
+            name="HW",
+            grading_type="letter_grade",
+            grading_standard_id=assignment_scheme,
         )
         letters = get_scheme_letters(client, assignment)
-        assert "B+" in letters
-        assert "A+" not in letters
+        assert letters == frozenset()
+        assert not accepts_grade("B+", "letter_grade", letters, 10)
+        assert not accepts_grade("9", "letter_grade", letters, 10)
+        assert not accepts_grade("9", "gpa_scale", letters, 10)
+        assert accepts_grade("95%", "letter_grade", letters, 10)
+        assert not accepts_grade("95%", "letter_grade", letters, 0)
+
+    def test_assignment_scheme_0_does_not_fall_back_to_the_course(self):
+        """0 is a scheme cass cannot see, whatever the course sets."""
+        from unittest.mock import MagicMock
+
+        client = MagicMock()
+        client.get_course.return_value = CanvasCourse(
+            id=1, name="C", grading_standard_id=6
+        )
+        client.list_grading_standards.return_value = [
+            CanvasGradingStandard(
+                id=6,
+                title="S",
+                grading_scheme=[CanvasGradingSchemeEntry(name="High", value=0.5)],
+            )
+        ]
+        assignment = CanvasAssignmentResponse(
+            id=7, name="HW", grading_type="letter_grade", grading_standard_id=0
+        )
+        assert get_scheme_letters(client, assignment) == frozenset()
+
+
+class TestPreviewUsesLivePoints:
+    @staticmethod
+    def preview(db_conn, grade: str, *, live: float | None, edit: float | None = None):
+        """Preview a grade on an assignment pulled at 10 points."""
+        from unittest.mock import MagicMock
+
+        from cass import db
+
+        db.save_pulled_assignments(
+            [db.CanvasAssignment(canvas_id=7, name="HW1", points_possible=10)]
+        )
+        if edit is not None:
+            db.update_cell(
+                db_conn,
+                "canvas_assignments",
+                {"canvas_id": 7},
+                "points_possible",
+                edit,
+            )
+        db.upsert_canvas_grade(db_conn, 1, 7, grade)
+        client = MagicMock()
+        client.get_assignment.return_value = CanvasAssignmentResponse(
+            id=7, name="HW1", grading_type="points", points_possible=live
+        )
+        client.list_submissions.return_value = [CanvasSubmissionResponse(user_id=1)]
+        changes = db.get_pending_changes(db_conn)["canvas_grades"]
+        (row,) = db.preview_grades(db_conn, changes, client)
+        return row
+
+    @pytest.mark.parametrize(("live", "over"), [(5, True), (20, False)])
+    def test_points_changed_on_canvas_after_pull(self, db_conn, live, over):
+        row = self.preview(db_conn, "15" if live == 20 else "8", live=live)
+        assert row["over_points"] is over
+        assert row["points_possible"] == live
+
+    def test_percentage_held_when_live_points_are_zero(self, db_conn):
+        assert self.preview(db_conn, "95%", live=0)["not_accepted"] is True
+
+    def test_pending_points_edit_also_counts(self, db_conn):
+        """push sends the points edit before the grades."""
+        row = self.preview(db_conn, "8", live=10, edit=5)
+        assert row["over_points"] is True
+        assert row["points_possible"] == 5
+
+    def test_percentage_held_when_points_edit_is_zero(self, db_conn):
+        row = self.preview(db_conn, "95%", live=10, edit=0)
+        assert row["not_accepted"] is True

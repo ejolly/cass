@@ -39,10 +39,13 @@ Three kinds of change are held back unless you approve them, and stay pending un
 
 | Grading type | Grades cass pushes |
 |---|---|
-| Points | `9.5`, `95%` |
+| Points | `9.5`, or `95%` |
 | Percentage | `95%` |
-| Letter or GPA | a letter in the grading scheme, or points or a percentage, which Canvas converts to a letter |
+| Letter or GPA, scheme set on the assignment or course | a letter in the scheme, `95%`, or points such as `9.5`, unless the scheme has an entry with that number as its name |
+| Letter or GPA, no scheme set | `95%` |
 | Complete/incomplete | `complete`, `incomplete`, `pass`, `fail` |
+
+Percentages and letters are also held back when the assignment has no points possible, because Canvas records them as 0. Points possible come from Canvas at push time, plus any pending edit to them.
 
 Sends every pending change to Canvas. The viewer's **Push** button does the same.
 

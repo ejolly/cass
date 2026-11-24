@@ -389,6 +389,7 @@ def preview_grades(
 ) -> list[dict[str, object]]:
     """Preview pending grade changes against live Canvas submissions."""
     results: list[dict[str, object]] = []
+    pending_assignments = get_pending_changes(conn).get("canvas_assignments", {})
     by_assignment: dict[int, list[tuple[int, RowChanges]]] = {}
     for pk_key, columns in table_changes.items():
         pk = json.loads(pk_key)
@@ -398,14 +399,15 @@ def preview_grades(
 
     for aid, student_changes in by_assignment.items():
         assignment_name = resolve_row_name(conn, "canvas_assignments", str(aid))
-        points_row = conn.execute(
-            "SELECT points_possible FROM canvas_assignments WHERE canvas_id = ?",
-            [aid],
-        ).fetchone()
-        points_possible = points_row[0] if points_row else None
         try:
             assignment = client.get_assignment(aid)
             letters = get_scheme_letters(client, assignment)
+            # A pending points edit may be pushed before the grades, so a grade
+            # must fit both the live points and the edited ones.
+            points_in_effect = [assignment.points_possible]
+            points_edit = pending_assignments.get(str(aid), {}).get("points_possible")
+            if points_edit is not None:
+                points_in_effect.append(cast(float, points_edit["current"]))
             live_subs = client.list_submissions(aid)
             live_by_user = {submission.user_id: submission for submission in live_subs}
             for uid, columns in student_changes:
@@ -443,15 +445,27 @@ def preview_grades(
                             "current": vals["current"],
                             "live": live_val,
                             "conflict": grade_conflicts(live_val, vals["baseline"]),
-                            "points_possible": points_possible,
+                            "points_possible": min(
+                                (p for p in points_in_effect if p is not None),
+                                default=None,
+                            ),
                             "over_points": col == "posted_grade"
-                            and exceeds_points(vals["current"], points_possible),
+                            and any(
+                                exceeds_points(vals["current"], points)
+                                for points in points_in_effect
+                            ),
                             "clears": col == "posted_grade"
                             and clears_grade(vals["baseline"], vals["current"]),
                             "not_accepted": col == "posted_grade"
                             and has_grade(vals["current"])
-                            and not accepts_grade(
-                                str(vals["current"]), assignment.grading_type, letters
+                            and not all(
+                                accepts_grade(
+                                    str(vals["current"]),
+                                    assignment.grading_type,
+                                    letters,
+                                    points,
+                                )
+                                for points in points_in_effect
                             ),
                         }
                     )
