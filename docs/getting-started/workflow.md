@@ -35,7 +35,14 @@ Three kinds of change are held back unless you approve them, and stay pending un
 - **Grades above points possible:** usually a typo, sometimes extra credit.
 - **Cleared grades:** a grade you deleted in a cell. Pushing it removes the grade on Canvas.
 
-`cass push` asks about each kind. With `--yes` there is no prompt, so pass `--overwrite-conflicts`, `--allow-over-points` or `--allow-clears` to include them. Changes cass could not compare with Canvas are always held back.
+`cass push` asks about each kind. With `--yes` there is no prompt, so pass `--overwrite-conflicts`, `--allow-over-points` or `--allow-clears` to include them. Two kinds are always held back: changes cass could not compare with Canvas, and grades Canvas would not record as entered. Canvas removes or replaces a grade it cannot read, so a grade must fit the assignment's grading type:
+
+| Grading type | Grades cass pushes |
+|---|---|
+| Points | `9.5`, `95%` |
+| Percentage | `95%` |
+| Letter or GPA | a letter in the grading scheme, or points or a percentage, which Canvas converts to a letter |
+| Complete/incomplete | `complete`, `incomplete`, `pass`, `fail` |
 
 Sends every pending change to Canvas. The viewer's **Push** button does the same.
 

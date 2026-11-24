@@ -5,6 +5,7 @@ from __future__ import annotations
 __docformat__ = "google"
 
 import json
+import sqlite3
 from datetime import datetime
 from unittest.mock import patch
 
@@ -255,7 +256,7 @@ class TestPullGrades:
     def test_upgrade_takes_canvas_when_local_is_blank_or_equal(
         self, db_conn, local, canvas
     ):
-        db.upsert_canvas_grade(db_conn, 100, 42, local)
+        set_baselined_grade(db_conn, local)
 
         kept = db.save_pulled_grades(
             [
@@ -312,6 +313,85 @@ class TestPullGrades:
             pull_all(cfg)
 
         assert stored_grades(db_conn) == ("9", "8")
+
+    def test_edit_made_just_before_grades_are_saved_is_kept(self, cfg, db_conn):
+        set_baselined_grade(db_conn, "8")
+        db.upsert_canvas_grade(db_conn, 100, 42, "9")
+        with pytest.raises(RuntimeError, match="Pull blocked"):
+            db.save_pulled_grades(
+                [
+                    CanvasGrade(
+                        canvas_user_id=100, canvas_assignment_id=42, posted_grade="8"
+                    )
+                ]
+            )
+        assert stored_grades(db_conn) == ("9", "8")
+
+    def test_pending_check_runs_under_the_write_lock(self, tmp_path, cfg, monkeypatch):
+        """Another process cannot save an edit between the check and the write."""
+        db.reset()
+        conn = db.get_db(tmp_path)
+        other = sqlite3.connect(str(tmp_path / "cass.db"), timeout=0)
+        attempts = []
+
+        def check(sdb):
+            with pytest.raises(sqlite3.OperationalError, match="locked"):
+                other.execute(
+                    "INSERT INTO canvas_grades VALUES (100, 42, NULL, '9', 1.0)"
+                )
+            attempts.append(sdb)
+
+        monkeypatch.setattr("cass.db.sync.pull_block_reason", check)
+        db.save_pulled_grades(
+            [CanvasGrade(canvas_user_id=100, canvas_assignment_id=42, posted_grade="8")]
+        )
+        db.save_pulled_assignments([db.CanvasAssignment(canvas_id=42, name="HW")])
+        assert len(attempts) == 2
+        assert stored_grades(conn) == ("8", "8")
+        other.close()
+        db.reset()
+
+    @pytest.mark.parametrize("failing_write", ["INSERT", "DELETE"])
+    def test_failed_save_rolls_back_both_tables(self, db_conn, failing_write):
+        set_baselined_grade(db_conn, "9")
+        db_conn.execute(
+            f"CREATE TRIGGER fail BEFORE {failing_write} ON _canvas_grades_synced "
+            "BEGIN SELECT RAISE(ABORT, 'disk trouble'); END"
+        )
+        grades = [
+            CanvasGrade(canvas_user_id=u, canvas_assignment_id=42, posted_grade="5")
+            for u in (100, 200)
+        ]
+        with pytest.raises(sqlite3.Error, match="disk trouble"):
+            db.save_pulled_grades(grades)
+        assert db_conn["canvas_grades"].count == 1
+        assert db_conn["_canvas_grades_synced"].count == 1
+        assert stored_grades(db_conn) == ("9", "9")
+
+    def test_assignment_edit_made_while_pulling_is_not_overwritten(
+        self, cfg, db_conn, canvas_api
+    ):
+        from cass.actions.pull import pull_all, pull_assignments
+
+        pull_all(cfg)
+
+        def edit_then_return(*args):
+            db.update_cell(
+                db_conn, "canvas_assignments", {"canvas_id": 42}, "name", "Edited"
+            )
+            return _MOCK_ASSIGNMENTS, {}
+
+        with (
+            patch(
+                "cass.actions.pull.canvas_api.fetch_canvas_assignments",
+                side_effect=edit_then_return,
+            ),
+            pytest.raises(RuntimeError, match="Pull blocked"),
+        ):
+            pull_assignments(cfg, Console(quiet=True))
+
+        pending = db.get_pending_changes(db_conn)["canvas_assignments"]["42"]
+        assert pending == {"name": {"baseline": "HW 01", "current": "Edited"}}
 
     def test_partial_pull_stores_grades_and_names_kept_ones(
         self, cfg, db_conn, canvas_api

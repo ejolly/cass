@@ -818,6 +818,21 @@ class TestCliErrors:
         assert "pull failed" in err
         assert "Traceback" not in err
 
+    def test_pull_prints_bracketed_names_literally(self, project_dir, monkeypatch):
+        notices = ["[extra credit] HW: kept", "[/x] HW: kept"]
+
+        def pull_all(_cfg, on_progress):
+            for notice in notices:
+                on_progress("kept", notice)
+
+        monkeypatch.chdir(project_dir)
+        monkeypatch.setattr("cass.db.pull_block_reason", lambda: None)
+        monkeypatch.setattr("cass.actions.pull.pull_all", pull_all)
+        result = runner.invoke(app, ["pull"])
+        assert result.exit_code == 0, result.output
+        for notice in notices:
+            assert notice in result.output
+
     @pytest.mark.parametrize(
         "args", [["canvas", "quizzes", "nope"], ["canvas", "nope"]]
     )

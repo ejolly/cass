@@ -8,11 +8,19 @@ import json
 
 import pytest
 
-from cass.apis.canvas.schema import CanvasSubmissionResponse
+from cass.apis.canvas.schema import (
+    CanvasAssignmentResponse,
+    CanvasCourse,
+    CanvasGradingSchemeEntry,
+    CanvasGradingStandard,
+    CanvasSubmissionResponse,
+)
+from cass.apis.canvas.sync import accepts_grade, get_scheme_letters
 from cass.db import CanvasGrade, exceeds_points, hold_back_unapproved
 from cass.db.sync import (
     HELD_CLEAR,
     HELD_CONFLICT,
+    HELD_NOT_ACCEPTED,
     HELD_NOT_COMPARED,
     HELD_OVER_POINTS,
 )
@@ -167,6 +175,7 @@ class TestClearedGrades:
             ("8", "", True),
             ("8", None, True),
             ("8", "-", True),
+            ("8", " ", True),
             ("", "", False),
             (None, "", False),
             ("8", "9", False),
@@ -228,6 +237,9 @@ class TestGradeBaselines:
 
         client = MagicMock()
         client.list_submissions.return_value = list(live)
+        client.get_assignment.return_value = CanvasAssignmentResponse(
+            id=7, name="HW1", grading_type="points"
+        )
         changes = db.get_pending_changes(conn)["canvas_grades"]
         return db.preview_grades(conn, changes, client)
 
@@ -294,3 +306,131 @@ class TestGradeBaselines:
         self.baselined(db_conn, "", "9")
         (row,) = self.preview(db_conn, CanvasSubmissionResponse(user_id=1))
         assert row["conflict"] is False
+
+    def test_absent_submission_is_held_as_not_compared(self, db_conn):
+        from cass import db
+
+        self.baselined(db_conn, "", "9")
+        db.upsert_canvas_grade(db_conn, 2, 7, "")
+        db.mark_synced_grades(db_conn, [(2, 7)])
+        db.upsert_canvas_grade(db_conn, 2, 7, "6")
+        rows = self.preview(db_conn, CanvasSubmissionResponse(user_id=2))
+        to_push, held = hold_back_unapproved(
+            db.get_pending_changes(db_conn),
+            {"changes": rows},
+            overwrite_conflicts=True,
+            allow_over_points=True,
+            allow_clears=True,
+        )
+        assert [(h["canvas_user_id"], h["held"]) for h in held] == [
+            (1, HELD_NOT_COMPARED)
+        ]
+        assert list(to_push["canvas_grades"]) == [grade_key(7, 2)]
+
+    @pytest.mark.parametrize("typed", ["9O", "B+", "complete"])
+    def test_unaccepted_grade_is_held_whatever_is_approved(self, db_conn, typed):
+        from cass import db
+
+        self.baselined(db_conn, "8", typed)
+        rows = self.preview(
+            db_conn, CanvasSubmissionResponse(user_id=1, entered_grade="8")
+        )
+        to_push, held = hold_back_unapproved(
+            db.get_pending_changes(db_conn),
+            {"changes": rows},
+            overwrite_conflicts=True,
+            allow_over_points=True,
+            allow_clears=True,
+        )
+        assert to_push == {}
+        assert [h["held"] for h in held] == [HELD_NOT_ACCEPTED]
+
+    def test_cell_of_spaces_is_a_clear_needing_approval(self, db_conn):
+        self.baselined(db_conn, "8", " ")
+        (row,) = self.preview(
+            db_conn, CanvasSubmissionResponse(user_id=1, entered_grade="8")
+        )
+        assert (row["current"], row["clears"], row["not_accepted"]) == ("", True, False)
+
+    def test_spaces_around_a_grade_are_removed(self, db_conn):
+        self.baselined(db_conn, "8", " 9 ")
+        (row,) = self.preview(
+            db_conn, CanvasSubmissionResponse(user_id=1, entered_grade="8")
+        )
+        assert (row["current"], row["not_accepted"]) == ("9", False)
+
+    def test_unstripped_stored_grade_is_sent_stripped(self):
+        from cass.db.sync import _extract_grade_data, has_grade
+
+        assert has_grade(" ") is False
+        changes = {
+            grade_key(7, 1): {"posted_grade": {"baseline": "8", "current": " 9 "}}
+        }
+        assert _extract_grade_data(changes)[0] == {7: {1: "9"}}
+
+
+class TestAcceptsGrade:
+    LETTERS = frozenset({"A", "B+", "B", "F"})
+
+    @pytest.mark.parametrize(
+        ("grading_type", "accepted", "refused"),
+        [
+            (
+                "points",
+                "9 -3 +9 .5 9.5 95% 0",
+                "9O abc B+ 9O% 1e1 9,5 nan inf 9. 1_0 \uff18",
+            ),
+            ("percent", "95% 9.5%", "95 abc B+ 9O 9O%"),
+            ("letter_grade", "A b+ B+ 9 95%", "Z abc 9O complete pass"),
+            ("gpa_scale", "A 3.0 95%", "Z complete"),
+            ("pass_fail", "complete incomplete pass fail", "Complete abc 9 0 95% B+"),
+            ("not_graded", "", "9 A complete"),
+            ("", "", "9"),
+        ],
+    )
+    def test_by_grading_type(self, grading_type, accepted, refused):
+        for grade in accepted.split():
+            assert accepts_grade(grade, grading_type, self.LETTERS), grade
+        for grade in refused.split():
+            assert not accepts_grade(grade, grading_type, self.LETTERS), grade
+
+    @pytest.mark.parametrize(
+        ("assignment_scheme", "course_scheme", "expected"),
+        [(5, 6, {"Pass"}), (None, 6, {"High"}), (None, 99, set())],
+    )
+    def test_letters_come_from_the_grading_scheme(
+        self, assignment_scheme, course_scheme, expected
+    ):
+        from unittest.mock import MagicMock
+
+        client = MagicMock()
+        client.get_course.return_value = CanvasCourse(
+            id=1, name="C", grading_standard_id=course_scheme
+        )
+        client.list_grading_standards.return_value = [
+            CanvasGradingStandard(
+                id=i,
+                title="S",
+                grading_scheme=[CanvasGradingSchemeEntry(name=name, value=0.5)],
+            )
+            for i, name in ((5, "Pass"), (6, "High"))
+        ]
+        assignment = CanvasAssignmentResponse(
+            id=7,
+            name="HW",
+            grading_type="letter_grade",
+            grading_standard_id=assignment_scheme,
+        )
+        assert get_scheme_letters(client, assignment) == expected
+
+    def test_default_letters_without_a_scheme(self):
+        from unittest.mock import MagicMock
+
+        client = MagicMock()
+        client.get_course.return_value = CanvasCourse(id=1, name="C")
+        assignment = CanvasAssignmentResponse(
+            id=7, name="HW", grading_type="letter_grade"
+        )
+        letters = get_scheme_letters(client, assignment)
+        assert "B+" in letters
+        assert "A+" not in letters

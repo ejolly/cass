@@ -8,6 +8,7 @@ from __future__ import annotations
 __docformat__ = "google"
 
 import json
+import re
 from collections.abc import Iterable
 from datetime import date, datetime
 from typing import TYPE_CHECKING
@@ -19,11 +20,14 @@ from .times import same_instant
 if TYPE_CHECKING:
     from ...db.schema import CanvasGrade
     from .client import CanvasClient
+    from .schema import CanvasAssignmentResponse
 
 __all__ = [
+    "accepts_grade",
     "build_grade_push_data",
     "build_push_preview",
     "get_post_manually_map",
+    "get_scheme_letters",
     "is_valid_grade",
     "push_assignments",
     "push_grades",
@@ -79,7 +83,61 @@ def resolve_row_name(
 
 def is_valid_grade(grade: str | None) -> bool:
     """Return True if grade is non-empty and not a placeholder."""
-    return bool(grade) and grade not in ("-", "?")
+    return bool(grade) and grade.strip() not in ("", "-", "?")
+
+
+_NUMBER = r"[+-]?([0-9]+(\.[0-9]+)?|\.[0-9]+)"
+_LETTER_GRADING_TYPES = ("letter_grade", "gpa_scale")
+# Words Canvas reads as full or no credit, whatever the grading type.
+_PASS_FAIL_GRADES = frozenset({"complete", "incomplete", "pass", "fail"})
+# Canvas's built-in letter scheme, for courses that set none.
+_DEFAULT_LETTERS = frozenset(
+    ["A", "A-", "B+", "B", "B-", "C+", "C", "C-", "D+", "D", "D-", "F"]
+)
+
+
+def get_scheme_letters(
+    client: CanvasClient, assignment: CanvasAssignmentResponse
+) -> frozenset[str]:
+    """Return the letters an assignment's grading scheme defines.
+
+    Empty when Canvas names a scheme it does not list, and for grading types
+    that take no letters.
+    """
+    if assignment.grading_type not in _LETTER_GRADING_TYPES:
+        return frozenset()
+    standard_id = (
+        assignment.grading_standard_id or client.get_course().grading_standard_id
+    )
+    if not standard_id:
+        return _DEFAULT_LETTERS
+    for standard in client.list_grading_standards():
+        if standard.id == standard_id:
+            return frozenset(entry.name for entry in standard.grading_scheme)
+    return frozenset()
+
+
+def accepts_grade(grade: str, grading_type: str, letters: frozenset[str]) -> bool:
+    """Return whether Canvas records this grade as entered.
+
+    Canvas does not reject other text: it removes the student's grade or turns
+    it into a different one (checked in ``tests/live/test_live_grade_input.py``).
+    """
+    text = grade.strip()
+    is_number = re.fullmatch(_NUMBER, text) is not None
+    is_percent = re.fullmatch(_NUMBER + "%", text) is not None
+    if grading_type == "points":
+        return is_number or is_percent
+    if grading_type == "percent":
+        # A plain number would be read as points: 95 out of 10 becomes 950%.
+        return is_percent
+    if grading_type == "pass_fail":
+        return text in _PASS_FAIL_GRADES
+    if grading_type in _LETTER_GRADING_TYPES:
+        if text in _PASS_FAIL_GRADES:
+            return False
+        return is_number or is_percent or text in letters or text.upper() in letters
+    return False
 
 
 def build_grade_push_data(

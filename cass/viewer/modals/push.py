@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, cast
 
 from nicegui import ui
 
-from ...db import count_pending, hold_back_unapproved, refresh_pending
+from ...db import can_be_approved, count_pending, hold_back_unapproved, refresh_pending
 from .. import canvas_apply, canvas_preview
 from ..actions import build_preview_html
 from ..grid import (
@@ -78,10 +78,10 @@ class PushModal:
             g_ch = [c for c in changes if c.get("table") == "canvas_grades"]
             ui.html(build_preview_html(a_ch, g_ch, has_conflicts))
             n_conflicts = sum(
-                1 for c in changes if c.get("conflict") and "error" not in c
+                1 for c in changes if c.get("conflict") and can_be_approved(c)
             )
             n_over = sum(
-                1 for c in changes if c.get("over_points") and "error" not in c
+                1 for c in changes if c.get("over_points") and can_be_approved(c)
             )
             if n_conflicts:
                 ui.checkbox(
@@ -94,7 +94,7 @@ class PushModal:
                     f"Push {n_over} grade(s) above points possible",
                     on_change=lambda e: self._approve("over_points", bool(e.value)),
                 )
-            n_clears = sum(1 for c in changes if c.get("clears") and "error" not in c)
+            n_clears = sum(1 for c in changes if c.get("clears") and can_be_approved(c))
             if n_clears:
                 ui.checkbox(
                     f"Remove {n_clears} cleared grade(s) from Canvas",

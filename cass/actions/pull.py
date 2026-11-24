@@ -43,7 +43,7 @@ def _fetch_assignments(cfg: Config) -> int:
         cfg.canvas_course_id
     )
     groups = group_names or {}
-    count = db.save_canvas_assignments(
+    return db.save_pulled_assignments(
         [
             CanvasAssignment.from_api(
                 a, group_name=groups.get(a.assignment_group_id, "")
@@ -51,8 +51,6 @@ def _fetch_assignments(cfg: Config) -> int:
             for a in assignments_api
         ]
     )
-    db.mark_synced_assignments(db.get_db(), [a.id for a in assignments_api])
-    return count
 
 
 def _kept_grade_notice(user_id: int, assignment_id: int, canvas_grade: str) -> str:
@@ -85,9 +83,6 @@ def _fetch_submissions(cfg: Config) -> tuple[int, list[str]]:
                 cfg.canvas_course_id, assignment_id, student_ids
             )
         )
-    if (reason := db.pull_block_reason()) is not None:
-        raise RuntimeError(reason)
-    count = db.save_canvas_submissions(submissions)
     canvas_grades = {
         (s.canvas_user_id, s.canvas_assignment_id): s.entered_grade for s in submissions
     }
@@ -102,6 +97,7 @@ def _fetch_submissions(cfg: Config) -> tuple[int, list[str]]:
             for s in submissions
         ]
     )
+    count = db.save_canvas_submissions(submissions)
     return count, [_kept_grade_notice(*key, canvas_grades[key]) for key in kept]
 
 

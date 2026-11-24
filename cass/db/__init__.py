@@ -50,7 +50,6 @@ from .core import (
     save_canvas_students,
     save_canvas_submissions,
     save_meta,
-    save_pulled_grades,
     upsert_canvas_grade,
 )
 from .core import _db as _db
@@ -81,6 +80,7 @@ from .schema import (
 )
 from .sync import (
     PendingChanges,
+    can_be_approved,
     canvas_apply,
     canvas_preview,
     count_pending,
@@ -95,6 +95,8 @@ from .sync import (
     pull_block_reason,
     purge_pending_for_assignment,
     refresh_pending,
+    save_pulled_assignments,
+    save_pulled_grades,
     snapshot_canvas_synced,
     track_change,
 )
@@ -131,6 +133,7 @@ __all__ = [
     "TableCapability",
     "build_canvas_gradebook_matrix",
     "build_submissions_query",
+    "can_be_approved",
     "canvas_apply",
     "canvas_preview",
     "connect_db",
@@ -179,6 +182,7 @@ __all__ = [
     "save_canvas_students",
     "save_canvas_submissions",
     "save_meta",
+    "save_pulled_assignments",
     "save_pulled_grades",
     "snapshot_canvas_synced",
     "sql",

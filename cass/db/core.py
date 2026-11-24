@@ -13,6 +13,8 @@ __docformat__ = "google"
 import re
 import sqlite3
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import sqlite_utils
@@ -58,6 +60,20 @@ def _connection(sdb: sqlite_utils.Database) -> sqlite3.Connection:
         msg = "Database connection is not open"
         raise RuntimeError(msg)
     return conn
+
+
+@contextmanager
+def write_transaction(sdb: sqlite_utils.Database) -> Iterator[sqlite3.Connection]:
+    """Hold the database's write lock, then commit, or roll back on an error.
+
+    Taking the lock up front lets a check and the write that depends on it run
+    with no other process writing in between.
+    """
+    conn = _connection(sdb)
+    conn.commit()
+    conn.execute("BEGIN IMMEDIATE")
+    with conn:
+        yield conn
 
 
 def is_connection_usable(sdb: sqlite_utils.Database) -> bool:
@@ -406,6 +422,8 @@ def upsert_canvas_grade(
 ) -> str:
     """Insert or update a single canvas grade, returning the previous value.
 
+    Surrounding spaces are removed, so a cell holding only spaces is blank.
+
     Returns:
         Previous posted_grade (empty string if row didn't exist).
     """
@@ -420,7 +438,7 @@ def upsert_canvas_grade(
         {
             "canvas_user_id": canvas_user_id,
             "canvas_assignment_id": canvas_assignment_id,
-            "posted_grade": posted_grade,
+            "posted_grade": posted_grade.strip(),
             "updated_at": time.time(),
         },
         pk=("canvas_user_id", "canvas_assignment_id"),
@@ -464,72 +482,6 @@ def save_canvas_grades(grades: list[CanvasGrade]) -> int:
         replace=True,
     )
     return len(grades)
-
-
-def save_pulled_grades(grades: list[CanvasGrade]) -> list[tuple[int, int]]:
-    """Store grades pulled from Canvas as working values and as baselines.
-
-    Baselines written before pull stored grades may hold grades Canvas never
-    had. Until a full pull sets the ``grade_baselines`` meta key, a local grade
-    that differs from Canvas is therefore kept and loses its baseline, which
-    makes it a pending conflict. Otherwise the Canvas value wins.
-
-    Returns:
-        ``(canvas_user_id, canvas_assignment_id)`` of each local grade kept.
-    """
-    sdb = get_db()
-    local_grades: dict[tuple[int, int], str] = {}
-    if get_meta(GRADE_BASELINES_KEY, sdb) is None:
-        local_grades = {
-            (g.canvas_user_id, g.canvas_assignment_id): g.posted_grade
-            for g in load_canvas_grades()
-        }
-    kept: list[tuple[int, int]] = []
-    to_store: list[CanvasGrade] = []
-    for grade in grades:
-        key = (grade.canvas_user_id, grade.canvas_assignment_id)
-        local_grade = local_grades.get(key, "")
-        if local_grade and local_grade != grade.posted_grade:
-            kept.append(key)
-        else:
-            to_store.append(grade)
-
-    now = time.time()
-    with _connection(sdb) as transaction:
-        transaction.executemany(
-            """
-            INSERT OR REPLACE INTO canvas_grades
-                (canvas_user_id, canvas_assignment_id, score, posted_grade, updated_at)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            [
-                (
-                    g.canvas_user_id,
-                    g.canvas_assignment_id,
-                    g.score,
-                    g.posted_grade,
-                    now,
-                )
-                for g in to_store
-            ],
-        )
-        transaction.executemany(
-            """
-            INSERT OR REPLACE INTO _canvas_grades_synced
-                (canvas_user_id, canvas_assignment_id, posted_grade)
-            VALUES (?, ?, ?)
-            """,
-            [
-                (g.canvas_user_id, g.canvas_assignment_id, g.posted_grade)
-                for g in to_store
-            ],
-        )
-        transaction.executemany(
-            "DELETE FROM _canvas_grades_synced "
-            "WHERE canvas_user_id = ? AND canvas_assignment_id = ?",
-            kept,
-        )
-    return kept
 
 
 def load_canvas_grades(canvas_assignment_id: int | None = None) -> list[CanvasGrade]:

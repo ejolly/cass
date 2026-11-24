@@ -5,11 +5,14 @@ from __future__ import annotations
 __docformat__ = "google"
 
 import json
+import time
 from typing import TYPE_CHECKING, cast
 
 import sqlite_utils
 
 from ..apis.canvas.sync import (
+    accepts_grade,
+    get_scheme_letters,
     is_valid_grade,
     push_assignments,
     push_grades,
@@ -17,7 +20,15 @@ from ..apis.canvas.sync import (
     values_equal,
 )
 from .catalog import CANVAS_PUSHABLE, PULL_GUARDED_TABLES
-from .core import _connection, get_db
+from .core import (
+    GRADE_BASELINES_KEY,
+    _connection,
+    get_db,
+    get_meta,
+    load_canvas_grades,
+    write_transaction,
+)
+from .schema import CanvasAssignment, CanvasGrade
 
 if TYPE_CHECKING:
     from ..apis.canvas.client import CanvasClient
@@ -187,6 +198,124 @@ def pull_block_reason(sdb: sqlite_utils.Database | None = None) -> str | None:
     )
 
 
+def _refuse_if_pull_blocked(sdb: sqlite_utils.Database) -> None:
+    """Raise when a pull would overwrite a pending change."""
+    if (reason := pull_block_reason(sdb)) is not None:
+        raise RuntimeError(reason)
+
+
+def save_pulled_assignments(assignments: list[CanvasAssignment]) -> int:
+    """Store assignments pulled from Canvas as working values and as baselines.
+
+    Raises:
+        RuntimeError: when a pending change would be overwritten.
+    """
+    sdb = get_db()
+    with write_transaction(sdb) as transaction:
+        _refuse_if_pull_blocked(sdb)
+        transaction.executemany(
+            """
+            INSERT OR REPLACE INTO canvas_assignments
+                (canvas_id, name, points_possible, due_at, published,
+                 assignment_group, post_manually)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    a.canvas_id,
+                    a.name,
+                    a.points_possible,
+                    a.due_at,
+                    a.published,
+                    a.assignment_group,
+                    a.post_manually,
+                )
+                for a in assignments
+            ],
+        )
+        transaction.executemany(
+            """
+            INSERT OR REPLACE INTO _canvas_assignments_synced
+                (canvas_id, name, points_possible, due_at, published)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            [
+                (a.canvas_id, a.name, a.points_possible, a.due_at, a.published)
+                for a in assignments
+            ],
+        )
+    return len(assignments)
+
+
+def save_pulled_grades(grades: list[CanvasGrade]) -> list[tuple[int, int]]:
+    """Store grades pulled from Canvas as working values and as baselines.
+
+    Baselines written before pull stored grades may hold grades Canvas never
+    had. Until a full pull sets the ``grade_baselines`` meta key, a local grade
+    that differs from Canvas is therefore kept and loses its baseline, which
+    makes it a pending conflict. Otherwise the Canvas value wins.
+
+    Returns:
+        ``(canvas_user_id, canvas_assignment_id)`` of each local grade kept.
+
+    Raises:
+        RuntimeError: when a pending change would be overwritten.
+    """
+    sdb = get_db()
+    now = time.time()
+    kept: list[tuple[int, int]] = []
+    to_store: list[CanvasGrade] = []
+    with write_transaction(sdb) as transaction:
+        _refuse_if_pull_blocked(sdb)
+        local_grades: dict[tuple[int, int], str] = {}
+        if get_meta(GRADE_BASELINES_KEY, sdb) is None:
+            local_grades = {
+                (g.canvas_user_id, g.canvas_assignment_id): g.posted_grade
+                for g in load_canvas_grades()
+            }
+        for grade in grades:
+            key = (grade.canvas_user_id, grade.canvas_assignment_id)
+            local_grade = local_grades.get(key, "")
+            if local_grade and local_grade != grade.posted_grade:
+                kept.append(key)
+            else:
+                to_store.append(grade)
+        transaction.executemany(
+            """
+            INSERT OR REPLACE INTO canvas_grades
+                (canvas_user_id, canvas_assignment_id, score, posted_grade, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    g.canvas_user_id,
+                    g.canvas_assignment_id,
+                    g.score,
+                    g.posted_grade,
+                    now,
+                )
+                for g in to_store
+            ],
+        )
+        transaction.executemany(
+            """
+            INSERT OR REPLACE INTO _canvas_grades_synced
+                (canvas_user_id, canvas_assignment_id, posted_grade)
+            VALUES (?, ?, ?)
+            """,
+            [
+                (g.canvas_user_id, g.canvas_assignment_id, g.posted_grade)
+                for g in to_store
+            ],
+        )
+        transaction.executemany(
+            "DELETE FROM _canvas_grades_synced "
+            "WHERE canvas_user_id = ? AND canvas_assignment_id = ?",
+            kept,
+        )
+    return kept
+
+
 def preview_assignments(
     conn: sqlite_utils.Database,
     table_changes: TableChanges,
@@ -275,6 +404,8 @@ def preview_grades(
         ).fetchone()
         points_possible = points_row[0] if points_row else None
         try:
+            assignment = client.get_assignment(aid)
+            letters = get_scheme_letters(client, assignment)
             live_subs = client.list_submissions(aid)
             live_by_user = {submission.user_id: submission for submission in live_subs}
             for uid, columns in student_changes:
@@ -284,13 +415,23 @@ def preview_grades(
                 ).fetchone()
                 student_name = str(student_row[0]) if student_row else f"User {uid}"
                 live_sub = live_by_user.get(uid)
+                if live_sub is None:
+                    results.append(
+                        {
+                            "table": "canvas_grades",
+                            "canvas_assignment_id": aid,
+                            "canvas_user_id": uid,
+                            "name": f"{student_name} — {assignment_name}",
+                            "error": "Canvas lists no submission for this student",
+                        }
+                    )
+                    continue
                 for col, vals in columns.items():
                     live_val = None
-                    if live_sub is not None:
-                        if col == "posted_grade":
-                            live_val = live_sub.entered_grade
-                        elif col == "score":
-                            live_val = live_sub.score
+                    if col == "posted_grade":
+                        live_val = live_sub.entered_grade
+                    elif col == "score":
+                        live_val = live_sub.score
                     results.append(
                         {
                             "table": "canvas_grades",
@@ -307,6 +448,11 @@ def preview_grades(
                             and exceeds_points(vals["current"], points_possible),
                             "clears": col == "posted_grade"
                             and clears_grade(vals["baseline"], vals["current"]),
+                            "not_accepted": col == "posted_grade"
+                            and has_grade(vals["current"])
+                            and not accepts_grade(
+                                str(vals["current"]), assignment.grading_type, letters
+                            ),
                         }
                     )
         except Exception as exc:
@@ -390,7 +536,7 @@ def _extract_grade_data(
         change = columns.get("posted_grade", {})
         current = change.get("current")
         if has_grade(current):
-            grade = str(current)
+            grade = str(current).strip()
         elif has_grade(change.get("baseline")):
             grade = ""
         else:
@@ -532,6 +678,7 @@ HELD_CONFLICT = "changed on Canvas since your last pull"
 HELD_OVER_POINTS = "above the assignment's points possible"
 HELD_CLEAR = "would remove the grade on Canvas"
 HELD_NOT_COMPARED = "could not be compared with Canvas"
+HELD_NOT_ACCEPTED = "not a grade Canvas accepts for this assignment's grading type"
 
 
 def hold_back_unapproved(
@@ -546,9 +693,10 @@ def hold_back_unapproved(
 
     A change is held back when its Canvas value changed since the last pull
     (unless ``overwrite_conflicts``), when a grade is above the assignment's
-    points possible (unless ``allow_over_points``), when it removes a grade
-    from Canvas (unless ``allow_clears``), or when the preview could not read
-    Canvas to compare it. Held-back changes stay pending locally.
+    points possible (unless ``allow_over_points``), or when it removes a grade
+    from Canvas (unless ``allow_clears``). A change the preview could not
+    compare with Canvas, or a grade Canvas would not record as entered, is
+    always held back. Held-back changes stay pending locally.
 
     Args:
         pending: Pending changes from ``get_pending_changes``.
@@ -578,6 +726,11 @@ def hold_back_unapproved(
     return to_push, held
 
 
+def can_be_approved(change: dict[str, object]) -> bool:
+    """Return whether the user's approval could let a previewed change through."""
+    return "error" not in change and not change.get("not_accepted")
+
+
 def held_reason(
     change: dict[str, object],
     *,
@@ -588,6 +741,8 @@ def held_reason(
     """Return why a previewed change must not be pushed yet, or None."""
     if "error" in change:
         return HELD_NOT_COMPARED
+    if change.get("not_accepted"):
+        return HELD_NOT_ACCEPTED
     if change.get("conflict") and not overwrite_conflicts:
         return HELD_CONFLICT
     if change.get("over_points") and not allow_over_points:

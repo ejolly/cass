@@ -20,7 +20,7 @@ Only **Gradebook** and **Assignments** are editable. Everything else is read-onl
 
 ## Pushing
 
-Click **Push** in the sidebar to see a summary of pending changes grouped by student and assignment, then confirm. Values changed on Canvas since your last pull, grades above an assignment's points possible, and cleared grades (which would remove the grade on Canvas) are held back unless you tick the checkbox to approve them; held-back changes stay pending. Pushed cells lose their orange highlight. **Revert** discards every pending change instead.
+Click **Push** in the sidebar to see a summary of pending changes grouped by student and assignment, then confirm. Values changed on Canvas since your last pull, grades above an assignment's points possible, and cleared grades (which would remove the grade on Canvas) are held back unless you tick the checkbox to approve them; held-back changes stay pending. Grades Canvas would not record as entered are always held back; see [Push](../getting-started/workflow.md#push). Pushed cells lose their orange highlight. **Revert** discards every pending change instead.
 
 ## Creating and deleting assignments
 

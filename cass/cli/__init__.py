@@ -123,6 +123,8 @@ def _render_push_preview(preview: dict[str, object]) -> None:
         status = "ok"
         if "error" in change:
             status = "error"
+        elif bool(change.get("not_accepted")):
+            status = "not accepted"
         elif bool(change.get("conflict")):
             status = "conflict"
         elif bool(change.get("clears")):
@@ -162,9 +164,10 @@ def _approve_flagged(
     With ``--yes`` or without a terminal, nothing is asked and the answer is
     no: only the explicit flag approves these changes.
     """
+    from ..db import can_be_approved
     from .prompts import ask
 
-    count = sum(1 for change in changes if change.get(flag) and "error" not in change)
+    count = sum(1 for change in changes if change.get(flag) and can_be_approved(change))
     if count == 0 or yes:
         return False
     return ask(f"Push {count} {description}?", default=False)
@@ -184,7 +187,9 @@ def _render_held_back(held: list[dict[str, object]]) -> None:
         )
     err_console.print(
         "Approve them at the prompt, or pass --overwrite-conflicts, "
-        "--allow-over-points or --allow-clears; revert them with `cass revert`.",
+        "--allow-over-points or --allow-clears; revert them with `cass revert`. "
+        "Grades Canvas does not accept must be corrected, and changes that could "
+        "not be compared are never pushed.",
         markup=False,
         highlight=False,
     )
@@ -513,6 +518,8 @@ def pull(
     ),
 ) -> None:
     """Fetch from Canvas and update the local database."""
+    from rich.markup import escape
+
     from .. import db
     from ..actions import pull as pull_mod
     from ..actions.config import get_config
@@ -526,7 +533,7 @@ def pull(
         pull_mod.pull_all(
             cfg,
             on_progress=lambda step, detail: err_console.print(
-                f"  [dim]{step}[/dim] {detail}"
+                f"  [dim]{step}[/dim] {escape(detail)}"
             ),
         )
         return

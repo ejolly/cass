@@ -79,6 +79,8 @@ def build_preview_html(
                 warn = " \u26a0" if ch.get("conflict") else ""
                 live = escape(str(ch.get("live", "null")))
                 cur = escape(str(ch.get("current", "null")))
+                if ch.get("not_accepted"):
+                    cur += " (not accepted by Canvas)"
                 parts.append(f"<td>{name}{warn}</td>")
                 parts.append(f'<td class="opacity-50">{live}</td>')
                 parts.append(f'<td class="font-semibold">{cur}</td>')

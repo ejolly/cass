@@ -168,6 +168,7 @@ class CanvasAssignmentResponse(msgspec.Struct):
     published: bool = False
     submission_types: list[str] = []
     grading_type: str = ""
+    grading_standard_id: int | None = None  # null: the course's letter scheme
     assignment_group_id: int = 0
     position: int | None = None
     html_url: str = ""
