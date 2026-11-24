@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..apis.canvas.attempts import (  # noqa: F401 - re-exported
     FINISHED_ATTEMPT_STATES,
+    QuizAttemptsUnknownError,
     QuizHasAttemptsError,
     count_finished_attempts,
     has_finished_attempt,
@@ -808,6 +809,11 @@ def sync_quizzes(
         fields), skip, or refuse. A quiz with finished student attempts gets a
         ``refuse`` row for its scoring-setting changes, which are not sent;
         its other changes still are (commitment C2).
+
+    Raises:
+        QuizAttemptsUnknownError: A quiz's attempts could not be checked.
+            Earlier specs were already applied; nothing is sent for that quiz
+            or the specs after it.
     """
     live_by_title = {q.title.lower(): q for q in client.list_quizzes()}
     rows: list[tuple[str, str, str]] = []

@@ -14,6 +14,7 @@ from cass.actions.quizzes import (
     AnswerSpec,
     GroupSpec,
     QuestionSpec,
+    QuizHasAttemptsError,
     QuizSpec,
     QuizState,
     canvas_layout,
@@ -28,10 +29,12 @@ from cass.actions.quizzes import (
     quiz_form_fields,
     quiz_settings_diff,
     quiz_spec_from_canvas,
+    refuse_if_attempted,
     strip_html,
     sync_quizzes,
     with_create_defaults,
 )
+from cass.apis.canvas.attempts import QuizAttemptsUnknownError
 from cass.apis.canvas.schema import (
     CanvasQuiz,
     CanvasQuizAnswer,
@@ -797,15 +800,24 @@ class TestQuizAttemptGuard:
 
         assert count_finished_attempts(client, 1) == 1
 
+    def test_statistics_error_keeps_current_attempts_refusal(self):
+        live = CanvasQuiz(id=1, title="Quiz 1")
+        client = self.attempted_client(live)
+        client.count_quiz_takers.side_effect = QuizAttemptsUnknownError(1, "reason")
+
+        assert count_finished_attempts(client, 1) == 1
+        with pytest.raises(QuizHasAttemptsError, match="won't delete it"):
+            refuse_if_attempted(client, live, "delete it")
+
     def test_statistics_error_refuses(self):
         live = CanvasQuiz(
             id=1, title="Existing", quiz_type="survey", allowed_attempts=1
         )
         client = self.attempted_client(live)
         client.list_quiz_submissions.return_value = []
-        client.count_quiz_takers.side_effect = RuntimeError("statistics down")
+        client.count_quiz_takers.side_effect = QuizAttemptsUnknownError(1, "reason")
 
-        with pytest.raises(RuntimeError, match="statistics down"):
+        with pytest.raises(QuizAttemptsUnknownError):
             sync_quizzes(
                 client,
                 [QuizSpec(title="Existing", quiz_type="survey", attempts=2)],
@@ -816,8 +828,6 @@ class TestQuizAttemptGuard:
         client.update_quiz.assert_not_called()
 
     def test_refuse_if_attempted(self):
-        from cass.actions.quizzes import QuizHasAttemptsError, refuse_if_attempted
-
         live = CanvasQuiz(id=1, title="Quiz 1")
         with pytest.raises(QuizHasAttemptsError, match="won't delete it"):
             refuse_if_attempted(self.attempted_client(live), live, "delete it")

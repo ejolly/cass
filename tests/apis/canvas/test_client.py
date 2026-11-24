@@ -6,6 +6,7 @@ import httpx
 import msgspec
 import pytest
 
+from cass.apis.canvas.attempts import QuizAttemptsUnknownError
 from cass.apis.canvas.schema import (
     CanvasAnnouncement,
     CanvasAssignmentGroup,
@@ -1058,35 +1059,74 @@ class TestCanvasClient:
         with pytest.raises(httpx.HTTPStatusError):
             client.list_quiz_questions(20)
 
-    @pytest.mark.parametrize(
-        ("statistics", "expected"),
-        [([{"submission_statistics": {"unique_count": 3}}], 3), ([], 0)],
-    )
-    def test_count_quiz_takers(self, mock_client, statistics, expected):
+    def test_count_quiz_takers(self, mock_client):
         client, transport = mock_client
-        transport.add(json_data={"quiz_statistics": statistics})
-        assert client.count_quiz_takers(20) == expected
-        assert transport.requests[0].url.path.endswith("/quizzes/20/statistics")
+        transport.add(
+            json_data={
+                "quiz_statistics": [{"submission_statistics": {"unique_count": 3}}]
+            }
+        )
+        assert client.count_quiz_takers(20) == 3
+        url = transport.requests[0].url
+        assert url.path.endswith("/quizzes/20/statistics")
+        # Without all_versions, Canvas drops students whose kept score matches
+        # no single attempt, as under "keep average"
+        assert url.params["all_versions"] == "true"
 
     @pytest.mark.parametrize(
-        "body",
+        ("response", "reason"),
         [
-            {},
-            {"quiz_statistics": [{}]},
-            {"quiz_statistics": [{"submission_statistics": {"unique_count": None}}]},
+            ({"status": 204, "content": b""}, "too large"),
+            ({"content": b""}, "no attempt count"),
+            ({"content": b"<html>private"}, "no attempt count"),
+            ({"json_data": []}, "no attempt count"),
+            ({"json_data": {}}, "no attempt count"),
+            ({"json_data": {"quiz_statistics": []}}, "no attempt count"),
+            ({"json_data": {"quiz_statistics": [{}]}}, "no attempt count"),
+            (
+                {
+                    "json_data": {
+                        "quiz_statistics": [
+                            {"submission_statistics": {"unique_count": None}}
+                        ]
+                    }
+                },
+                "no attempt count",
+            ),
+            ({"status": 403, "json_data": {"message": "private"}}, "status 403"),
+            ({"status": 500, "json_data": {"message": "private"}}, "status 500"),
         ],
     )
-    def test_count_quiz_takers_rejects_missing_count(self, mock_client, body):
+    def test_count_quiz_takers_unknown(self, mock_client, response, reason):
         # Reading an unknown count as 0 would allow changes to an attempted quiz
         client, transport = mock_client
-        transport.add(json_data=body)
-        with pytest.raises(msgspec.ValidationError):
+        transport.add(**response)
+        with pytest.raises(QuizAttemptsUnknownError, match=reason) as caught:
             client.count_quiz_takers(20)
+        message = str(caught.value)
+        assert "could not check quiz 20 for student attempts" in message
+        assert "made no change to it" in message
+        assert "Canvas web app" in message
+        assert "private" not in message
+        error = caught.value
+        assert error.__context__ is None or error.__suppress_context__
 
-    def test_count_quiz_takers_raises_http_errors(self, mock_client):
-        client, transport = mock_client
-        transport.add(403, json_data={})
-        with pytest.raises(httpx.HTTPStatusError):
+    def test_count_quiz_takers_unreachable(self):
+        from cass.apis.canvas.client import CanvasClient
+
+        def refuse(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("connection refused", request=request)
+
+        client = CanvasClient(
+            "https://canvas.example.com",
+            token="t",
+            course_id=1,
+            transport=httpx.MockTransport(refuse),
+        )
+        with (
+            client,
+            pytest.raises(QuizAttemptsUnknownError, match="not reach Canvas"),
+        ):
             client.count_quiz_takers(20)
 
     def test_create_quiz_report_requests_student_analysis(self, mock_client):

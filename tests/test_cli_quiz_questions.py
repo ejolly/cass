@@ -15,7 +15,7 @@ from typer.testing import CliRunner
 
 from cass.actions.config import reset_config, set_config_path
 from cass.apis.canvas.client import CanvasClient
-from cass.cli import app
+from cass.cli import app, run
 
 runner = CliRunner()
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
@@ -548,13 +548,58 @@ def test_delete_refused_after_concluded_student_attempt(canvas):
     assert canvas.writes == []
 
 
-def test_delete_refused_when_statistics_fail(canvas):
-    canvas.routes[f"{QUIZ_PATH}/statistics"] = httpx.Response(403, json={})
+STATISTICS_FAILURES = [
+    httpx.Response(204),
+    httpx.Response(200, content=b"<html>private"),
+    httpx.Response(200, json={"quiz_statistics": []}),
+    httpx.Response(403, json={"message": "private"}),
+]
+ATTEMPT_GUARDED_COMMANDS = [
+    ["delete", "20", "--yes"],
+    ["update", "20", "--from", "q.toml", "--apply"],
+    ["update", "20", "--from", "q.toml", "--questions", "--apply"],
+    ["sync", "--apply"],
+]
+
+
+@pytest.mark.parametrize(
+    "response", STATISTICS_FAILURES, ids=["204", "malformed", "empty", "http-error"]
+)
+@pytest.mark.parametrize(
+    "args", ATTEMPT_GUARDED_COMMANDS, ids=["delete", "update", "questions", "sync"]
+)
+def test_statistics_failure_is_a_clean_refusal(
+    canvas, quiz_file, tmp_path, monkeypatch, capsys, args, response
+):
+    quiz_file(("attempts = 1", "attempts = 3"))
+    (tmp_path / "cass.toml").write_text(
+        CASS_TOML + '[[canvas.quizzes]]\nfile = "q.toml"\n'
+    )
+    reset_config()
+    canvas.routes[f"{QUIZ_PATH}/statistics"] = response
+    group = ["canvas"] if args[0] == "sync" else ["canvas", "quizzes"]
+    monkeypatch.setattr("sys.argv", ["cass", *group, *args])
+
+    with pytest.raises(SystemExit) as caught:
+        run()
+
+    assert caught.value.code == 1
+    error = capsys.readouterr().err
+    assert "could not check quiz 20 for student attempts" in error
+    assert "Traceback" not in error
+    assert "private" not in error
+    assert ("already applied" in error) == (args[0] == "sync")
+    assert canvas.writes == []
+
+
+def test_delete_with_current_attempts_and_failing_statistics(canvas):
+    _finished_by(canvas, 1)
+    canvas.routes[f"{QUIZ_PATH}/statistics"] = httpx.Response(204)
 
     result = runner.invoke(app, ["canvas", "quizzes", "delete", "20", "--yes"])
 
     assert result.exit_code == 1, result.output
-    assert isinstance(result.exception, httpx.HTTPStatusError)
+    assert "won't delete it" in str(result.exception)
     assert canvas.writes == []
 
 

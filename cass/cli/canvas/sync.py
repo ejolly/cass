@@ -73,7 +73,11 @@ def sync(
         plan_sync_items,
     )
     from ...actions.modules import sync_modules
-    from ...actions.quizzes import load_quiz_file, sync_quizzes
+    from ...actions.quizzes import (
+        QuizAttemptsUnknownError,
+        load_quiz_file,
+        sync_quizzes,
+    )
 
     _common.require_canvas()
     cfg = get_config()
@@ -128,9 +132,17 @@ def sync(
 
         # --- Quizzes ---
         if quiz_specs:
-            actions.extend(
-                sync_quizzes(c, quiz_specs, group_ids, tz, created=created_quizzes)
-            )
+            try:
+                actions.extend(
+                    sync_quizzes(c, quiz_specs, group_ids, tz, created=created_quizzes)
+                )
+            except QuizAttemptsUnknownError as exc:
+                if dry_run:
+                    raise
+                raise RuntimeError(
+                    f"{exc}\nAny changes before this quiz were already applied; "
+                    "nothing after it was sent."
+                ) from None
 
         # --- Module items ---
         try:

@@ -20,6 +20,7 @@ from ....actions.quizzes import (
     quiz_form_fields,
     with_create_defaults,
 )
+from ..attempts import QuizAttemptsUnknownError
 from ..schema import (
     CanvasQuiz,
     CanvasQuizAnswer,
@@ -414,17 +415,37 @@ class QuizzesMixin(BaseClient):
         Covers current, concluded and inactive students; Canvas leaves out the
         Test Student and students whose enrollment was deleted.
 
+        ``all_versions`` asks for every attempt. Without it Canvas keeps only
+        attempts whose score equals the kept score, which drops students whose
+        kept score is an average.
+
         Returns:
-            Statistics ``unique_count``; 0 when Canvas has no statistics entry.
+            Statistics ``unique_count``.
 
         Raises:
-            msgspec.ValidationError: Canvas returned no count.
+            QuizAttemptsUnknownError: Canvas returned no count: the request
+                failed, or the quiz is too large for statistics.
         """
-        resp = self._client.get(self._course(f"/quizzes/{quiz_id}/statistics"))
-        page = msgspec.convert(resp.json(), _QuizStatisticsPage, strict=False)
-        if not page.quiz_statistics:
-            return 0
-        return page.quiz_statistics[0].submission_statistics.unique_count
+        try:
+            resp = self._client.get(
+                self._course(f"/quizzes/{quiz_id}/statistics"),
+                params={"all_versions": "true"},
+            )
+        except httpx.HTTPStatusError as exc:
+            reason = f"Canvas answered with status {exc.response.status_code}"
+            raise QuizAttemptsUnknownError(quiz_id, reason) from None
+        except httpx.HTTPError:
+            reason = "could not reach Canvas"
+            raise QuizAttemptsUnknownError(quiz_id, reason) from None
+        if resp.status_code == 204:
+            reason = "it is too large for Canvas statistics"
+            raise QuizAttemptsUnknownError(quiz_id, reason)
+        try:
+            page = msgspec.convert(resp.json(), _QuizStatisticsPage, strict=False)
+            return page.quiz_statistics[0].submission_statistics.unique_count
+        except (ValueError, msgspec.MsgspecError, IndexError):
+            reason = "Canvas returned no attempt count"
+            raise QuizAttemptsUnknownError(quiz_id, reason) from None
 
     def start_quiz_preview(self, quiz_id: int) -> CanvasQuizSubmission:
         """Start a teacher preview attempt on a quiz.

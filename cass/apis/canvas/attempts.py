@@ -28,6 +28,17 @@ class QuizHasAttemptsError(RuntimeError):
         self.attempts = attempts
 
 
+class QuizAttemptsUnknownError(RuntimeError):
+    """A change cass refuses because it cannot tell whether there are attempts."""
+
+    def __init__(self, quiz_id: int, reason: str) -> None:
+        super().__init__(
+            f"cass could not check quiz {quiz_id} for student attempts "
+            f"({reason}), so it made no change to it. Make this change in the "
+            "Canvas web app."
+        )
+
+
 def has_finished_attempt(submission: CanvasQuizSubmission) -> bool:
     """Return whether a student has finished at least one attempt.
 
@@ -50,8 +61,10 @@ def count_finished_attempts(client: CanvasClient, quiz_id: int) -> int:
     progress. Neither includes students whose enrollment was deleted. Teacher
     previews and the Test Student never count.
 
-    Any error reading either count propagates, so an unknown count never
-    allows a change.
+    Raises:
+        QuizAttemptsUnknownError: Canvas gave no statistics count and no
+            current student has a finished attempt, so whether there are any
+            is unknown. When current students do, their count is returned.
     """
     student_ids = {s.id for s in client.list_students()}
     current = sum(
@@ -59,7 +72,14 @@ def count_finished_attempts(client: CanvasClient, quiz_id: int) -> int:
         for sub in client.list_quiz_submissions(quiz_id)
         if sub.user_id in student_ids and has_finished_attempt(sub)
     )
-    return max(current, client.count_quiz_takers(quiz_id))
+    try:
+        takers = client.count_quiz_takers(quiz_id)
+    except RuntimeError:
+        # Current students' attempts are enough to refuse the change.
+        if current > 0:
+            return current
+        raise
+    return max(current, takers)
 
 
 def refuse_if_attempted(
@@ -79,6 +99,7 @@ def refuse_if_attempted(
 
     Raises:
         QuizHasAttemptsError: At least one finished student attempt exists.
+        QuizAttemptsUnknownError: Whether one exists could not be checked.
     """
     count = count_finished_attempts(client, quiz.id) if attempts is None else attempts
     if count > 0:

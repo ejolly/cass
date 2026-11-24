@@ -38,7 +38,7 @@ Canvas behaviors that `--help` won't tell you. Each one is documented in the cas
 
 - `quizzes responses` asks Canvas to generate a student analysis report and waits for it, which takes about 30 seconds.
 - Canvas leaves the Test Student out of quiz reports and statistics.
-- The quiz submissions list covers current students only. Statistics (`submission_statistics.unique_count`) also cover concluded and inactive students. Neither covers a student whose enrollment was deleted.
+- The quiz submissions list covers current students only. Statistics (`submission_statistics.unique_count`) also cover concluded and inactive students. Neither covers a student whose enrollment was deleted. Pass `all_versions=true`, or statistics leave out students whose kept score is an average of attempts. Over 100 questions or 1000 submissions, Canvas answers 204 with no statistics, so cass refuses to delete or rescore the quiz.
 - An attempt with essay questions ends in `pending_review`, not `complete`. Count both as finished.
 - When a course concludes, Canvas force-submits attempts that were opened but never submitted, and stamps them with the term end date. `auto_submitted` in the responses CSV flags these, but it also flags attempts that ran out of time, which hold real answers. An auto-submitted attempt stamped at the term end is the conclusion case. Don't read those as submissions made on that date.
 - `started_at` and `auto_submitted` cover only each student's latest attempt.

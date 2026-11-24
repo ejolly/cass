@@ -10,6 +10,8 @@ from __future__ import annotations
 
 __docformat__ = "google"
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import replace
 from uuid import uuid4
 
@@ -20,7 +22,11 @@ from typer.testing import CliRunner
 
 from cass.actions.config import get_config
 from cass.actions.quizzes import count_finished_attempts, load_quiz_file
-from cass.apis.canvas.attempts import FINISHED_ATTEMPT_STATES
+from cass.apis.canvas.attempts import (
+    FINISHED_ATTEMPT_STATES,
+    QuizAttemptsUnknownError,
+    QuizHasAttemptsError,
+)
 from cass.apis.canvas.client import CanvasClient
 from cass.apis.canvas.schema import CanvasStudentResponse
 from cass.cli import app
@@ -90,42 +96,65 @@ def test_retake_in_progress_still_refuses(
         practice.delete_quiz(quiz.id)
 
 
-def _count_current_finishers(client: CanvasClient, quiz_id: int) -> int:
-    """Number of current students whose latest attempt is finished."""
+@contextmanager
+def errors_without_details() -> Iterator[None]:
+    """Fail with only the error's type: Canvas errors can quote student data."""
+    try:
+        yield
+    except Exception as exc:
+        pytest.fail(f"Real course read failed: {type(exc).__name__}", pytrace=False)
+
+
+def _count_undercounted_quizzes(client: CanvasClient) -> tuple[int, int]:
+    """Number of quizzes checked, and of those where statistics miss students.
+
+    Only quizzes with a current student in a finished state are checked, and
+    not those Canvas has no statistics for, which cass refuses to change.
+    """
     student_ids = {s.id for s in client.list_students()}
-    return sum(
-        1
-        for s in client.list_quiz_submissions(quiz_id)
-        if s.user_id in student_ids and s.workflow_state in FINISHED_ATTEMPT_STATES
-    )
+    checked = 0
+    undercounted = 0
+    for quiz in client.list_quizzes():
+        current = sum(
+            1
+            for s in client.list_quiz_submissions(quiz.id)
+            if s.user_id in student_ids and s.workflow_state in FINISHED_ATTEMPT_STATES
+        )
+        try:
+            takers = client.count_quiz_takers(quiz.id)
+        except QuizAttemptsUnknownError:
+            continue
+        checked += current > 0
+        undercounted += takers < current
+    return checked, undercounted
 
 
 def test_takers_at_least_current_attempts(real_course: CanvasClient):
     """Statistics never count fewer students than the submissions list."""
-    attempted_quizzes = 0
-    undercounted_quizzes = 0
-    for quiz in real_course.list_quizzes():
-        current = _count_current_finishers(real_course, quiz.id)
-        takers = real_course.count_quiz_takers(quiz.id)
-        attempted_quizzes += current > 0
-        undercounted_quizzes += takers < current
-    assert undercounted_quizzes == 0
-    if attempted_quizzes == 0:
+    with errors_without_details():
+        checked, undercounted = _count_undercounted_quizzes(real_course)
+    assert undercounted == 0
+    if checked == 0:
         pytest.skip("The real course has no quiz with finished student attempts")
+
+
+def _find_attempted_quiz_id(client: CanvasClient) -> int | None:
+    """ID of the first quiz cass knows to have finished attempts, if any."""
+    for quiz in client.list_quizzes():
+        try:
+            if count_finished_attempts(client, quiz.id) > 0:
+                return quiz.id
+        except QuizAttemptsUnknownError:
+            continue
+    return None
 
 
 def test_real_quiz_with_attempts_refuses_delete(
     real_course: CanvasClient, monkeypatch: pytest.MonkeyPatch
 ):
-    quiz = next(
-        (
-            q
-            for q in real_course.list_quizzes()
-            if count_finished_attempts(real_course, q.id) > 0
-        ),
-        None,
-    )
-    if quiz is None:
+    with errors_without_details():
+        quiz_id = _find_attempted_quiz_id(real_course)
+    if quiz_id is None:
         pytest.skip("The real course has no quiz with finished student attempts")
     monkeypatch.setattr(
         "cass.cli.canvas._common.client",
@@ -138,8 +167,11 @@ def test_real_quiz_with_attempts_refuses_delete(
     )
 
     result = runner.invoke(
-        app, ["canvas", "quizzes", "delete", str(quiz.id), "--yes", "--dry-run"]
+        app, ["canvas", "quizzes", "delete", str(quiz_id), "--yes", "--dry-run"]
     )
 
-    assert result.exit_code == 1, result.output
-    assert "Canvas web app" in str(result.exception)
+    # Booleans first: a failed assert on the result would print its details.
+    exited_with_error = result.exit_code == 1
+    refused = isinstance(result.exception, QuizHasAttemptsError)
+    assert exited_with_error
+    assert refused
