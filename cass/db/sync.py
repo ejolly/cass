@@ -5,6 +5,7 @@ from __future__ import annotations
 __docformat__ = "google"
 
 import json
+import sqlite3
 import time
 from typing import TYPE_CHECKING, cast
 
@@ -248,13 +249,20 @@ def save_pulled_assignments(assignments: list[CanvasAssignment]) -> int:
     return len(assignments)
 
 
-def save_pulled_grades(grades: list[CanvasGrade]) -> list[tuple[int, int]]:
+def save_pulled_grades(
+    grades: list[CanvasGrade], *, full_pull: bool = False
+) -> list[tuple[int, int]]:
     """Store grades pulled from Canvas as working values and as baselines.
 
     Baselines written before pull stored grades may hold grades Canvas never
     had. Until a full pull sets the ``grade_baselines`` meta key, a local grade
     that differs from Canvas is therefore kept and loses its baseline, which
-    makes it a pending conflict. Otherwise the Canvas value wins.
+    makes it a pending conflict. Otherwise the Canvas value wins. In a full
+    pull, a non-blank local grade Canvas sent no value for is kept the same way.
+
+    Args:
+        grades: Grades pulled from Canvas.
+        full_pull: ``grades`` holds every grade Canvas has for the course.
 
     Returns:
         ``(canvas_user_id, canvas_assignment_id)`` of each local grade kept.
@@ -281,6 +289,13 @@ def save_pulled_grades(grades: list[CanvasGrade]) -> list[tuple[int, int]]:
                 kept.append(key)
             else:
                 to_store.append(grade)
+        if full_pull:
+            sent = {(g.canvas_user_id, g.canvas_assignment_id) for g in grades}
+            kept.extend(
+                key
+                for key in _possibly_unpushed_grades(transaction, sdb)
+                if key not in sent
+            )
         transaction.executemany(
             """
             INSERT OR REPLACE INTO canvas_grades
@@ -317,32 +332,66 @@ def save_pulled_grades(grades: list[CanvasGrade]) -> list[tuple[int, int]]:
     return kept
 
 
-def remove_departed_students(current: set[int]) -> list[str]:
+def _possibly_unpushed_grades(
+    transaction: sqlite3.Connection,
+    sdb: sqlite_utils.Database,
+) -> list[tuple[int, int]]:
+    """Return local grades that may be unpushed although they are not pending.
+
+    Until a full pull sets the ``grade_baselines`` meta key, a baseline may hold
+    a grade Canvas never had, so this is every non-blank grade.
+
+    Returns:
+        ``(canvas_user_id, canvas_assignment_id)`` of each such grade.
+    """
+    if get_meta(GRADE_BASELINES_KEY, sdb) is not None:
+        return []
+    return transaction.execute(
+        "SELECT canvas_user_id, canvas_assignment_id FROM canvas_grades "
+        "WHERE posted_grade != '' ORDER BY canvas_assignment_id, canvas_user_id"
+    ).fetchall()
+
+
+def remove_departed_students(
+    current: set[int], stored: set[int]
+) -> tuple[list[str], list[tuple[int, int]]]:
     """Delete students Canvas no longer lists, with everything stored for them.
+
+    A student with a grade that may be unpushed is kept.
 
     Args:
         current: IDs of the students Canvas lists. When empty, nothing is
             removed, because a concluded course can list none.
+        stored: IDs stored before Canvas was asked for its list. Other students
+            are kept.
 
     Returns:
-        The names of the removed students.
+        The names of the removed students, and ``(canvas_user_id,
+        canvas_assignment_id)`` of each grade whose student was kept for it.
 
     Raises:
         RuntimeError: when there is a pending change.
     """
     if not current:
-        return []
+        return [], []
     sdb = get_db()
     with write_transaction(sdb) as transaction:
         _refuse_if_pull_blocked(sdb)
-        departed = [
+        departed = stored - current
+        kept_grades = [
+            (user_id, assignment_id)
+            for user_id, assignment_id in _possibly_unpushed_grades(transaction, sdb)
+            if user_id in departed
+        ]
+        departed -= {user_id for user_id, _ in kept_grades}
+        removed = [
             (canvas_id, name)
             for canvas_id, name in transaction.execute(
                 "SELECT canvas_id, name FROM canvas_students ORDER BY sortable_name"
             ).fetchall()
-            if canvas_id not in current
+            if canvas_id in departed
         ]
-        ids = [(canvas_id,) for canvas_id, _ in departed]
+        ids = [(canvas_id,) for canvas_id, _ in removed]
         for statement in (
             "DELETE FROM canvas_submissions WHERE canvas_user_id = ?",
             "DELETE FROM canvas_grades WHERE canvas_user_id = ?",
@@ -350,38 +399,50 @@ def remove_departed_students(current: set[int]) -> list[str]:
             "DELETE FROM canvas_students WHERE canvas_id = ?",
         ):
             transaction.executemany(statement, ids)
-    return [name for _, name in departed]
+    return [name for _, name in removed], kept_grades
 
 
-def remove_deleted_assignments(current: set[int]) -> list[str]:
+def remove_deleted_assignments(
+    current: set[int], stored: set[int]
+) -> tuple[list[str], list[tuple[int, int]]]:
     """Delete assignments Canvas no longer lists, with everything stored for them.
 
-    Assignments that were never pushed (negative IDs) are kept.
+    Assignments that were never pushed (negative IDs), and those with a grade
+    that may be unpushed, are kept.
 
     Args:
         current: IDs of the assignments Canvas lists. When empty, nothing is
             removed.
+        stored: IDs stored before Canvas was asked for its list. Other
+            assignments are kept.
 
     Returns:
-        The names of the removed assignments.
+        The names of the removed assignments, and ``(canvas_user_id,
+        canvas_assignment_id)`` of each grade whose assignment was kept for it.
 
     Raises:
         RuntimeError: when there is a pending change.
     """
     if not current:
-        return []
+        return [], []
     sdb = get_db()
     with write_transaction(sdb) as transaction:
         _refuse_if_pull_blocked(sdb)
-        deleted = [
+        deleted = {canvas_id for canvas_id in stored - current if canvas_id > 0}
+        kept_grades = [
+            (user_id, assignment_id)
+            for user_id, assignment_id in _possibly_unpushed_grades(transaction, sdb)
+            if assignment_id in deleted
+        ]
+        deleted -= {assignment_id for _, assignment_id in kept_grades}
+        removed = [
             (canvas_id, name)
             for canvas_id, name in transaction.execute(
-                "SELECT canvas_id, name FROM canvas_assignments "
-                "WHERE canvas_id > 0 ORDER BY name"
+                "SELECT canvas_id, name FROM canvas_assignments ORDER BY name"
             ).fetchall()
-            if canvas_id not in current
+            if canvas_id in deleted
         ]
-        ids = [(canvas_id,) for canvas_id, _ in deleted]
+        ids = [(canvas_id,) for canvas_id, _ in removed]
         for statement in (
             "DELETE FROM canvas_submissions WHERE canvas_assignment_id = ?",
             "DELETE FROM canvas_grades WHERE canvas_assignment_id = ?",
@@ -390,7 +451,7 @@ def remove_deleted_assignments(current: set[int]) -> list[str]:
             "DELETE FROM canvas_assignments WHERE canvas_id = ?",
         ):
             transaction.executemany(statement, ids)
-    return [name for _, name in deleted]
+    return [name for _, name in removed], kept_grades
 
 
 def preview_assignments(

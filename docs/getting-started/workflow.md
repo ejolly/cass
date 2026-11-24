@@ -8,9 +8,9 @@ cass pull
 
 Fetches students, assignments, submissions, and grades from Canvas into `cass.db`. Grades are pulled as entered, before late deductions: points, a percentage, a letter, or complete/incomplete. cass blocks a pull while you have unpushed edits; push or revert first. An edit saved while a pull is running stops the pull.
 
-Students no longer enrolled and assignments deleted on Canvas are removed from `cass.db`, along with their submissions and grades, and the pull names each one. If Canvas returns no students or no assignments at all, as it may for a concluded course, the pull keeps the local ones and says so.
+Students no longer enrolled and assignments deleted on Canvas are removed from `cass.db`, along with their submissions and grades, and the pull names each one. If Canvas returns no students or no assignments at all, as it may for a concluded course, the pull keeps the local ones and says so. With no assignments listed, it does not refresh submissions and grades.
 
-If `cass.db` comes from a version that did not pull grades, the first pull keeps each local grade that differs from Canvas, names it, and leaves it pending as a conflict. Push it to overwrite Canvas, or revert it and pull again to take the Canvas grade.
+If `cass.db` comes from a version that did not pull grades, the first pull keeps each local grade that differs from Canvas, names it, and leaves it pending as a conflict. Push it to overwrite Canvas, or revert it and pull again to take the Canvas grade. A local grade Canvas lists nothing for, such as one of a departed student or on a deleted assignment, is also kept and left pending; once it is reverted, the next pull removes the student or assignment. This waits for a pull in which Canvas returns both students and assignments.
 
 ## Edit
 

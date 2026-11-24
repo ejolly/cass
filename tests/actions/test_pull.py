@@ -348,8 +348,8 @@ class TestPullGrades:
         db.save_pulled_assignments([db.CanvasAssignment(canvas_id=42, name="HW")])
         assert len(attempts) == 2
         assert stored_grades(conn) == ("8", "8")
-        db.remove_departed_students({100})
-        db.remove_deleted_assignments({42})
+        db.remove_departed_students({100}, {100})
+        db.remove_deleted_assignments({42}, {42})
         assert len(attempts) == 4
         other.close()
         db.reset()
@@ -571,8 +571,13 @@ class TestPullRemovals:
             notices = pull_notices(cfg)
 
         assert notices == [
-            ("kept", "Canvas returned no assignments; kept 2 local assignments")
+            ("kept", "Canvas returned no assignments; kept 2 local assignments"),
+            (
+                "kept",
+                "Submissions and grades of the kept assignments were not refreshed",
+            ),
         ]
+        canvas_api.assert_not_called()
         assert db.load_canvas_assignment_ids() == [-1, 42, 43]
 
     def test_empty_course_reports_nothing(self, cfg, db_conn, canvas_api):
@@ -642,7 +647,7 @@ class TestPullRemovals:
         counts = row_counts(db_conn)
 
         with pytest.raises(RuntimeError, match="Pull blocked"):
-            remove({100, 42})
+            remove({100, 42}, {100, 200, 42, 43})
 
         assert row_counts(db_conn) == counts
 
@@ -651,7 +656,7 @@ class TestPullRemovals:
         db_conn["_canvas_grades_synced"].delete_where()
 
         with pytest.raises(RuntimeError, match="Pull blocked"):
-            db.remove_departed_students({100})
+            db.remove_departed_students({100}, {100, 200})
 
         assert db.load_canvas_student_ids() == {100, 200}
 
@@ -664,7 +669,7 @@ class TestPullRemovals:
         pull_course_with_grades(cfg, canvas_api)
         counts = row_counts(db_conn)
 
-        assert remove(set()) == []
+        assert remove(set(), {100, 200, 42, 43}) == ([], [])
 
         assert row_counts(db_conn) == counts
 
@@ -681,9 +686,196 @@ class TestPullRemovals:
         )
 
         with pytest.raises(sqlite3.Error, match="disk trouble"):
-            remove(current)
+            remove(current, {100, 200, 42, 43})
 
         assert row_counts(db_conn) == counts
+
+
+def course_before_upgrade(cfg, db_conn, canvas_api) -> None:
+    """A course whose grade baselines may hold unpushed grades."""
+    pull_course_with_grades(cfg, canvas_api)
+    db_conn.execute("DELETE FROM meta WHERE key = 'grade_baselines'")
+    _connection(db_conn).commit()
+
+
+def only_grade(conn, user_id: int, assignment_id: int) -> None:
+    """Blank every grade and baseline except one."""
+    for table in ("canvas_grades", "_canvas_grades_synced"):
+        conn.execute(
+            f"UPDATE {table} SET posted_grade = '' "
+            "WHERE NOT (canvas_user_id = ? AND canvas_assignment_id = ?)",
+            [user_id, assignment_id],
+        )
+    _connection(conn).commit()
+
+
+BOTH_ASSIGNMENTS = [*_MOCK_ASSIGNMENTS, CanvasAssignmentResponse(id=43, name="HW 02")]
+
+
+class TestRemovalBeforeBaselines:
+    """Removals while an old baseline may equal an unpushed grade."""
+
+    @pytest.mark.parametrize(
+        ("remove", "current", "stored", "grade", "removed"),
+        [
+            (db.remove_departed_students, {300}, {100, 200}, (200, 43), "Alice Smith"),
+            (db.remove_deleted_assignments, {99}, {42, 43}, (200, 43), "HW 01"),
+        ],
+    )
+    def test_only_rows_with_grades_are_kept(
+        self, cfg, db_conn, canvas_api, remove, current, stored, grade, removed
+    ):
+        course_before_upgrade(cfg, db_conn, canvas_api)
+        only_grade(db_conn, *grade)
+
+        assert remove(current, stored) == ([removed], [grade])
+
+        assert db.get_pending_changes(db_conn) == {}
+        assert rows_for(db_conn, "canvas_user_id", 200) > 0
+
+    @pytest.mark.parametrize("gone", ["student", "assignment", "both"])
+    def test_full_pull_keeps_grade_as_conflict_until_reverted(
+        self, cfg, db_conn, canvas_api, gone
+    ):
+        course_before_upgrade(cfg, db_conn, canvas_api)
+        only_grade(db_conn, 200, 43)
+        students = _MOCK_STUDENTS if gone == "assignment" else _MOCK_STUDENTS[:1]
+        assignments = BOTH_ASSIGNMENTS if gone == "student" else _MOCK_ASSIGNMENTS
+        canvas_api.side_effect = lambda course_id, aid, student_ids: [
+            CanvasSubmission(canvas_user_id=s.id, canvas_assignment_id=aid)
+            for s in students
+        ]
+
+        with canvas_students(students), canvas_assignments(assignments):
+            notices = pull_notices(cfg)
+
+            ((step, notice),) = notices
+            assert step == "kept"
+            assert "Bob Jones — HW 02" in notice
+            assert "may be unpushed" in notice
+            assert db.get_meta("grade_baselines") == "1"
+            assert db.load_canvas_student_ids() == {100, 200}
+            assert db.load_canvas_assignment_ids() == [42, 43]
+            fetched = {call.args[1] for call in canvas_api.call_args_list}
+            assert fetched == {a.id for a in assignments}
+            pending = db.get_pending_changes(db_conn)
+            (change,) = pending["canvas_grades"].values()
+            assert change["posted_grade"] == {"baseline": None, "current": "8"}
+            assert db.pull_block_reason(db_conn) is not None
+
+            db.revert_changes(db_conn, pending)
+            removed = pull_notices(cfg)
+
+        assert {step for step, _ in removed} == {"removed"}
+        assert db.load_canvas_student_ids() == {s.id for s in students}
+        assert db.load_canvas_assignment_ids() == [a.id for a in assignments]
+
+    @pytest.mark.parametrize("gone", ["student", "assignment"])
+    def test_partial_pull_keeps_and_names_grade(self, cfg, db_conn, canvas_api, gone):
+        from cass.actions.pull import pull_assignments, pull_students
+
+        course_before_upgrade(cfg, db_conn, canvas_api)
+        only_grade(db_conn, 200, 43)
+        counts = row_counts(db_conn)
+        console = Console(record=True, width=300)
+        with canvas_students(_MOCK_STUDENTS[:1]):
+            if gone == "student":
+                pull_students(cfg, console)
+            else:
+                pull_assignments(cfg, console)
+
+        assert row_counts(db_conn) == counts
+        output = console.export_text()
+        assert "Bob Jones — HW 02" in output
+        assert "may be unpushed" in output
+        assert db.get_pending_changes(db_conn) == {}
+
+    def test_partial_submissions_pull_keeps_baselines(self, cfg, db_conn, canvas_api):
+        from cass.actions.pull import pull_submissions
+
+        course_before_upgrade(cfg, db_conn, canvas_api)
+        canvas_api.side_effect = lambda *args: []
+        pull_submissions(cfg, Console(quiet=True))
+
+        assert [call.args[1] for call in canvas_api.call_args_list] == [42, 43]
+        assert db.get_pending_changes(db_conn) == {}
+
+    def test_empty_listing_leaves_baselines_unconfirmed(self, cfg, db_conn, canvas_api):
+        course_before_upgrade(cfg, db_conn, canvas_api)
+        counts = row_counts(db_conn)
+
+        with canvas_assignments([]):
+            pull_notices(cfg)
+
+        canvas_api.assert_not_called()
+        assert db.get_meta("grade_baselines") is None
+        assert row_counts(db_conn) == counts
+
+    def test_empty_roster_leaves_baselines_unconfirmed(self, cfg, db_conn, canvas_api):
+        course_before_upgrade(cfg, db_conn, canvas_api)
+        canvas_api.side_effect = lambda *args: []
+        grades = list(db_conn["canvas_grades"].rows)
+        baselines = list(db_conn["_canvas_grades_synced"].rows)
+
+        with canvas_students([]), canvas_assignments(BOTH_ASSIGNMENTS):
+            notices = pull_notices(cfg)
+
+        assert notices == [
+            ("kept", "Canvas returned no students; kept 2 local students")
+        ]
+        assert db.get_meta("grade_baselines") is None
+        assert list(db_conn["_canvas_grades_synced"].rows) == baselines
+        pending = db.get_pending_changes(db_conn)
+        assert pending == {}
+        db.revert_changes(db_conn, pending)
+        assert list(db_conn["canvas_grades"].rows) == grades
+
+    def test_pull_with_students_confirms_baselines_after_empty_roster(
+        self, cfg, db_conn, canvas_api
+    ):
+        course_before_upgrade(cfg, db_conn, canvas_api)
+        with canvas_assignments(BOTH_ASSIGNMENTS):
+            with canvas_students([]):
+                pull_notices(cfg)
+            assert db.get_meta("grade_baselines") is None
+
+            assert pull_notices(cfg) == []
+
+        assert db.get_meta("grade_baselines") == "1"
+        assert db.get_pending_changes(db_conn) == {}
+
+
+class TestRowsStoredDuringFetch:
+    """Rows stored after Canvas was asked for its list are not removed."""
+
+    def test_assignment_pushed_during_fetch_is_kept(self, cfg, db_conn, canvas_api):
+        local_id = db.create_local_assignment(db_conn, name="New HW")
+
+        def push_then_return(*args):
+            db.replace_local_id(db_conn, local_id, 999)
+            return _MOCK_ASSIGNMENTS, {}
+
+        with patch(
+            "cass.actions.pull.canvas_api.fetch_canvas_assignments",
+            side_effect=push_then_return,
+        ):
+            assert pull_notices(cfg) == []
+
+        assert db.load_canvas_assignment_ids() == [42, 999]
+        canvas_api.assert_called_once_with(1, 42, {100, 200})
+
+    def test_student_stored_during_fetch_is_kept(self, cfg, db_conn, canvas_api):
+        def store_then_return(*args):
+            db.save_canvas_students([db.CanvasStudent(canvas_id=300, name="Cy")])
+            return _MOCK_STUDENTS, {}
+
+        with patch(
+            "cass.actions.pull.canvas_api.fetch_students_with_sections",
+            side_effect=store_then_return,
+        ):
+            assert pull_notices(cfg) == []
+
+        assert db.load_canvas_student_ids() == {100, 200, 300}
 
 
 def test_fetched_submissions_carry_entered_grade(monkeypatch):
