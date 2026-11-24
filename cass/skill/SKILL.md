@@ -48,7 +48,7 @@ cass is a CLI over the Canvas REST API for one course, set by `cass.toml`. `--he
 | Announcements | `cass canvas announcements create "Title" -m "<p>Body</p>" --dry-run` |
 | Calendar | `cass canvas calendar create "Review" --start "2026-10-20 10:00" --dry-run` |
 | Navigation tabs | `cass canvas tabs list`; `cass canvas tabs hide Grades --dry-run` |
-| Read grades | `cass pull` (grades as entered, before late deductions; it names local grades it kept because they differ from Canvas, which the user must push or revert), then `cass query submissions --where "score < 50"`; `cass query gradebook` for the student × assignment matrix |
+| Read grades | `cass pull` (grades as entered, before late deductions; it names local grades it kept because they differ from Canvas, which the user must push or revert, and students and assignments it removed because Canvas no longer lists them), then `cass query submissions --where "score < 50"`; `cass query gradebook` for the student × assignment matrix |
 | Push grade edits made in `cass view` | `cass push --dry-run`, then `cass push --yes`. Values changed on Canvas since the last pull, grades above points possible, and cleared grades are held back and stay pending; add `--overwrite-conflicts`, `--allow-over-points` or `--allow-clears` only after the user approves those rows. Grades the grading type does not accept (such as `B+` on a points assignment; letters or plain numbers on a letter or GPA assignment with no scheme set on it or the course; percentages or letters when points possible is 0; changing complete to incomplete or back when points possible is 0, where the user can push a clear first) are always held back; the user must correct them |
 | Anything else | `cass canvas api` (see below) |
 

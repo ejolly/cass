@@ -317,6 +317,82 @@ def save_pulled_grades(grades: list[CanvasGrade]) -> list[tuple[int, int]]:
     return kept
 
 
+def remove_departed_students(current: set[int]) -> list[str]:
+    """Delete students Canvas no longer lists, with everything stored for them.
+
+    Args:
+        current: IDs of the students Canvas lists. When empty, nothing is
+            removed, because a concluded course can list none.
+
+    Returns:
+        The names of the removed students.
+
+    Raises:
+        RuntimeError: when there is a pending change.
+    """
+    if not current:
+        return []
+    sdb = get_db()
+    with write_transaction(sdb) as transaction:
+        _refuse_if_pull_blocked(sdb)
+        departed = [
+            (canvas_id, name)
+            for canvas_id, name in transaction.execute(
+                "SELECT canvas_id, name FROM canvas_students ORDER BY sortable_name"
+            ).fetchall()
+            if canvas_id not in current
+        ]
+        ids = [(canvas_id,) for canvas_id, _ in departed]
+        for statement in (
+            "DELETE FROM canvas_submissions WHERE canvas_user_id = ?",
+            "DELETE FROM canvas_grades WHERE canvas_user_id = ?",
+            "DELETE FROM _canvas_grades_synced WHERE canvas_user_id = ?",
+            "DELETE FROM canvas_students WHERE canvas_id = ?",
+        ):
+            transaction.executemany(statement, ids)
+    return [name for _, name in departed]
+
+
+def remove_deleted_assignments(current: set[int]) -> list[str]:
+    """Delete assignments Canvas no longer lists, with everything stored for them.
+
+    Assignments that were never pushed (negative IDs) are kept.
+
+    Args:
+        current: IDs of the assignments Canvas lists. When empty, nothing is
+            removed.
+
+    Returns:
+        The names of the removed assignments.
+
+    Raises:
+        RuntimeError: when there is a pending change.
+    """
+    if not current:
+        return []
+    sdb = get_db()
+    with write_transaction(sdb) as transaction:
+        _refuse_if_pull_blocked(sdb)
+        deleted = [
+            (canvas_id, name)
+            for canvas_id, name in transaction.execute(
+                "SELECT canvas_id, name FROM canvas_assignments "
+                "WHERE canvas_id > 0 ORDER BY name"
+            ).fetchall()
+            if canvas_id not in current
+        ]
+        ids = [(canvas_id,) for canvas_id, _ in deleted]
+        for statement in (
+            "DELETE FROM canvas_submissions WHERE canvas_assignment_id = ?",
+            "DELETE FROM canvas_grades WHERE canvas_assignment_id = ?",
+            "DELETE FROM _canvas_grades_synced WHERE canvas_assignment_id = ?",
+            "DELETE FROM _canvas_assignments_synced WHERE canvas_id = ?",
+            "DELETE FROM canvas_assignments WHERE canvas_id = ?",
+        ):
+            transaction.executemany(statement, ids)
+    return [name for _, name in deleted]
+
+
 def preview_assignments(
     conn: sqlite_utils.Database,
     table_changes: TableChanges,

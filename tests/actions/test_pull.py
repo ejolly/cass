@@ -348,6 +348,9 @@ class TestPullGrades:
         db.save_pulled_assignments([db.CanvasAssignment(canvas_id=42, name="HW")])
         assert len(attempts) == 2
         assert stored_grades(conn) == ("8", "8")
+        db.remove_departed_students({100})
+        db.remove_deleted_assignments({42})
+        assert len(attempts) == 4
         other.close()
         db.reset()
 
@@ -438,6 +441,249 @@ class TestPullGrades:
 
         _, rows = db.build_canvas_gradebook_matrix(db_conn)
         assert [row[1] for row in rows] == ["-", "-"]
+
+
+COURSE_TABLES = (
+    "canvas_students",
+    "canvas_assignments",
+    "canvas_submissions",
+    "canvas_grades",
+    "_canvas_assignments_synced",
+    "_canvas_grades_synced",
+)
+
+
+def pull_course_with_grades(cfg, canvas_api) -> None:
+    """Pull Alice and Bob, HW 01 and HW 02, and a grade for each pair."""
+    from cass.actions.pull import pull_all
+
+    canvas_api.side_effect = lambda course_id, aid, student_ids: [
+        CanvasSubmission(
+            canvas_user_id=uid, canvas_assignment_id=aid, score=8.0, entered_grade="8"
+        )
+        for uid in sorted(student_ids)
+    ]
+    assignments = [
+        *_MOCK_ASSIGNMENTS,
+        CanvasAssignmentResponse(id=43, name="HW 02", points_possible=10.0),
+    ]
+    with canvas_assignments(assignments):
+        pull_all(cfg)
+    canvas_api.reset_mock()
+
+
+def canvas_students(students):
+    """Patch the roster Canvas returns."""
+    return patch(
+        "cass.actions.pull.canvas_api.fetch_students_with_sections",
+        return_value=(students, {}),
+    )
+
+
+def canvas_assignments(assignments):
+    """Patch the assignments Canvas returns."""
+    return patch(
+        "cass.actions.pull.canvas_api.fetch_canvas_assignments",
+        return_value=(assignments, {}),
+    )
+
+
+def pull_notices(cfg) -> list[tuple[str, str]]:
+    """Run a full pull and return its removed and kept notices."""
+    from cass.actions.pull import pull_all
+
+    progress: list[tuple[str, str]] = []
+    pull_all(cfg, on_progress=lambda s, d: progress.append((s, d)))
+    return [(step, detail) for step, detail in progress if step in ("removed", "kept")]
+
+
+def row_counts(conn) -> list[int]:
+    """Row counts of ``COURSE_TABLES``."""
+    return [conn[table].count for table in COURSE_TABLES]
+
+
+def rows_for(conn, column: str, canvas_id: int) -> int:
+    """Count submission, grade and baseline rows for a student or assignment."""
+    return sum(
+        conn[table].count_where(f"{column} = ?", [canvas_id])
+        for table in ("canvas_submissions", "canvas_grades", "_canvas_grades_synced")
+    )
+
+
+class TestPullRemovals:
+    def test_dropped_student_removed_and_named(self, cfg, db_conn, canvas_api):
+        pull_course_with_grades(cfg, canvas_api)
+
+        with (
+            canvas_students(_MOCK_STUDENTS[:1]),
+            canvas_assignments(
+                [*_MOCK_ASSIGNMENTS, CanvasAssignmentResponse(id=43, name="HW 02")]
+            ),
+        ):
+            notices = pull_notices(cfg)
+
+        ((step, notice),) = notices
+        assert step == "removed"
+        assert "Bob Jones" in notice
+        assert db.load_canvas_student_ids() == {100}
+        assert rows_for(db_conn, "canvas_user_id", 200) == 0
+        assert rows_for(db_conn, "canvas_user_id", 100) == 6
+
+    def test_deleted_assignment_removed_before_submissions_fetch(
+        self, cfg, db_conn, canvas_api
+    ):
+        pull_course_with_grades(cfg, canvas_api)
+
+        notices = pull_notices(cfg)
+
+        ((step, notice),) = notices
+        assert step == "removed"
+        assert "HW 02" in notice
+        canvas_api.assert_called_once_with(1, 42, {100, 200})
+        assert db.load_canvas_assignment_ids() == [42]
+        assert db_conn["_canvas_assignments_synced"].count == 1
+        assert rows_for(db_conn, "canvas_assignment_id", 43) == 0
+        assert rows_for(db_conn, "canvas_assignment_id", 42) == 6
+
+    def test_local_assignment_kept(self, cfg, db_conn, canvas_api):
+        assert db.create_local_assignment(db_conn, name="Draft") == -1
+
+        assert pull_notices(cfg) == []
+
+        assert db.load_canvas_assignment_ids() == [-1, 42]
+        canvas_api.assert_called_once_with(1, 42, {100, 200})
+
+    def test_empty_roster_keeps_students(self, cfg, db_conn, canvas_api):
+        pull_course_with_grades(cfg, canvas_api)
+
+        with canvas_students([]):
+            notices = pull_notices(cfg)
+
+        assert ("kept", "Canvas returned no students; kept 2 local students") in notices
+        assert db.load_canvas_student_ids() == {100, 200}
+        assert rows_for(db_conn, "canvas_assignment_id", 42) == 6
+
+    def test_no_assignments_keeps_assignments(self, cfg, db_conn, canvas_api):
+        pull_course_with_grades(cfg, canvas_api)
+        db.create_local_assignment(db_conn, name="Draft")
+
+        with canvas_assignments([]):
+            notices = pull_notices(cfg)
+
+        assert notices == [
+            ("kept", "Canvas returned no assignments; kept 2 local assignments")
+        ]
+        assert db.load_canvas_assignment_ids() == [-1, 42, 43]
+
+    def test_empty_course_reports_nothing(self, cfg, db_conn, canvas_api):
+        with canvas_students([]), canvas_assignments([]):
+            assert pull_notices(cfg) == []
+
+    @pytest.mark.parametrize("remove", ["students", "assignments"])
+    def test_partial_pull_removes_and_prints_names_literally(
+        self, cfg, db_conn, canvas_api, remove
+    ):
+        from cass.actions.pull import pull_assignments, pull_students
+
+        pull_course_with_grades(cfg, canvas_api)
+        db_conn.execute(
+            "UPDATE canvas_students SET name = '[/x] Bob' WHERE canvas_id = 200"
+        )
+        for table in ("canvas_assignments", "_canvas_assignments_synced"):
+            db_conn.execute(f"UPDATE {table} SET name = '[/x] HW' WHERE canvas_id = 43")
+        console = Console(record=True, width=200)
+        with canvas_students(_MOCK_STUDENTS[:1]):
+            if remove == "students":
+                pull_students(cfg, console)
+                assert db.load_canvas_student_ids() == {100}
+                assert "[/x] Bob" in console.export_text()
+            else:
+                pull_assignments(cfg, console)
+                assert db.load_canvas_assignment_ids() == [42]
+                assert "[/x] HW" in console.export_text()
+
+    @pytest.mark.parametrize(
+        ("fetch", "remaining"),
+        [
+            ("fetch_students_with_sections", _MOCK_STUDENTS[:1]),
+            ("fetch_canvas_assignments", _MOCK_ASSIGNMENTS),
+        ],
+    )
+    def test_edit_made_while_pulling_stops_the_removal(
+        self, cfg, db_conn, canvas_api, fetch, remaining
+    ):
+        """An edit the viewer saves during the fetch is not deleted."""
+        from cass.actions.pull import pull_all
+
+        pull_course_with_grades(cfg, canvas_api)
+        counts = row_counts(db_conn)
+
+        def edit_then_return(*args):
+            db.upsert_canvas_grade(db_conn, 200, 43, "9")
+            return remaining, {}
+
+        with (
+            patch(
+                f"cass.actions.pull.canvas_api.{fetch}", side_effect=edit_then_return
+            ),
+            pytest.raises(RuntimeError, match="Pull blocked"),
+        ):
+            pull_all(cfg)
+
+        assert row_counts(db_conn) == counts
+        assert len(db.get_pending_changes(db_conn)["canvas_grades"]) == 1
+
+    @pytest.mark.parametrize(
+        "remove", [db.remove_departed_students, db.remove_deleted_assignments]
+    )
+    def test_removal_refuses_pending_edit(self, cfg, db_conn, canvas_api, remove):
+        pull_course_with_grades(cfg, canvas_api)
+        db.upsert_canvas_grade(db_conn, 200, 43, "9")
+        counts = row_counts(db_conn)
+
+        with pytest.raises(RuntimeError, match="Pull blocked"):
+            remove({100, 42})
+
+        assert row_counts(db_conn) == counts
+
+    def test_removal_refuses_grade_without_baseline(self, cfg, db_conn, canvas_api):
+        pull_course_with_grades(cfg, canvas_api)
+        db_conn["_canvas_grades_synced"].delete_where()
+
+        with pytest.raises(RuntimeError, match="Pull blocked"):
+            db.remove_departed_students({100})
+
+        assert db.load_canvas_student_ids() == {100, 200}
+
+    @pytest.mark.parametrize(
+        "remove", [db.remove_departed_students, db.remove_deleted_assignments]
+    )
+    def test_removal_with_no_current_ids_removes_nothing(
+        self, cfg, db_conn, canvas_api, remove
+    ):
+        pull_course_with_grades(cfg, canvas_api)
+        counts = row_counts(db_conn)
+
+        assert remove(set()) == []
+
+        assert row_counts(db_conn) == counts
+
+    @pytest.mark.parametrize(
+        ("remove", "current"),
+        [(db.remove_departed_students, {100}), (db.remove_deleted_assignments, {42})],
+    )
+    def test_failed_removal_rolls_back(self, cfg, db_conn, canvas_api, remove, current):
+        pull_course_with_grades(cfg, canvas_api)
+        counts = row_counts(db_conn)
+        db_conn.execute(
+            "CREATE TRIGGER fail BEFORE DELETE ON _canvas_grades_synced "
+            "BEGIN SELECT RAISE(ABORT, 'disk trouble'); END"
+        )
+
+        with pytest.raises(sqlite3.Error, match="disk trouble"):
+            remove(current)
+
+        assert row_counts(db_conn) == counts
 
 
 def test_fetched_submissions_carry_entered_grade(monkeypatch):

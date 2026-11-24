@@ -124,8 +124,8 @@ def pull_progress_page(on_complete: Any) -> None:
 
         steps_container = ui.column().classes("w-full gap-1")
         step_labels: dict[str, ui.label] = {}
-        kept_container = ui.column().classes("w-full gap-1")
-        kept_notices: list[str] = []
+        notices_container = ui.column().classes("w-full gap-1")
+        notices: list[str] = []
         error_label = ui.label("").classes("text-sm v-text-error")
 
         STEP_ORDER = ["students", "assignments", "submissions"]
@@ -138,9 +138,9 @@ def pull_progress_page(on_complete: Any) -> None:
         progress = ui.linear_progress(value=0, show_value=False).classes("w-full mt-4")
 
         def on_progress(step: str, detail: str) -> None:
-            if step == "kept":
-                kept_notices.append(detail)
-                with kept_container:
+            if step in ("kept", "removed"):
+                notices.append(detail)
+                with notices_container:
                     ui.label(detail).classes("text-sm")
                 return
             if step not in step_labels:
@@ -167,10 +167,10 @@ def pull_progress_page(on_complete: Any) -> None:
                 for lbl in step_labels.values():
                     lbl.classes(replace="text-sm font-mono v-text-success")
                 await asyncio.sleep(0.5)
-                if not kept_notices:
+                if not notices:
                     on_complete()
                     return
-                with kept_container:
+                with notices_container:
                     ui.button("Continue", on_click=on_complete).props(
                         "color=primary no-caps"
                     )
