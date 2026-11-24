@@ -92,7 +92,7 @@ Questions in one group must be next to each other. The group takes the place of 
 
 `update --questions` refuses quizzes in concluded courses. Canvas serves their questions only through quiz statistics, which lack names and answer weights. `questions` and `export` still work there, with a warning.
 
-If students have finished attempts, cass warns first, because Canvas keeps earlier attempts on the old version of each question. A plan line is marked when an answer gets a new answer ID or an answer is removed, which can unlink earlier responses. Rewording an answer or adding one gives it a new ID; changing only which answers are correct does not.
+If students have finished attempts, cass prints the plan, then refuses any question change, because Canvas keeps earlier attempts on the old version of each question. A plan line is marked when an answer gets a new answer ID or an answer is removed, which can unlink earlier responses. Rewording an answer or adding one gives it a new ID; changing only which answers are correct does not.
 
 `questions` lists a quiz's questions in order, with IDs and groups. `preview` starts a teacher preview and lists the questions in the order a student would see them. Groups and shuffling make each attempt differ. Canvas shows students `Question N` instead of question names, so the preview does too. The preview submission stays on Canvas.
 

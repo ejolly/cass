@@ -10,7 +10,7 @@ Fetches students, assignments, submissions, and grades from Canvas into `cass.db
 
 Students no longer enrolled and assignments deleted on Canvas are removed from `cass.db`, along with their submissions and grades, and the pull names each one. If Canvas returns no students or no assignments at all, as it may for a concluded course, the pull keeps the local ones and says so. With no assignments listed, it does not refresh submissions and grades.
 
-If `cass.db` comes from a version that did not pull grades, the first pull keeps each local grade that differs from Canvas, names it, and leaves it pending as a conflict. Push it to overwrite Canvas, or revert it and pull again to take the Canvas grade. A local grade Canvas lists nothing for, such as one of a departed student or on a deleted assignment, is also kept and left pending; once it is reverted, the next pull removes the student or assignment. This waits for a pull in which Canvas returns both students and assignments.
+If `cass.db` comes from a version that did not pull grades, the first pull keeps each local grade that differs from Canvas, names it, and leaves it pending as a conflict. Push it, approving the conflict, to overwrite Canvas, or revert it and pull again to take the Canvas grade. A local grade Canvas lists nothing for, such as one of a departed student or on a deleted assignment, is also kept and left pending. Push can't send it; only reverting clears it, which deletes the grade, and the next pull removes the student or assignment. Record the grade or run `cass backup` first. This waits for a pull in which Canvas returns both students and assignments.
 
 ## Edit
 
@@ -49,7 +49,7 @@ Three kinds of change are held back unless you approve them, and stay pending un
 
 Percentages and letters are also held back when the assignment has no points possible, because Canvas records them as 0. On a complete/incomplete assignment with no points possible, Canvas ignores a change from one result to the other, so cass holds that back too: clear the grade and push, then enter the new one. Points possible come from Canvas at push time, plus any pending edit to them.
 
-Sends every pending change to Canvas. The viewer's **Push** button does the same.
+Sends every other pending change to Canvas. On an assignment whose grades post manually, pushing grades also posts every graded submission to students. The viewer's **Push** button does the same.
 
 ## Revert
 
@@ -57,7 +57,7 @@ Sends every pending change to Canvas. The viewer's **Push** button does the same
 cass revert
 ```
 
-Discards all pending local edits and restores the last pulled values. A grade with no last pulled value is removed until the next pull.
+Discards all pending local edits and restores the last pulled values. A grade with no last pulled value is deleted: the next pull brings back Canvas's grade, if it lists one, never the local one. If Canvas lists none, the grade is lost, so record it or run `cass backup` first.
 
 ## Status
 
@@ -65,7 +65,7 @@ Discards all pending local edits and restores the last pulled values. A grade wi
 cass status
 ```
 
-Shows local counts and pending changes. Running `cass` with no arguments prints the same overview plus a command summary.
+Shows local counts and pending changes. Running `cass` with no arguments prints the help.
 
 ## Back up and restore
 
