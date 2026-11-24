@@ -6,6 +6,12 @@ __docformat__ = "google"
 
 from typing import TYPE_CHECKING
 
+from ..apis.canvas.attempts import (
+    QuizAttemptsUnknownError,
+    QuizHasAttemptsError,
+    refuse_if_assignment_attempted,
+)
+from ..apis.canvas.errors import CanvasAPIError
 from ..apis.canvas.sync import push_assignments, resolve_group_ids
 from ..apis.canvas.times import parse_when, same_instant
 from ..db.assignments import (
@@ -19,7 +25,7 @@ if TYPE_CHECKING:
     import sqlite_utils
 
     from ..apis.canvas.client import CanvasClient
-    from ..apis.canvas.schema import CanvasAssignmentResponse
+    from ..apis.canvas.schema import CanvasAssignmentGroup, CanvasAssignmentResponse
     from .config import CanvasAssignmentSpec
 
 
@@ -85,11 +91,13 @@ def sync_assignments(
 
     Returns:
         ``(action, "assignment", name)`` rows: create, update (with the
-        changed fields), or skip.
+        changed fields), skip, refuse, or fail (with the error). A quiz with
+        finished student attempts, or whose attempts cannot be checked, gets a
+        ``refuse`` row for a points change, which is not sent; its other
+        changes still are (commitment C2).
     """
     live_by_name = {a.name.lower(): a for a in client.list_assignments()}
     rows: list[tuple[str, str, str]] = []
-    updates_by_id: dict[int, dict[str, object]] = {}
     for spec in specs:
         wanted_due = parse_when(spec.due_at, tz)
         live = live_by_name.get(spec.name.lower())
@@ -114,15 +122,53 @@ def sync_assignments(
             changes["due_at"] = wanted_due
         if spec.published is not None and live.published != spec.published:
             changes["published"] = spec.published
+        refusal = None
+        if "points_possible" in changes:
+            refusal = _points_refusal(client, live)
+        if refusal is not None:
+            detail = f"points_possible: {refusal}; change it in the Canvas web app"
+            rows.append(("refuse", "assignment", f"{spec.name} ({detail})"))
+            del changes["points_possible"]
         if not changes:
-            rows.append(("skip", "assignment", spec.name))
+            if refusal is None:
+                rows.append(("skip", "assignment", spec.name))
+            continue
+        (result,) = push_assignments(client, {live.id: changes})
+        if not result["ok"]:
+            rows.append(("fail", "assignment", f"{spec.name} ({result['error']})"))
             continue
         detail = ", ".join(f"{k}: {v}" for k, v in changes.items())
         rows.append(("update", "assignment", f"{spec.name} ({detail})"))
-        updates_by_id[live.id] = changes
-    if updates_by_id:
-        push_assignments(client, updates_by_id)
     return rows
+
+
+def _points_refusal(
+    client: CanvasClient, assignment: CanvasAssignmentResponse
+) -> str | None:
+    """Return why the assignment's points must not change, or None."""
+    try:
+        refuse_if_assignment_attempted(client, assignment, "change points_possible")
+    except QuizHasAttemptsError as exc:
+        return f"{exc.attempts} finished attempt(s)"
+    except QuizAttemptsUnknownError:
+        return "attempts could not be checked"
+    return None
+
+
+def refuse_group_delete(client: CanvasClient, group: CanvasAssignmentGroup) -> None:
+    """Raise if deleting the group would delete a quiz students have finished.
+
+    Fetches the group's assignments afresh on every call.
+
+    Raises:
+        QuizHasAttemptsError: A quiz in the group has finished student attempts.
+        QuizAttemptsUnknownError: A quiz's attempts could not be checked.
+    """
+    for assignment in client.list_assignments():
+        if assignment.assignment_group_id == group.id:
+            refuse_if_assignment_attempted(
+                client, assignment, "delete its assignment group"
+            )
 
 
 def validate_assignment_fields(*, name: str, points: float | None) -> list[str]:
@@ -204,21 +250,23 @@ def delete_assignment_from_canvas(
 ) -> dict[str, object]:
     """Delete an assignment from Canvas (if remote) and locally.
 
-    Local-only assignments (negative IDs) skip the Canvas API call.
-    On Canvas API error, the local deletion still proceeds.
+    Local-only assignments (negative IDs) skip the Canvas API call. Local rows
+    are kept when the delete is refused, because students have finished the
+    assignment's quiz (commitment C2), or fails. An assignment Canvas reports
+    as not found is already deleted there, so its local rows are removed.
 
     Returns:
         Result dict with ``ok`` and optionally ``error``.
     """
-    canvas_error: str | None = None
     if canvas_id > 0:
         try:
+            assignment = client.get_assignment(canvas_id)
+            refuse_if_assignment_attempted(client, assignment, "delete it")
             client.delete_assignment(canvas_id)
         except Exception as e:
-            canvas_error = str(e)
+            already_deleted = isinstance(e, CanvasAPIError) and e.status_code == 404
+            if not already_deleted:
+                return {"ok": False, "error": str(e)}
 
     delete_local_assignment(conn, canvas_id)
-
-    if canvas_error:
-        return {"ok": False, "error": canvas_error}
     return {"ok": True}

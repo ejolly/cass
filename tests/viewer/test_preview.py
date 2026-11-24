@@ -4,6 +4,8 @@ from __future__ import annotations
 
 __docformat__ = "google"
 
+import pytest
+
 from cass.viewer.actions import build_preview_html
 
 
@@ -97,6 +99,17 @@ class TestConflicts:
         html = build_preview_html(changes, [], has_conflicts=True)
         assert 'class="conflict-row"' in html
         assert "\u26a0" in html  # warning symbol in column cell
+
+    @pytest.mark.parametrize(
+        ("flag", "text"),
+        [
+            ("quiz_attempted", "students have finished this quiz"),
+            ("quiz_attempts_unknown", "attempts could not be checked"),
+        ],
+    )
+    def test_held_quiz_points_row(self, flag, text):
+        change = {"name": "Quiz", "column": "points_possible", "current": 2, flag: True}
+        assert text in build_preview_html([change], [], has_conflicts=False)
 
     def test_grade_conflict_row(self):
         """Grade conflict rows get conflict-row CSS and warning symbol."""

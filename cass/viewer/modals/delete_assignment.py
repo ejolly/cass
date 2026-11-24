@@ -95,21 +95,24 @@ class DeleteAssignmentModal:
                 return delete_assignment_from_canvas(thread_conn, canvas_id, client)
 
         loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(None, _do_delete)
+        try:
+            result = await loop.run_in_executor(None, _do_delete)
+        except Exception as exc:
+            result = {"ok": False, "error": str(exc)}
+
+        if not result["ok"]:
+            self._status_label.set_visibility(False)
+            self._error_label.text = f"Not deleted: {result['error']}"
+            self._error_label.set_visibility(True)
+            self._delete_btn.props(remove="disabled")
+            return
 
         purge_pending_for_assignment(p.pending, canvas_id)
         clear_pending_cells()
         p.update_pending_display()
 
-        if result["ok"]:
-            self.dialog.close()
-            notify(f"Deleted assignment: {name}")
-        else:
-            self.dialog.close()
-            notify(
-                f"Deleted locally but Canvas error: {result['error']}",
-                "warning",
-            )
+        self.dialog.close()
+        notify(f"Deleted assignment: {name}")
 
         if p.current_table in ("canvas_assignments", "canvas_grades"):
             p.load_table(p.current_table)

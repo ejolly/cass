@@ -1105,7 +1105,7 @@ class TestCanvasClient:
             client.count_quiz_takers(20)
         message = str(caught.value)
         assert "could not check quiz 20 for student attempts" in message
-        assert "made no change to it" in message
+        assert "did not make this change" in message
         assert "Canvas web app" in message
         assert "private" not in message
         error = caught.value

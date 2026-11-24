@@ -11,10 +11,11 @@ import json
 import re
 from collections.abc import Iterable
 from datetime import date, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import sqlite_utils
 
+from .attempts import refuse_if_assignment_attempted
 from .times import same_instant
 
 if TYPE_CHECKING:
@@ -345,6 +346,10 @@ def push_assignments(
 ) -> list[dict[str, object]]:
     """Push assignment field updates to Canvas.
 
+    Before sending a points change, checks that the assignment is not a quiz
+    students have finished (commitment C2). A refused assignment is not updated
+    and gets a failed result, as does one whose new points Canvas did not keep.
+
     Args:
         client: Authenticated Canvas API client.
         updates_by_id: ``{canvas_assignment_id: {field: new_value}}``.
@@ -355,8 +360,21 @@ def push_assignments(
     results: list[dict[str, object]] = []
     for canvas_id, kwargs in updates_by_id.items():
         try:
-            client.update_assignment(canvas_id, **kwargs)
+            if "points_possible" in kwargs:
+                refuse_if_assignment_attempted(
+                    client, client.get_assignment(canvas_id), "change points_possible"
+                )
+            updated = client.update_assignment(canvas_id, **kwargs)
+            if "points_possible" in kwargs:
+                _require_points_kept(updated, kwargs["points_possible"])
             results.append({"canvas_id": canvas_id, "ok": True})
         except Exception as e:
             results.append({"canvas_id": canvas_id, "ok": False, "error": str(e)})
     return results
+
+
+def _require_points_kept(updated: CanvasAssignmentResponse, sent: object) -> None:
+    """Raise if Canvas kept other points, as it does on a published quiz."""
+    sent_points = float(cast(float | str | None, sent) or 0)
+    if (updated.points_possible or 0.0) != sent_points:
+        raise RuntimeError(f"Canvas kept points_possible at {updated.points_possible}")

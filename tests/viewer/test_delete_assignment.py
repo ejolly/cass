@@ -4,12 +4,17 @@ from __future__ import annotations
 
 __docformat__ = "google"
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import httpx
 import pytest
 import sqlite_utils
 
 from cass.actions.assignments import delete_assignment_from_canvas
+from cass.apis.canvas.attempts import QuizAttemptsUnknownError
+from cass.apis.canvas.errors import CanvasAPIError
+from cass.apis.canvas.schema import CanvasAssignmentResponse
 from cass.db import (
     delete_local_assignment,
     list_assignments_for_select,
@@ -201,9 +206,36 @@ class TestDeleteLocalAssignment:
 # ---------------------------------------------------------------------------
 
 
+def canvas_error(status: int) -> CanvasAPIError:
+    request = httpx.Request("DELETE", "https://canvas.example.com/api/v1/x")
+    return CanvasAPIError(httpx.Response(status, request=request))
+
+
+def deleting_client(quiz_id: int | None = None, takers: int = 0) -> MagicMock:
+    client = MagicMock()
+    client.get_assignment.return_value = CanvasAssignmentResponse(
+        id=101, name="Homework 1", quiz_id=quiz_id
+    )
+    client.list_students.return_value = []
+    client.list_quiz_submissions.return_value = []
+    client.count_quiz_takers.return_value = takers
+    return client
+
+
+def local_row_counts(conn: sqlite_utils.Database) -> list[int]:
+    return [
+        conn.execute(f"SELECT count(*) FROM {table} WHERE {key} = 101").fetchone()[0]
+        for table, key in (
+            ("canvas_assignments", "canvas_id"),
+            ("canvas_grades", "canvas_assignment_id"),
+            ("canvas_submissions", "canvas_assignment_id"),
+        )
+    ]
+
+
 class TestDeleteAssignmentFromCanvas:
     def test_deletes_from_canvas_and_locally(self, da_conn):
-        mock_client = MagicMock()
+        mock_client = deleting_client()
         result = delete_assignment_from_canvas(da_conn, 101, mock_client)
         assert result["ok"] is True
         mock_client.delete_assignment.assert_called_once_with(101)
@@ -228,17 +260,105 @@ class TestDeleteAssignmentFromCanvas:
         ).fetchone()
         assert row is None
 
-    def test_canvas_error_still_deletes_locally(self, da_conn):
-        mock_client = MagicMock()
-        mock_client.delete_assignment.side_effect = RuntimeError("Canvas 403")
-        result = delete_assignment_from_canvas(da_conn, 101, mock_client)
+    def test_viewer_delete_refused_with_attempts(self, da_conn):
+        client = deleting_client(quiz_id=20, takers=1)
+        result = delete_assignment_from_canvas(da_conn, 101, client)
         assert result["ok"] is False
-        assert "Canvas 403" in str(result["error"])
-        # Local row should still be deleted
-        row = da_conn.execute(
-            "SELECT * FROM canvas_assignments WHERE canvas_id = 101"
-        ).fetchone()
-        assert row is None
+        assert "won't delete it" in str(result["error"])
+        client.delete_assignment.assert_not_called()
+        assert local_row_counts(da_conn) == [1, 2, 2]
+
+    def test_viewer_delete_refused_when_attempts_unknown(self, da_conn):
+        client = deleting_client(quiz_id=20)
+        client.count_quiz_takers.side_effect = QuizAttemptsUnknownError(20, "reason")
+        result = delete_assignment_from_canvas(da_conn, 101, client)
+        assert result["ok"] is False
+        assert "did not make this change" in str(result["error"])
+        client.delete_assignment.assert_not_called()
+        assert local_row_counts(da_conn) == [1, 2, 2]
+
+    def test_404_from_attempt_check_keeps_local_rows(self, da_conn):
+        client = deleting_client(quiz_id=20)
+        client.list_quiz_submissions.side_effect = canvas_error(404)
+        result = delete_assignment_from_canvas(da_conn, 101, client)
+        assert result["ok"] is False
+        client.delete_assignment.assert_not_called()
+        assert local_row_counts(da_conn) == [1, 2, 2]
+
+    @pytest.mark.parametrize("failing", ["get_assignment", "delete_assignment"])
+    @pytest.mark.parametrize(
+        "error", [canvas_error(403), RuntimeError("no connection")], ids=repr
+    )
+    def test_failed_delete_keeps_local_rows(self, da_conn, failing, error):
+        client = deleting_client()
+        getattr(client, failing).side_effect = error
+        result = delete_assignment_from_canvas(da_conn, 101, client)
+        assert result == {"ok": False, "error": str(error)}
+        assert local_row_counts(da_conn) == [1, 2, 2]
+
+    @pytest.mark.parametrize("failing", ["get_assignment", "delete_assignment"])
+    def test_404_delete_removes_local_rows(self, da_conn, failing):
+        client = deleting_client()
+        getattr(client, failing).side_effect = canvas_error(404)
+        result = delete_assignment_from_canvas(da_conn, 101, client)
+        assert result == {"ok": True}
+        assert local_row_counts(da_conn) == [0, 0, 0]
+
+
+class TestDeleteModal:
+    """The modal keeps pending edits unless the assignment was deleted."""
+
+    async def delete(self, monkeypatch, outcome):
+        from cass.viewer.modals import delete_assignment as modal_module
+
+        notices: list[str] = []
+        monkeypatch.setattr("cass.apis.canvas.client.CanvasClient", MagicMock())
+        monkeypatch.setattr("cass.db.connect_db", lambda root: MagicMock())
+        monkeypatch.setattr(
+            modal_module, "delete_assignment_from_canvas", MagicMock(**outcome)
+        )
+        monkeypatch.setattr(modal_module, "clear_pending_cells", lambda: None)
+        monkeypatch.setattr(
+            modal_module, "notify", lambda message, *_: notices.append(message)
+        )
+        page = MagicMock()
+        page.pending = {
+            "canvas_assignments": {"101": {"name": {"baseline": "a", "current": "b"}}}
+        }
+        page.current_table = "canvas_assignments"
+        modal = SimpleNamespace(
+            page=page,
+            _options={101: "Homework 1"},
+            _assignment_select=SimpleNamespace(value=101),
+            _error_label=MagicMock(),
+            _status_label=MagicMock(),
+            _delete_btn=MagicMock(),
+            dialog=MagicMock(),
+        )
+        await modal_module.DeleteAssignmentModal._on_delete(modal)  # ty: ignore[invalid-argument-type]
+        return modal, notices
+
+    @pytest.mark.parametrize(
+        "outcome",
+        [
+            {"return_value": {"ok": False, "error": "refused"}},
+            {"side_effect": RuntimeError("refused")},
+        ],
+        ids=["result", "raised"],
+    )
+    async def test_failure_keeps_pending_and_shows_error(self, monkeypatch, outcome):
+        modal, notices = await self.delete(monkeypatch, outcome)
+        assert "101" in modal.page.pending["canvas_assignments"]
+        assert "refused" in modal._error_label.text
+        modal.dialog.close.assert_not_called()
+        modal._delete_btn.props.assert_called_with(remove="disabled")
+        assert notices == []
+
+    async def test_success_drops_pending(self, monkeypatch):
+        modal, notices = await self.delete(monkeypatch, {"return_value": {"ok": True}})
+        assert modal.page.pending == {}
+        modal.dialog.close.assert_called_once()
+        assert notices == ["Deleted assignment: Homework 1"]
 
 
 # ---------------------------------------------------------------------------

@@ -9,9 +9,12 @@ __docformat__ = "google"
 
 from typing import TYPE_CHECKING
 
+import httpx
+import msgspec
+
 if TYPE_CHECKING:
     from .client import CanvasClient
-    from .schema import CanvasQuiz, CanvasQuizSubmission
+    from .schema import CanvasAssignmentResponse, CanvasQuiz, CanvasQuizSubmission
 
 FINISHED_ATTEMPT_STATES = ("complete", "pending_review")
 
@@ -34,9 +37,16 @@ class QuizAttemptsUnknownError(RuntimeError):
     def __init__(self, quiz_id: int, reason: str) -> None:
         super().__init__(
             f"cass could not check quiz {quiz_id} for student attempts "
-            f"({reason}), so it made no change to it. Make this change in the "
+            f"({reason}), so it did not make this change. Make it in the "
             "Canvas web app."
         )
+
+
+def failed_request_reason(exc: httpx.HTTPError) -> str:
+    """Say why a request failed, without Canvas's response text."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        return f"Canvas answered with status {exc.response.status_code}"
+    return "could not reach Canvas"
 
 
 def has_finished_attempt(submission: CanvasQuizSubmission) -> bool:
@@ -62,14 +72,22 @@ def count_finished_attempts(client: CanvasClient, quiz_id: int) -> int:
     previews and the Test Student never count.
 
     Raises:
-        QuizAttemptsUnknownError: Canvas gave no statistics count and no
-            current student has a finished attempt, so whether there are any
-            is unknown. When current students do, their count is returned.
+        QuizAttemptsUnknownError: Canvas gave no roster or submissions list, or
+            it gave no statistics count and no current student has a finished
+            attempt, so whether there are any is unknown. When current students
+            do, their count is returned.
     """
-    student_ids = {s.id for s in client.list_students()}
+    try:
+        student_ids = {s.id for s in client.list_students()}
+        submissions = client.list_quiz_submissions(quiz_id)
+    except httpx.HTTPError as exc:
+        raise QuizAttemptsUnknownError(quiz_id, failed_request_reason(exc)) from None
+    except (ValueError, msgspec.MsgspecError):
+        reason = "Canvas returned no list of attempts"
+        raise QuizAttemptsUnknownError(quiz_id, reason) from None
     current = sum(
         1
-        for sub in client.list_quiz_submissions(quiz_id)
+        for sub in submissions
         if sub.user_id in student_ids and has_finished_attempt(sub)
     )
     try:
@@ -104,3 +122,25 @@ def refuse_if_attempted(
     count = count_finished_attempts(client, quiz.id) if attempts is None else attempts
     if count > 0:
         raise QuizHasAttemptsError(quiz.title, count, change)
+
+
+def refuse_if_assignment_attempted(
+    client: CanvasClient, assignment: CanvasAssignmentResponse, change: str
+) -> None:
+    """Raise if the assignment is a quiz students have finished.
+
+    Args:
+        client: Canvas client; only reads.
+        assignment: The assignment about to change. Sends nothing unless it is
+            a quiz.
+        change: What cass was about to do, e.g. ``"delete it"``.
+
+    Raises:
+        QuizHasAttemptsError: At least one finished student attempt exists.
+        QuizAttemptsUnknownError: Whether one exists could not be checked.
+    """
+    if assignment.quiz_id is None:
+        return
+    count = count_finished_attempts(client, assignment.quiz_id)
+    if count > 0:
+        raise QuizHasAttemptsError(assignment.name, count, change)

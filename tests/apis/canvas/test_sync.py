@@ -171,6 +171,7 @@ def _make_assignment(
         points_possible=points_possible,
         due_at=due_at,
         published=published,
+        quiz_id=None,
     )
 
 

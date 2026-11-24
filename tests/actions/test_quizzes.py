@@ -7,6 +7,8 @@ __docformat__ = "google"
 from typing import Any
 from unittest.mock import MagicMock
 
+import httpx
+import msgspec
 import pytest
 
 from cass.actions.quizzes import (
@@ -826,6 +828,21 @@ class TestQuizAttemptGuard:
             )
 
         client.update_quiz.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "error", [httpx.ConnectError("private"), msgspec.ValidationError("private")]
+    )
+    @pytest.mark.parametrize("failing", ["list_students", "list_quiz_submissions"])
+    def test_unreadable_roster_or_submissions_refuses(self, failing, error):
+        client = MagicMock()
+        client.list_students.return_value = []
+        client.list_quiz_submissions.return_value = []
+        client.count_quiz_takers.return_value = 0
+        getattr(client, failing).side_effect = error
+
+        with pytest.raises(QuizAttemptsUnknownError) as caught:
+            count_finished_attempts(client, 1)
+        assert "private" not in str(caught.value)
 
     def test_refuse_if_attempted(self):
         live = CanvasQuiz(id=1, title="Quiz 1")

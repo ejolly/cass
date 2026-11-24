@@ -173,6 +173,7 @@ class CanvasAssignmentResponse(msgspec.Struct):
     grading_type: str = ""
     grading_standard_id: int | None = None  # null: the course's letter scheme
     assignment_group_id: int = 0
+    quiz_id: int | None = None  # set when the assignment is a classic quiz
     position: int | None = None
     html_url: str = ""
     description: str | None = None

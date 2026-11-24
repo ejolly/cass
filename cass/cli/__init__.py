@@ -125,6 +125,10 @@ def _render_push_preview(preview: dict[str, object]) -> None:
             status = "error"
         elif bool(change.get("not_accepted")):
             status = "not accepted"
+        elif bool(change.get("quiz_attempted")):
+            status = "quiz finished"
+        elif bool(change.get("quiz_attempts_unknown")):
+            status = "attempts unknown"
         elif bool(change.get("conflict")):
             status = "conflict"
         elif bool(change.get("clears")):
@@ -189,7 +193,8 @@ def _render_held_back(held: list[dict[str, object]]) -> None:
         "Approve them at the prompt, or pass --overwrite-conflicts, "
         "--allow-over-points or --allow-clears; revert them with `cass revert`. "
         "Grades Canvas does not accept must be corrected, and changes that could "
-        "not be compared are never pushed.",
+        "not be compared are never pushed. Points of a quiz with finished or "
+        "uncheckable attempts can only be changed in the Canvas web app.",
         markup=False,
         highlight=False,
     )

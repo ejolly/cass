@@ -566,6 +566,8 @@ def quizzes_delete(
         q = c.resolve_quiz(id_or_name)
         refuse_if_attempted(c, q, "delete it")
         confirm(f"Delete quiz '{q.title}'?", yes=yes, dry_run=dry_run)
+        # Again: a student may have finished it while the prompt waited.
+        refuse_if_attempted(c, q, "delete it")
         c.delete_quiz(q.id)
     if dry_run:
         _common.print_plan(c)

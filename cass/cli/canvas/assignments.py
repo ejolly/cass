@@ -178,17 +178,24 @@ def groups_delete(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
     dry_run: bool = _common.dry_run_option(),
 ) -> None:
-    """Delete an assignment group and every assignment in it."""
+    """Delete an assignment group and every assignment in it.
+
+    Refused once students have finished a quiz in the group.
+    """
+    from ...actions.assignments import refuse_group_delete
     from ..prompts import confirm
 
     _common.require_canvas()
     with _common.client(dry_run=dry_run) as c:
         g = c.resolve_assignment_group(id_or_name)
+        refuse_group_delete(c, g)
         confirm(
             f"Delete group '{g.name}' and all of its assignments?",
             yes=yes,
             dry_run=dry_run,
         )
+        # Again: a student may have finished a quiz while the prompt waited.
+        refuse_group_delete(c, g)
         c.delete_assignment_group(g.id)
     if dry_run:
         _common.print_plan(c)
@@ -276,13 +283,17 @@ def assignments_delete(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
     dry_run: bool = _common.dry_run_option(),
 ) -> None:
-    """Delete an assignment."""
+    """Delete an assignment. Refused if it is a quiz students have finished."""
+    from ...apis.canvas.attempts import refuse_if_assignment_attempted
     from ..prompts import confirm
 
     _common.require_canvas()
     with _common.client(dry_run=dry_run) as c:
         a = c.resolve_assignment(id_or_name)
+        refuse_if_assignment_attempted(c, a, "delete it")
         confirm(f"Delete assignment '{a.name}'?", yes=yes, dry_run=dry_run)
+        # Again: a student may have finished it while the prompt waited.
+        refuse_if_assignment_attempted(c, a, "delete it")
         c.delete_assignment(a.id)
     if dry_run:
         _common.print_plan(c)

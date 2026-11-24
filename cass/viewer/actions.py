@@ -48,6 +48,10 @@ def build_preview_html(
                 warn = " \u26a0" if ch.get("conflict") else ""
                 live = escape(str(ch.get("live", "null")))
                 cur = escape(str(ch.get("current", "null")))
+                if ch.get("quiz_attempted"):
+                    cur += " (students have finished this quiz)"
+                elif ch.get("quiz_attempts_unknown"):
+                    cur += " (attempts could not be checked)"
                 parts.append(f"<td>{name}</td>")
                 parts.append(f"<td>{col}{warn}</td>")
                 parts.append(f'<td class="opacity-50">{live}</td>')

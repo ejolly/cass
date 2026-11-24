@@ -20,7 +20,7 @@ from ....actions.quizzes import (
     quiz_form_fields,
     with_create_defaults,
 )
-from ..attempts import QuizAttemptsUnknownError
+from ..attempts import QuizAttemptsUnknownError, failed_request_reason
 from ..schema import (
     CanvasQuiz,
     CanvasQuizAnswer,
@@ -431,11 +431,8 @@ class QuizzesMixin(BaseClient):
                 self._course(f"/quizzes/{quiz_id}/statistics"),
                 params={"all_versions": "true"},
             )
-        except httpx.HTTPStatusError as exc:
-            reason = f"Canvas answered with status {exc.response.status_code}"
-            raise QuizAttemptsUnknownError(quiz_id, reason) from None
-        except httpx.HTTPError:
-            reason = "could not reach Canvas"
+        except httpx.HTTPError as exc:
+            reason = failed_request_reason(exc)
             raise QuizAttemptsUnknownError(quiz_id, reason) from None
         if resp.status_code == 204:
             reason = "it is too large for Canvas statistics"

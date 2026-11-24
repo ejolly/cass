@@ -21,6 +21,7 @@ ACTION_COLORS = {
     "move": "yellow",
     "remove": "red",
     "refuse": "red",
+    "fail": "red",
     "skip": "dim",
     "keep": "dim",
     "extra": "dim",
@@ -213,7 +214,15 @@ def sync(
     refused = sum(1 for a, _, _ in actions if a == "refuse")
     if refused:
         err_console.print(
-            f"  [red]Refused {refused} change(s) to quizzes students have "
-            "finished; make them in the Canvas web app.[/red]"
+            f"  [red]Refused {refused} change(s) to quizzes or their assignments, "
+            "because students have finished the quiz or their attempts could not "
+            "be checked; make them in the Canvas web app.[/red]",
+            soft_wrap=True,
         )
+    failed = sum(1 for a, _, _ in actions if a == "fail")
+    if failed:
+        err_console.print(
+            f"  [red]{failed} assignment update(s) failed; see above.[/red]"
+        )
+    if refused or failed:
         raise typer.Exit(code=1)

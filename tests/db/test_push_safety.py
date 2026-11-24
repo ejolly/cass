@@ -5,9 +5,13 @@ from __future__ import annotations
 __docformat__ = "google"
 
 import json
+from contextlib import nullcontext
+from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
+from cass.apis.canvas.attempts import QuizAttemptsUnknownError
 from cass.apis.canvas.schema import (
     CanvasAssignmentResponse,
     CanvasCourse,
@@ -23,6 +27,9 @@ from cass.db.sync import (
     HELD_NOT_ACCEPTED,
     HELD_NOT_COMPARED,
     HELD_OVER_POINTS,
+    HELD_QUIZ_ATTEMPTS,
+    HELD_QUIZ_ATTEMPTS_UNKNOWN,
+    can_be_approved,
 )
 
 
@@ -664,3 +671,147 @@ class TestPassFailWithoutPoints:
             allow_clears=True,
         )
         assert [r["held"] for r in held_rows] == [HELD_NOT_ACCEPTED] * held
+
+
+class TestQuizPoints:
+    """C2: points of a quiz students have finished never change through a push."""
+
+    @pytest.fixture
+    def edited(self, db_conn, monkeypatch):
+        """A quiz's assignment with local edits to its name and points."""
+        from cass import db
+        from cass.db import CanvasAssignment
+
+        db.save_canvas_assignments(
+            [
+                CanvasAssignment(
+                    canvas_id=7, name="Quiz", points_possible=10.0, published=True
+                )
+            ]
+        )
+        db.snapshot_canvas_synced(db_conn)
+        db_conn.execute("UPDATE canvas_assignments SET name='Q1', points_possible=20")
+        return db_conn
+
+    @pytest.fixture
+    def canvas(self, monkeypatch) -> MagicMock:
+        live: dict[str, Any] = {
+            "id": 7,
+            "name": "Quiz",
+            "points_possible": 10.0,
+            "quiz_id": 20,
+        }
+        client = MagicMock()
+        client.get_assignment.side_effect = lambda _: CanvasAssignmentResponse(**live)
+        client.update_assignment.side_effect = lambda _, **fields: (
+            CanvasAssignmentResponse(**{**live, **fields})
+        )
+        client.list_students.return_value = []
+        client.list_quiz_submissions.return_value = []
+        client.count_quiz_takers.return_value = 0
+        monkeypatch.setattr(
+            "cass.apis.canvas.client.CanvasClient", lambda: nullcontext(client)
+        )
+        return client
+
+    def split(self, conn):
+        from cass import db
+
+        pending = db.get_pending_changes(conn)
+        return hold_back_unapproved(
+            pending,
+            db.canvas_preview(conn, pending),
+            overwrite_conflicts=True,
+            allow_over_points=True,
+            allow_clears=True,
+        )
+
+    def test_push_points_refused_with_attempts(self, edited, canvas):
+        canvas.count_quiz_takers.return_value = 1
+        to_push, held = self.split(edited)
+        assert list(to_push["canvas_assignments"]["7"]) == ["name"]
+        assert [(h["column"], h["held"]) for h in held] == [
+            ("points_possible", HELD_QUIZ_ATTEMPTS)
+        ]
+        assert not can_be_approved(held[0])
+
+    def test_push_points_held_when_attempts_unknown(self, edited, canvas):
+        canvas.count_quiz_takers.side_effect = QuizAttemptsUnknownError(20, "reason")
+        to_push, held = self.split(edited)
+        assert list(to_push["canvas_assignments"]["7"]) == ["name"]
+        assert [h["held"] for h in held] == [HELD_QUIZ_ATTEMPTS_UNKNOWN]
+        assert not can_be_approved(held[0])
+
+    def test_attempts_come_before_conflict(self, edited, canvas):
+        canvas.count_quiz_takers.return_value = 1
+        edited.execute("UPDATE _canvas_assignments_synced SET points_possible = 9")
+        _, held = self.split(edited)
+        assert held[0]["conflict"] is True
+        assert held[0]["held"] == HELD_QUIZ_ATTEMPTS
+
+    def test_name_change_on_attempted_quiz_still_pushes(self, edited, canvas):
+        from cass import db
+
+        canvas.count_quiz_takers.return_value = 1
+        to_push, _ = self.split(edited)
+        result = db.canvas_apply(edited, to_push)
+        assert result["ok"] is True
+        canvas.update_assignment.assert_called_once_with(7, name="Q1")
+        # The held points edit is still pending.
+        assert db.get_pending_changes(edited) == {
+            "canvas_assignments": {
+                "7": {"points_possible": {"baseline": 10.0, "current": 20.0}}
+            }
+        }
+
+    def test_points_push_without_attempts(self, edited, canvas):
+        from cass import db
+
+        to_push, held = self.split(edited)
+        assert held == []
+        assert db.canvas_apply(edited, to_push)["ok"] is True
+        assert db.get_pending_changes(edited) == {}
+
+    @pytest.mark.parametrize(
+        ("takers", "message"),
+        [
+            ([0, 1], "finished student attempt(s)"),
+            ([0, QuizAttemptsUnknownError(20, "reason")], "could not check"),
+        ],
+        ids=["attempted", "unknown"],
+    )
+    def test_attempt_after_preview_stops_push(self, edited, canvas, takers, message):
+        from cass import db
+
+        canvas.count_quiz_takers.side_effect = takers
+        to_push, held = self.split(edited)
+        assert held == []
+        result = db.canvas_apply(edited, to_push)
+        assert result["ok"] is False
+        (row,) = result["results"]  # ty: ignore[not-iterable]
+        assert (row["canvas_id"], row["ok"]) == (7, False)
+        assert message in row["error"]
+        canvas.update_assignment.assert_not_called()
+        assert set(db.get_pending_changes(edited)["canvas_assignments"]["7"]) == {
+            "name",
+            "points_possible",
+        }
+
+    @pytest.mark.parametrize("kept", [10.0, None])
+    def test_reverted_points_reported(self, edited, canvas, kept):
+        from cass import db
+
+        canvas.update_assignment.side_effect = None
+        canvas.update_assignment.return_value = CanvasAssignmentResponse(
+            id=7, name="Q1", points_possible=kept, quiz_id=20
+        )
+        to_push, _ = self.split(edited)
+        result = db.canvas_apply(edited, to_push)
+        assert result["results"] == [
+            {
+                "canvas_id": 7,
+                "ok": False,
+                "error": f"Canvas kept points_possible at {kept}",
+            }
+        ]
+        assert db.get_pending_changes(edited)

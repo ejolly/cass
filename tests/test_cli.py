@@ -2268,3 +2268,150 @@ class TestPushClearsGrades:
         assert result.exit_code == 0, result.output
         pushed = cleared.call_args.args[1]["canvas_grades"]
         assert [c["posted_grade"]["current"] for c in pushed.values()] == [""]
+
+
+class TestAssignmentRoutesToAttemptedQuiz:
+    """C2: deleting or rescoring an attempted quiz through its assignment."""
+
+    @pytest.fixture
+    def canvas(self, tmp_path, monkeypatch):
+        """Mocked Canvas: group 9 holds quiz assignment 7. Returns its state."""
+        import httpx
+
+        from cass.actions.config import reset_config, set_config_path
+        from cass.apis.canvas.client import CanvasClient
+
+        reset_config()
+        set_config_path(None)
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "cass.toml").write_text(
+            '[canvas]\nbase_url = "https://canvas.example.com"\ncourse_id = 1\n'
+            'time_zone = "America/Los_Angeles"\n\n'
+            '[[canvas.assignments]]\nname = "Quiz 1"\npoints = 20\n'
+        )
+        quiz = {
+            "id": 7,
+            "name": "Quiz 1",
+            "points_possible": 10,
+            "quiz_id": 20,
+            "assignment_group_id": 9,
+        }
+        state: dict = {"takers": 0, "assignments": [quiz], "writes": []}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            path = request.url.path.removeprefix("/api/v1/courses/1")
+            if request.method != "GET":
+                state["writes"].append(f"{request.method} {path}")
+                return httpx.Response(200, json=quiz)
+            if path == "/quizzes/20/statistics":
+                if state["takers"] is None:
+                    return httpx.Response(204)
+                count = {"unique_count": state["takers"]}
+                return httpx.Response(
+                    200, json={"quiz_statistics": [{"submission_statistics": count}]}
+                )
+            routes = {
+                "/assignments": state["assignments"],
+                "/assignments/7": quiz,
+                "/assignment_groups": [{"id": 9, "name": "Labs"}],
+                "/quizzes/20": {"id": 20, "title": "Quiz 1"},
+                "/quizzes/20/submissions": {"quiz_submissions": []},
+            }
+            return httpx.Response(200, json=routes.get(path, []))
+
+        monkeypatch.setattr(
+            "cass.cli.canvas._common.client",
+            lambda dry_run=False: CanvasClient(
+                "https://canvas.example.com",
+                token="t",
+                course_id=1,
+                transport=httpx.MockTransport(handler),
+                time_zone="America/Los_Angeles",
+                dry_run=dry_run,
+            ),
+        )
+        yield state
+        reset_config()
+
+    ASSIGNMENT = ("assignments", "delete", "7")
+    GROUP = ("assignments", "groups", "delete", "Labs")
+    QUIZ = ("quizzes", "delete", "20")
+
+    @pytest.mark.parametrize("takers", [1, None], ids=["attempted", "unknown"])
+    @pytest.mark.parametrize("flag", ["--yes", "--dry-run"])
+    def test_cli_delete_refused_with_attempts(self, canvas, flag, takers):
+        canvas["takers"] = takers
+        result = runner.invoke(app, ["canvas", *self.ASSIGNMENT, flag])
+        assert result.exit_code == 1, result.output
+        expected = "won't delete it" if takers else "did not make this change"
+        assert expected in str(result.exception)
+        assert canvas["writes"] == []
+        assert "DELETE" not in result.stdout
+
+    @pytest.mark.parametrize("takers", [1, None], ids=["attempted", "unknown"])
+    @pytest.mark.parametrize("flag", ["--yes", "--dry-run"])
+    def test_group_delete_refused_with_attempts(self, canvas, flag, takers):
+        canvas["takers"] = takers
+        result = runner.invoke(app, ["canvas", *self.GROUP, flag])
+        assert result.exit_code == 1, result.output
+        expected = (
+            "won't delete its assignment group"
+            if takers
+            else "did not make this change"
+        )
+        assert expected in str(result.exception)
+        assert canvas["writes"] == []
+        assert "DELETE" not in result.stdout
+
+    @pytest.mark.parametrize("args", [ASSIGNMENT, GROUP, QUIZ], ids=" ".join)
+    @pytest.mark.parametrize("takers", [1, None], ids=["attempted", "unknown"])
+    def test_attempt_during_confirmation_stops_delete(
+        self, canvas, monkeypatch, args, takers
+    ):
+        monkeypatch.setattr(
+            "cass.cli.prompts.confirm",
+            lambda *_, **__: canvas.update(takers=takers),
+        )
+        result = runner.invoke(app, ["canvas", *args])
+        assert result.exit_code == 1, result.output
+        assert "Quiz" in str(result.exception) or "quiz" in str(result.exception)
+        assert canvas["writes"] == []
+
+    def test_group_recheck_sees_quiz_moved_in(self, canvas, monkeypatch):
+        quiz_assignments = canvas["assignments"]
+        canvas.update(assignments=[], takers=1)
+        monkeypatch.setattr(
+            "cass.cli.prompts.confirm",
+            lambda *_, **__: canvas.update(assignments=quiz_assignments),
+        )
+        result = runner.invoke(app, ["canvas", *self.GROUP])
+        assert result.exit_code == 1, result.output
+        assert "won't delete its assignment group" in str(result.exception)
+        assert canvas["writes"] == []
+
+    @pytest.mark.parametrize("args", [ASSIGNMENT, GROUP, QUIZ], ids=" ".join)
+    def test_delete_without_attempts(self, canvas, args):
+        result = runner.invoke(app, ["canvas", *args, "--yes"])
+        assert result.exit_code == 0, result.output
+        assert [w.split()[0] for w in canvas["writes"]] == ["DELETE"]
+
+    @pytest.mark.parametrize("takers", [1, None], ids=["attempted", "unknown"])
+    def test_sync_refusal_exits_1(self, canvas, takers):
+        canvas["takers"] = takers
+        result = runner.invoke(app, ["canvas", "sync", "--apply"])
+        assert result.exit_code == 1, result.output
+        assert "refuse" in result.stdout
+        assert "Refused 1 change(s) to quizzes or their assignments" in result.stderr
+        assert canvas["writes"] == []
+
+    def test_sync_reports_points_canvas_kept(self, canvas):
+        result = runner.invoke(app, ["canvas", "sync", "--apply"])
+        assert result.exit_code == 1, result.output
+        assert "Canvas kept points_possible at" in " ".join(result.stdout.split())
+        assert "1 assignment update(s) failed" in result.stderr
+        assert canvas["writes"] == ["PUT /assignments/7"]
+
+    def test_sync_dry_run_without_attempts(self, canvas):
+        result = runner.invoke(app, ["canvas", "sync"])
+        assert result.exit_code == 0, result.output
+        assert canvas["writes"] == []

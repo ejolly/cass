@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, cast
 
 import sqlite_utils
 
+from ..apis.canvas.attempts import QuizAttemptsUnknownError, count_finished_attempts
 from ..apis.canvas.sync import (
     accepts_grade,
     get_scheme_letters,
@@ -33,7 +34,10 @@ from .core import (
 from .schema import CanvasAssignment, CanvasGrade
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from ..apis.canvas.client import CanvasClient
+    from ..apis.canvas.schema import CanvasAssignmentResponse
 
 ChangeFields = dict[str, object]
 RowChanges = dict[str, ChangeFields]
@@ -67,7 +71,7 @@ def mark_synced_assignments(
     sdb: sqlite_utils.Database,
     canvas_ids: list[int],
 ) -> None:
-    """Update synced shadow for specific assignments after push."""
+    """Update synced shadow for whole assignments after push."""
     for cid in canvas_ids:
         sdb.execute(
             """
@@ -80,6 +84,27 @@ def mark_synced_assignments(
         )
     if canvas_ids:
         _connection(sdb).commit()
+
+
+def mark_synced_assignment_columns(
+    sdb: sqlite_utils.Database, canvas_id: int, columns: Iterable[str]
+) -> None:
+    """Update synced shadow for the pushed columns of one assignment.
+
+    Edits to its other columns stay pending.
+    """
+    for column in sorted(CANVAS_PUSHABLE["canvas_assignments"].intersection(columns)):
+        sdb.execute(
+            f"""
+            UPDATE _canvas_assignments_synced
+            SET {column} = (
+                SELECT {column} FROM canvas_assignments WHERE canvas_id = ?
+            )
+            WHERE canvas_id = ?
+            """,
+            [canvas_id, canvas_id],
+        )
+    _connection(sdb).commit()
 
 
 def mark_synced_grades(
@@ -459,13 +484,20 @@ def preview_assignments(
     table_changes: TableChanges,
     client: CanvasClient,
 ) -> list[dict[str, object]]:
-    """Preview pending assignment changes against live Canvas state."""
+    """Preview pending assignment changes against live Canvas state.
+
+    A points change on a quiz is marked ``quiz_attempted`` when students have
+    finished it, or ``quiz_attempts_unknown`` when that could not be checked.
+    """
     results: list[dict[str, object]] = []
     for pk_key, columns in table_changes.items():
         canvas_id = int(pk_key)
         assignment_name = resolve_row_name(conn, "canvas_assignments", pk_key)
         try:
             live = client.get_assignment(canvas_id)
+            attempt_flags: dict[str, object] = {}
+            if "points_possible" in columns:
+                attempt_flags = _quiz_attempt_flags(client, live)
             for col, vals in columns.items():
                 live_val = getattr(live, col, None)
                 results.append(
@@ -478,6 +510,7 @@ def preview_assignments(
                         "current": vals["current"],
                         "live": live_val,
                         "conflict": not values_equal(live_val, vals["baseline"]),
+                        **(attempt_flags if col == "points_possible" else {}),
                     }
                 )
         except Exception as exc:
@@ -490,6 +523,19 @@ def preview_assignments(
                 }
             )
     return results
+
+
+def _quiz_attempt_flags(
+    client: CanvasClient, assignment: CanvasAssignmentResponse
+) -> dict[str, object]:
+    """Return the preview flags that hold back a change to the points of a quiz."""
+    if assignment.quiz_id is None:
+        return {}
+    try:
+        attempts = count_finished_attempts(client, assignment.quiz_id)
+    except QuizAttemptsUnknownError:
+        return {"quiz_attempts_unknown": True}
+    return {"quiz_attempted": attempts > 0}
 
 
 def grade_conflicts(live: object, baseline: object) -> bool:
@@ -723,7 +769,11 @@ def canvas_apply(
     conn: sqlite_utils.Database,
     pending: PendingChanges,
 ) -> dict[str, object]:
-    """Push pending changes to Canvas and clear synced rows on success."""
+    """Push pending changes to Canvas and clear synced rows on success.
+
+    ``push_assignments`` checks quiz attempts again just before each points
+    change, and a refusal fails that assignment only.
+    """
     from ..apis.canvas.client import CanvasClient
 
     assignment_changes = pending.get("canvas_assignments", {})
@@ -733,13 +783,12 @@ def canvas_apply(
 
     results: list[dict[str, object]] = []
     overall_ok = True
-    synced_assignment_ids: list[int] = []
+    synced_assignment_columns: dict[int, set[str]] = {}
     synced_grade_keys: list[tuple[int, int]] = []
     with CanvasClient() as client:
         if assignment_changes:
-            assignment_results = push_assignments(
-                client, _extract_assignment_updates(assignment_changes)
-            )
+            updates = _extract_assignment_updates(assignment_changes)
+            assignment_results = push_assignments(client, updates)
             results.extend(assignment_results)
             for result in assignment_results:
                 if not result.get("ok"):
@@ -747,7 +796,7 @@ def canvas_apply(
                 if result.get("ok"):
                     canvas_id = int(result["canvas_id"])  # type: ignore[arg-type]
                     assignment_changes.pop(str(canvas_id), None)
-                    synced_assignment_ids.append(canvas_id)
+                    synced_assignment_columns[canvas_id] = set(updates[canvas_id])
 
         if grade_changes:
             grade_data, pk_keys, noop_keys = _extract_grade_data(grade_changes)
@@ -775,8 +824,8 @@ def canvas_apply(
         pending.pop("canvas_assignments", None)
     if not grade_changes:
         pending.pop("canvas_grades", None)
-    if synced_assignment_ids:
-        mark_synced_assignments(conn, synced_assignment_ids)
+    for canvas_id, columns in synced_assignment_columns.items():
+        mark_synced_assignment_columns(conn, canvas_id, columns)
     if synced_grade_keys:
         mark_synced_grades(conn, synced_grade_keys)
     return {"ok": overall_ok, "results": results}
@@ -851,6 +900,13 @@ HELD_OVER_POINTS = "above the assignment's points possible"
 HELD_CLEAR = "would remove the grade on Canvas"
 HELD_NOT_COMPARED = "could not be compared with Canvas"
 HELD_NOT_ACCEPTED = "not a grade Canvas accepts for this assignment's grading type"
+HELD_QUIZ_ATTEMPTS = (
+    "students have finished this quiz; change its points in the Canvas web app"
+)
+HELD_QUIZ_ATTEMPTS_UNKNOWN = (
+    "attempts at this quiz could not be checked; "
+    "change its points in the Canvas web app"
+)
 
 
 def hold_back_unapproved(
@@ -867,8 +923,9 @@ def hold_back_unapproved(
     (unless ``overwrite_conflicts``), when a grade is above the assignment's
     points possible (unless ``allow_over_points``), or when it removes a grade
     from Canvas (unless ``allow_clears``). A change the preview could not
-    compare with Canvas, or a grade Canvas would not record as entered, is
-    always held back. Held-back changes stay pending locally.
+    compare with Canvas, a grade Canvas would not record as entered, or a
+    points change on a quiz that has or may have finished attempts, is always
+    held back. Held-back changes stay pending locally.
 
     Args:
         pending: Pending changes from ``get_pending_changes``.
@@ -900,7 +957,8 @@ def hold_back_unapproved(
 
 def can_be_approved(change: dict[str, object]) -> bool:
     """Return whether the user's approval could let a previewed change through."""
-    return "error" not in change and not change.get("not_accepted")
+    always_held = ("not_accepted", "quiz_attempted", "quiz_attempts_unknown")
+    return "error" not in change and not any(change.get(flag) for flag in always_held)
 
 
 def held_reason(
@@ -915,6 +973,10 @@ def held_reason(
         return HELD_NOT_COMPARED
     if change.get("not_accepted"):
         return HELD_NOT_ACCEPTED
+    if change.get("quiz_attempted"):
+        return HELD_QUIZ_ATTEMPTS
+    if change.get("quiz_attempts_unknown"):
+        return HELD_QUIZ_ATTEMPTS_UNKNOWN
     if change.get("conflict") and not overwrite_conflicts:
         return HELD_CONFLICT
     if change.get("over_points") and not allow_over_points:
