@@ -27,7 +27,7 @@ cass push          # preview, then confirm
 cass push --yes    # skip the confirmation
 ```
 
-Two kinds of change are held back unless you approve them, and stay pending until you do:
+Three kinds of change are held back unless you approve them, and stay pending until you do:
 
 - **Conflicts:** values that changed on Canvas since your last pull, for example a grade a TA entered in SpeedGrader. Pushing would overwrite them.
 - **Grades above points possible:** usually a typo, sometimes extra credit.
