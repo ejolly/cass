@@ -201,6 +201,8 @@ def _render_held_back(held: list[dict[str, object]]) -> None:
 
 
 def _render_push_results(results: list[dict[str, object]]) -> None:
+    from rich.markup import escape
+
     total_posted = 0
     failed: list[str] = []
     for result in results:
@@ -218,7 +220,9 @@ def _render_push_results(results: list[dict[str, object]]) -> None:
             else:
                 count = int(cast(int | str, result.get("count", 0)))
                 total_posted += count
-                note = ", not released to students" if result.get("unreleased") else ""
+                note = ""
+                if unreleased := result.get("unreleased"):
+                    note = f", {unreleased} not released to students"
                 console.print(
                     "  [green]✓[/green] "
                     f"Assignment {result['canvas_assignment_id']}: {count} grades{note}"
@@ -229,7 +233,8 @@ def _render_push_results(results: list[dict[str, object]]) -> None:
             )
             failed.append(f"{label}: {result.get('error', 'unknown error')}")
             err_console.print(
-                f"  [red]✗[/red] {label}: {result.get('error', 'unknown error')}"
+                f"  [red]✗[/red] {label}: "
+                f"{escape(str(result.get('error', 'unknown error')))}"
             )
 
     if failed:

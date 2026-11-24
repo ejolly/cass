@@ -247,6 +247,8 @@ def shows_pushed_grade(
         )
     if grading_type not in _LETTER_GRADING_TYPES or not points_possible:
         return False
+    if shown.lower() in _PASS_FAIL_GRADES:
+        return False
     # Without a visible scheme, only the score can be compared.
     return not scheme or shown == _scheme_letter(
         entered_score / points_possible, scheme
@@ -307,10 +309,12 @@ class PostingPreview:
     Attributes:
         post_manually: The assignment posted grades manually.
         unposted_ids: Students whose previewed grade was not yet visible to them.
+        released_ids: Students whose previewed grade already was.
     """
 
     post_manually: bool
     unposted_ids: frozenset[int]
+    released_ids: frozenset[int] = frozenset()
 
 
 def push_grades(
@@ -331,8 +335,8 @@ def push_grades(
     read and the push itself cannot be prevented.
 
     An assignment that posts automatically now but did not at the preview, or
-    without a preview as last pulled, fails without being sent unless its
-    release was approved.
+    without a preview as last pulled, fails without being sent unless the
+    release of every grade in it was approved or already done at the preview.
 
     Args:
         client: Authenticated Canvas API client.
@@ -360,10 +364,16 @@ def push_grades(
         release_approved = covers_all or (
             post_grades and seen is not None and seen.post_manually
         )
+        graded = {uid: g for uid, g in grade_data.items() if is_valid_grade(g)}
+        automatic_approved = covers_all or (
+            release_approved
+            and seen is not None
+            and graded.keys() <= seen.unposted_ids | seen.released_ids
+        )
         try:
             assignment = client.get_assignment(aid)
             post_manually = get_post_manually(assignment)
-            if not post_manually and not release_approved:
+            if not post_manually and not automatic_approved:
                 if previewed is None:
                     was_automatic = _stored_post_manually(conn, aid) is False
                 else:
@@ -395,7 +405,6 @@ def push_grades(
             "release_unknown": 0,
         }
         results.append(pushed)
-        graded = {uid: g for uid, g in grade_data.items() if is_valid_grade(g)}
         if not post_manually or not graded:
             continue
         if covers_all:

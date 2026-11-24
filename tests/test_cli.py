@@ -2365,8 +2365,10 @@ class TestPushReleasesGrades:
         )
         assert (
             "2 grade(s) pushed but not released to students; "
-            "post them in Canvas." in result.stderr
+            "they can now only be released in Canvas." in result.stderr
         )
+        assert result.stderr.count("--post") == 1
+        assert result.output.index("--post") < result.output.index("2 grades")
 
     def test_post_flag_posts(self, graded):
         result = runner.invoke(app, ["push", "--yes", "--allow-over-points", "--post"])
@@ -2433,6 +2435,21 @@ class TestPushReleasesGrades:
             assert notice < result.output.index("Push these changes")
             assert "Release 1 pushed" in result.output
             graded.assert_not_called()
+
+    def test_note_counts_only_unreleased(self, graded):
+        row = {"ok": True, "canvas_assignment_id": 7, "count": 3, "unreleased": 1}
+        graded.side_effect = None
+        graded.return_value = {"ok": True, "results": [row]}
+        result = runner.invoke(app, ["push", "--yes", "--allow-over-points"])
+        assert "Assignment 7: 3 grades, 1 not released to students" in result.stdout
+
+    def test_error_text_is_not_markup(self, graded):
+        row = {"ok": False, "canvas_assignment_id": 7, "error": "bad [/red] [bold]x"}
+        graded.side_effect = None
+        graded.return_value = {"ok": False, "results": [row]}
+        result = runner.invoke(app, ["push", "--yes", "--allow-over-points"])
+        assert result.exit_code == 1
+        assert "bad [/red] [bold]x" in result.stderr
 
     def test_failed_release_exits_1(self, graded):
         graded.side_effect = None

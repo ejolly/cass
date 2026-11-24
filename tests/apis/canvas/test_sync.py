@@ -1091,6 +1091,33 @@ class TestReleaseGrades:
         assert db.count_unreleased(result) == 0
         assert "could not tell" in db.push_notices(result)[0]
 
+    @pytest.mark.parametrize("covered", [True, False])
+    @pytest.mark.parametrize("posted", ["unknown", "released", "unposted"])
+    def test_became_automatic_needs_every_grade_approved(
+        self, client, policies, live, edit, db_conn, posted, covered
+    ):
+        """An automatic push releases grades the approval did not count."""
+        if posted == "unknown":
+            del live[1, 1]["posted_at"]
+        elif posted == "released":
+            live[1, 1]["posted_at"] = "2026-10-01T00:00:00Z"
+        edit(1, 1, "9")
+        edit(1, 2, "8")  # the grade the approval counted
+        pending = db.get_pending_changes(db_conn)
+        preview = canvas_preview(db_conn, pending)
+        policies[1] = False
+        result = canvas_apply(
+            db_conn,
+            pending,
+            post_grades=True,
+            cover_policy_changes=covered,
+            preview=preview,
+        )
+        sent = [call.args[0] for call in client.bulk_push_grades.call_args_list]
+        approved = covered or posted != "unknown"
+        assert sent == ([1, 2] if approved else [2])
+        assert result["ok"] is approved
+
     def test_approval_covers_only_grades_counted(self, client, live, edit, db_conn):
         """A grade hidden after the preview was not in the N approved."""
         live[1, 1]["posted_at"] = "2026-10-01T00:00:00Z"
@@ -1145,6 +1172,13 @@ class TestShowsPushedGrade:
             user_id=1, entered_grade=entered, entered_score=score
         )
         assert shows_pushed_grade(sent, submission, grading_type, 10, scheme) is matches
+
+    @pytest.mark.parametrize("word", ["complete", "Incomplete", "pass", "fail"])
+    def test_pass_fail_word_is_not_a_letter(self, word):
+        submission = CanvasSubmissionResponse(
+            user_id=1, entered_grade=word, entered_score=10.0
+        )
+        assert not shows_pushed_grade("100%", submission, "letter_grade", 10, [])
 
     def test_letter_from_an_unseen_scheme_is_matched_by_score(self):
         submission = CanvasSubmissionResponse(

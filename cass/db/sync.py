@@ -1010,6 +1010,11 @@ def _posting_previews(preview: dict[str, object]) -> dict[int, PostingPreview]:
                 for c in changes
                 if "posted_at" in c and c["posted_at"] is None
             ),
+            released_ids=frozenset(
+                cast(int, c["canvas_user_id"])
+                for c in changes
+                if c.get("posted_at") is not None
+            ),
         )
         for aid, changes in rows.items()
     }
@@ -1094,7 +1099,7 @@ def push_notices(result: dict[str, object]) -> list[str]:
     if n_unreleased := count_unreleased(result):
         notices.append(
             f"{n_unreleased} grade(s) pushed but not released to students; "
-            "post them in Canvas."
+            "they can now only be released in Canvas."
         )
     rows = cast(list[dict[str, object]], result.get("results", []))
     if n_unknown := sum(cast(int, row.get("release_unknown", 0)) for row in rows):
