@@ -12,15 +12,17 @@ cass is a CLI over the Canvas REST API for one course, set by `cass.toml`. `--he
 
 1. Run `cass status` first. It shows the config path, course, auth source and pending local edits. `cass status --json` gives the same thing as one object.
 2. To target another course, pass `--config PATH` before the subcommand, as in `cass --config ../f25/cass.toml canvas quizzes list`, or set `CASS_CONFIG`. Credentials and `cass.db` resolve beside that file.
-3. On an error, rerun with `cass --debug …` for the traceback. Exit 1 means the command failed. Exit 2 means a usage error.
+3. On an error, rerun with `cass --debug …` for the traceback. Exit 1 means the command failed, or that `cass push` or `cass canvas sync` held back or refused part of the work and did the rest. Exit 2 means a usage error. `cass push` exits 0 when Canvas rejects an update, so read its stderr.
 
 ## Safety rules
 
-- **Dry run every write first.** Every Canvas write takes `--dry-run`, which prints the exact requests and sends none. The one exception is `cass canvas quizzes preview`, which leaves a teacher preview attempt on Canvas. Reconcile commands are dry runs unless you pass `--apply`: `cass canvas sync`, `cass canvas quizzes update QUIZ --from FILE`, `cass canvas submissions excuse` and `cass canvas submissions clear-late`.
+- **Dry run every write first.** Writes to Canvas take `--dry-run`, which prints the planned requests and sends none (`cass push --dry-run` prints a comparison with Canvas instead). The exceptions are `cass canvas quizzes preview`, which leaves a teacher preview attempt on Canvas, and `cass canvas quizzes responses`, which has Canvas generate a report. Reconcile commands are dry runs unless you pass `--apply`: `cass canvas sync`, `cass canvas quizzes update QUIZ --from FILE`, `cass canvas submissions excuse` and `cass canvas submissions clear-late`.
 - **Show the plan and wait.** Paste the dry-run output to the user. Run the real command, or add `--apply`, only after they agree.
-- **Deletes need `--yes`.** You have no TTY, so a prompting command exits 1 without it. Pass `--yes` only after the user approved that dry run.
+- **Deletes, `items remove`, `cass push` and `cass revert` need `--yes`.** You have no TTY, so a prompting command exits 1 without it. Pass `--yes` only after the user approved that dry run.
 - **Never publish unless asked.** Don't pass `--publish` or run `publish` verbs unless the user asked. `cass canvas files upload` locks a new file unless you pass `--publish`, and an overwrite keeps the existing file's lock. Announcements and calendar events are visible to students as soon as they're created; there is no unpublished state.
 - **Leave out what you don't mean to change.** In `cass.toml` and quiz files, an omitted `published`, or any other omitted quiz setting, leaves the live value as it is. Only new content gets defaults: unpublished, one attempt. Write `published` only when the user asked to publish or unpublish.
+- **Quizzes students have finished are locked.** cass refuses to delete such a quiz, its assignment or its assignment group, or to change its questions, points or scoring settings. It also refuses when it can't check for attempts. No flag overrides this; tell the user to use the Canvas web app. `cass canvas api` doesn't check, so never use it to get around a refusal.
+- **Pushing can post grades.** On assignments that post manually, `cass push` makes every graded submission visible to students, and the dry run doesn't show it. Tell the user first.
 - **Use the public API only.** In Python, use `CanvasClient` public methods. Never `_client`.
 
 ## Task → command
@@ -48,15 +50,15 @@ cass is a CLI over the Canvas REST API for one course, set by `cass.toml`. `--he
 | Announcements | `cass canvas announcements create "Title" -m "<p>Body</p>" --dry-run` |
 | Calendar | `cass canvas calendar create "Review" --start "2026-10-20 10:00" --dry-run` |
 | Navigation tabs | `cass canvas tabs list`; `cass canvas tabs hide Grades --dry-run` |
-| Read grades | `cass pull` (grades as entered, before late deductions; it names local grades it kept because they differ from Canvas or Canvas lists no grade to compare, which the user must push or revert, and students and assignments it removed because Canvas no longer lists them), then `cass query submissions --where "score < 50"`; `cass query gradebook` for the student × assignment matrix |
-| Push grade edits made in `cass view` | `cass push --dry-run`, then `cass push --yes`. Values changed on Canvas since the last pull, grades above points possible, and cleared grades are held back and stay pending; add `--overwrite-conflicts`, `--allow-over-points` or `--allow-clears` only after the user approves those rows. Grades the grading type does not accept (such as `B+` on a points assignment; letters or plain numbers on a letter or GPA assignment with no scheme set on it or the course; percentages or letters when points possible is 0; changing complete to incomplete or back when points possible is 0, where the user can push a clear first) are always held back; the user must correct them. Points of a quiz with finished or uncheckable attempts are always held back too; the user changes them in the Canvas web app |
+| Read grades | `cass pull`, then `cass query submissions --where "score < 50"`; `cass query gradebook` for the student × assignment matrix. Relay the students and assignments pull removed and the local grades it kept |
+| Push grade and assignment edits made in `cass view` | `cass push --dry-run`, then `cass push --yes`. Conflicts, grades above points possible and cleared grades are held back and stay pending; add `--overwrite-conflicts`, `--allow-over-points` or `--allow-clears` only after the user approves every such row. Some rows no flag can send. Read `references/grades.md` first |
 | Anything else | `cass canvas api` (see below) |
 
-Commands take an ID or a name, and an ambiguous name fails and lists the matching IDs. Calendar events take IDs only. Times are course-local (`YYYY-MM-DD HH:MM`) unless they carry an offset.
+Commands take an ID or a name, and an ambiguous name fails and lists the matching IDs. Calendar events and `--student` take IDs only. Times are course-local (`YYYY-MM-DD HH:MM`) unless they carry an offset.
 
 ## Output
 
-- `--json` prints JSON Lines on `list` commands and a single object on `show` and `cass status --json`, using Canvas field names. It can't be combined with `--csv` or `--save`.
+- `--json` prints JSON Lines on `list` commands, `quizzes questions` and `quizzes preview`, and a single object on `show` and `cass status --json`, using Canvas field names. It can't be combined with `--csv` or `--save`.
 - stdout carries only data. Hints, progress, prompts and errors go to stderr, so pipes get clean output.
 - `cass canvas files list --json` adds `kind` (`file` or `folder`). `cass canvas modules list --json` has no items, so use `modules show --json` for those.
 
@@ -97,7 +99,8 @@ with CanvasClient.from_config("cass.toml", dry_run=True) as c:   # or CanvasClie
 Read these when the task needs them:
 
 - `references/quirks.md`: every verified Canvas quirk, with what cass does about it.
-- `references/files-and-modules.md`: uploads, folders, duplicates, module items, `sync` and `--prune`.
+- `references/files-and-modules.md`: uploads, folders, duplicates, module items, declared assignments, `sync` and `--prune`.
 - `references/quizzes.md`: quiz file format, question editing, previews, responses.
+- `references/grades.md`: what pull removes and keeps, what push holds back, accepted grades, posting.
 - `references/late-enrollments.md`: `people list --enrolled-after`, `excuse`, `clear-late`.
 <!-- --8<-- [end:body] -->

@@ -14,7 +14,7 @@ time_zone = "America/Los_Angeles"   # written by `cass init`; times you type are
 file = "quizzes/09-25-participation.toml"   # relative to this file
 ```
 
-`[[canvas.modules]]`, `[[canvas.assignments]]`, and `[[canvas.quizzes]]` tables declare course content. `cass canvas sync` previews what differs from Canvas; `cass canvas sync --apply` creates what is missing and updates settings that differ. Leave out `published` to keep the live state; `sync` creates missing modules, assignments and quizzes unpublished. It does not change the points of a quiz students have finished (`refuse`), and lists assignment updates that fail (`fail`); either makes it exit 1. See [Module items](#module-items) for item declarations and [Quizzes](quizzes.md) for the quiz file format.
+`[[canvas.modules]]`, `[[canvas.assignments]]`, and `[[canvas.quizzes]]` tables declare course content. `cass canvas sync` previews what differs from Canvas; `cass canvas sync --apply` creates what is missing and updates settings that differ. Leave out `published` to keep the live state; `sync` creates missing modules, assignments and quizzes unpublished. It does not change the points or scoring settings of a quiz students have finished. It reports such a change as `refuse`, as it does a points change in `[[canvas.assignments]]` to a quiz whose attempts it can't check. It lists assignment updates that fail as `fail`. Both make it exit 1 after sending the rest. If it can't check attempts for a scoring change in `[[canvas.quizzes]]`, it stops there: under `--apply`, earlier changes stay applied and nothing after them is sent. See [Module items](#module-items) for item declarations and [Quizzes](quizzes.md) for the quiz file format.
 
 ## Module items
 

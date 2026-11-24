@@ -20,11 +20,11 @@ Only **Gradebook** and **Assignments** are editable. Everything else is read-onl
 
 ## Pushing
 
-Click **Push** in the sidebar to see a summary of pending changes grouped by student and assignment, then confirm. Values changed on Canvas since your last pull, grades above an assignment's points possible, and cleared grades (which would remove the grade on Canvas) are held back unless you tick the checkbox to approve them; held-back changes stay pending. Grades Canvas would not record as entered, and points of a quiz students have finished, are always held back; see [Push](../getting-started/workflow.md#push). Pushed cells lose their orange highlight. **Revert** discards every pending change instead.
+Click **Push** in the sidebar to see a summary of pending changes grouped by student and assignment, then confirm. Values changed on Canvas since your last pull, grades above an assignment's points possible, and cleared grades (which would remove the grade on Canvas) are held back unless you tick the checkbox to approve them; held-back changes stay pending. Grades Canvas would not record as entered, points of a quiz students have finished or whose attempts cass can't check, and changes cass can't compare with Canvas are always held back; see [Push](../getting-started/workflow.md#push). Pushed cells lose their orange highlight. **Revert** discards every pending change instead.
 
 ## Creating and deleting assignments
 
-The Assignments table has **Create** and **Delete** actions. Both apply to Canvas immediately after confirmation and refresh the local tables. A quiz students have finished can't be deleted. If a delete is refused or fails, the dialog shows why and local data and pending edits stay; an assignment already deleted on Canvas is removed locally.
+The Assignments table has **Create** and **Delete** actions. Both apply to Canvas immediately after confirmation and refresh the local tables. A quiz can't be deleted once students have finished it, or when cass can't check whether they have. If a delete is refused or fails, the dialog shows why and local data and pending edits stay; an assignment already deleted on Canvas is removed locally.
 
 ## Exporting
 

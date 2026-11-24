@@ -64,7 +64,7 @@ title = "Reading response 1"           # matches the assignment's title
 ```
 
 ```bash
-cass canvas sync                  # dry run: a create/update/move/keep/extra/remove/upload table
+cass canvas sync                  # dry run: a table of actions
 cass canvas sync --apply
 cass canvas sync --prune          # preview removing undeclared items
 cass canvas sync --prune --apply
@@ -74,6 +74,8 @@ cass canvas sync --prune --apply
 - `Assignment`, `Quiz` and `Page` need `title`. `File` needs `file`. `ExternalUrl` needs `url` and `title`. `SubHeader` needs `title`.
 - Items match by what they point at. SubHeaders and duplicates pair in order. The target order is the declared items, then any extras.
 - `extra` items are left alone. `--prune` removes them, but the linked content stays. A module without an `items` key is never touched, and `items = []` declares an empty module.
+- `[[canvas.assignments]]` takes `name`, `points`, `due_at`, `group`, `submission_types` and `published`. On an existing assignment, `sync` updates only points (a 0 is ignored), due date and `published`. Missing assignment groups stop it, dry runs included, unless you pass `--create-groups`.
+- A `refuse` row is a change to a quiz cass won't make because of attempts (see `quizzes.md`). A `fail` row is an assignment update Canvas rejected or didn't keep; a dry run usually can't predict it. The rest is sent, and `sync` exits 1.
 - If any item can't be found or is ambiguous, `sync` writes no module items at all. Under `--apply`, it has already written modules, assignments and quizzes by then.
 - `sync` misses a same-size edit to a `source` file. Upload it with `cass canvas files upload --on-duplicate overwrite`.
 - For a `File`, `published` sets the file's lock, not the item's. A new upload stays locked unless the item declares `published = true`.

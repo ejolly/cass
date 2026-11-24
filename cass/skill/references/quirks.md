@@ -31,21 +31,22 @@ Canvas behaviors that `--help` won't tell you. Each one is documented in the cas
 - When a question update leaves a field out, Canvas refills it from a copy saved at creation, which can undo earlier edits. cass resends text, name, type, points, answers and feedback on every update. Raw updates must do the same.
 - Updating a question with `quiz_group_id: null` leaves it in its group. Only reordering the quiz takes it out. Deleting a group deletes the questions in it.
 - An answer sent without an ID gets a new one, and a new ID can unlink earlier student responses. cass reuses the IDs of answers whose text is unchanged.
-- In concluded courses, the questions endpoint returns 403. `quizzes show`, `questions` and `export` fall back to `/statistics`, which has no names or answer weights. `quizzes show`, `questions` and `export` warn about it on stderr, and `quizzes show --json` also sets `questions_source` to `statistics`. `quizzes update --questions` refuses such quizzes. `quizzes responses` still works, because it uses the report.
+- In concluded courses, the questions endpoint returns 403. `quizzes show`, `questions` and `export` fall back to `/statistics`, which has no names or answer weights, and warn about it on stderr. `quizzes show --json` also sets `questions_source` to `statistics`. `quizzes update --questions` refuses such quizzes. `quizzes responses` still works, because it uses the report.
 - Canvas wraps question text in theme CSS and JS unless you ask for the stored HTML. cass asks for it.
 
 ## Quiz responses and attempts
 
 - `quizzes responses` asks Canvas to generate a student analysis report and waits for it, which takes about 30 seconds.
 - Canvas leaves the Test Student out of quiz reports and statistics.
-- The quiz submissions list covers current students only. Statistics (`submission_statistics.unique_count`) also cover concluded and inactive students. Neither covers a student whose enrollment was deleted. Pass `all_versions=true`, or statistics leave out students whose kept score is an average of attempts. Over 100 questions or 1000 submissions, Canvas answers 204 with no statistics, so cass refuses to delete or rescore the quiz.
-- Deleting a quiz's assignment, or its assignment group, deletes the quiz. Changing points through the assignment never sets the quiz's points: Canvas reverts the change on a published quiz, and on an unpublished one shows it until the quiz is published (publishing through the assignment keeps the two different).
+- The quiz submissions list covers current students only. Statistics (`submission_statistics.unique_count`) also cover concluded and inactive students. Neither covers a student whose enrollment was deleted. Pass `all_versions=true`, or statistics leave out students whose kept score is an average of attempts. Over 100 questions or 1000 submissions, Canvas answers 204 with no statistics, so cass refuses to delete or rescore the quiz, whether or not anyone has taken it.
+- Deleting a quiz's assignment, or its assignment group, deletes the quiz. Changing points through the assignment never sets the quiz to the points you sent. On a published quiz, Canvas reverts the change. On an unpublished one, the assignment shows the new points until the quiz is published, and publishing through the assignment keeps the two different. If that quiz has question changes not yet saved by a re-save, Canvas also recomputes the quiz's points from its questions (seen live: pushed 77, quiz became 8), yet `cass push` reports success. Set points on the quiz itself.
 - An attempt with essay questions ends in `pending_review`, not `complete`. Count both as finished.
 - When a course concludes, Canvas force-submits attempts that were opened but never submitted, and stamps them with the term end date. `auto_submitted` in the responses CSV flags these, but it also flags attempts that ran out of time, which hold real answers. An auto-submitted attempt stamped at the term end is the conclusion case. Don't read those as submissions made on that date.
 - `started_at` and `auto_submitted` cover only each student's latest attempt.
 
 ## Enrollments and submissions
 
+- Without `enrollment_state[]`, Canvas's user list holds active and invited people only. cass names those two states whenever it reads the current students.
 - Canvas fills in a new student's due dates a few moments after they enroll, so `--enrolled-after` may miss a student added minutes ago.
 - Canvas creates a new assignment's submissions a few seconds after the assignment. Until then `submissions list`, `excuse` and `clear-late` find no submissions, so wait a few seconds after creating an assignment before using them.
 - When a student resubmits, Canvas resets the late status, so a late resubmission is late again. If they resubmitted after grading, the deduction stays until the submission is regraded.

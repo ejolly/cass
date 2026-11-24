@@ -10,7 +10,7 @@ cass canvas people list --state completed --state inactive
 ```
 
 - `enrolled at` is the earliest `created_at` across a person's enrollments, deleted ones included. A bare date means midnight in course time.
-- `--enrolled-after` keeps people of any role. `--state` can be repeated, and it defaults to active and invited.
+- `--enrolled-after` keeps people of any role. `--state` takes `active`, `invited`, `inactive` or `completed`, can be repeated, and defaults to active and invited.
 
 ## Excuse or clear late
 
