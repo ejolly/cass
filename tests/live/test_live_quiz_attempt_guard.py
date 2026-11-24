@@ -20,6 +20,7 @@ from typer.testing import CliRunner
 
 from cass.actions.config import get_config
 from cass.actions.quizzes import count_finished_attempts, load_quiz_file
+from cass.apis.canvas.attempts import FINISHED_ATTEMPT_STATES
 from cass.apis.canvas.client import CanvasClient
 from cass.apis.canvas.schema import CanvasStudentResponse
 from cass.cli import app
@@ -33,10 +34,10 @@ def test_test_student_attempt_does_not_count(practice: CanvasClient):
     finished = [
         s
         for s in practice.list_quiz_submissions(quiz.id)
-        if s.user_id == student_id
-        and s.workflow_state in ("complete", "pending_review")
+        if s.user_id == student_id and s.workflow_state in FINISHED_ATTEMPT_STATES
     ]
     assert finished, "seed-live should leave a finished Test Student attempt"
+    assert practice.count_quiz_takers(quiz.id) == 0
     assert count_finished_attempts(practice, quiz.id) == 0
 
 
@@ -87,6 +88,30 @@ def test_retake_in_progress_still_refuses(
         assert "won't delete it" in str(result.exception)
     finally:
         practice.delete_quiz(quiz.id)
+
+
+def _count_current_finishers(client: CanvasClient, quiz_id: int) -> int:
+    """Number of current students whose latest attempt is finished."""
+    student_ids = {s.id for s in client.list_students()}
+    return sum(
+        1
+        for s in client.list_quiz_submissions(quiz_id)
+        if s.user_id in student_ids and s.workflow_state in FINISHED_ATTEMPT_STATES
+    )
+
+
+def test_takers_at_least_current_attempts(real_course: CanvasClient):
+    """Statistics never count fewer students than the submissions list."""
+    attempted_quizzes = 0
+    undercounted_quizzes = 0
+    for quiz in real_course.list_quizzes():
+        current = _count_current_finishers(real_course, quiz.id)
+        takers = real_course.count_quiz_takers(quiz.id)
+        attempted_quizzes += current > 0
+        undercounted_quizzes += takers < current
+    assert undercounted_quizzes == 0
+    if attempted_quizzes == 0:
+        pytest.skip("The real course has no quiz with finished student attempts")
 
 
 def test_real_quiz_with_attempts_refuses_delete(

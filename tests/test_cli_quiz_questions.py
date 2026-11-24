@@ -97,6 +97,9 @@ def canvas(tmp_path, monkeypatch) -> FakeCanvas:
             f"{QUIZ_PATH}/questions": QUESTIONS,
             f"{QUIZ_PATH}/groups/5": {"id": 5, "name": "Pair", "pick_count": 1},
             f"{QUIZ_PATH}/submissions": {"quiz_submissions": []},
+            f"{QUIZ_PATH}/statistics": {
+                "quiz_statistics": [{"submission_statistics": {"unique_count": 0}}]
+            },
             "/courses/1/users": [],
         }
     )
@@ -530,6 +533,28 @@ def test_delete_refused_after_student_attempt(canvas):
 
     assert result.exit_code == 1, result.output
     assert "won't delete it" in str(result.exception)
+    assert canvas.writes == []
+
+
+def test_delete_refused_after_concluded_student_attempt(canvas):
+    canvas.routes[f"{QUIZ_PATH}/statistics"] = {
+        "quiz_statistics": [{"submission_statistics": {"unique_count": 1}}]
+    }
+
+    result = runner.invoke(app, ["canvas", "quizzes", "delete", "20", "--yes"])
+
+    assert result.exit_code == 1, result.output
+    assert "won't delete it" in str(result.exception)
+    assert canvas.writes == []
+
+
+def test_delete_refused_when_statistics_fail(canvas):
+    canvas.routes[f"{QUIZ_PATH}/statistics"] = httpx.Response(403, json={})
+
+    result = runner.invoke(app, ["canvas", "quizzes", "delete", "20", "--yes"])
+
+    assert result.exit_code == 1, result.output
+    assert isinstance(result.exception, httpx.HTTPStatusError)
     assert canvas.writes == []
 
 

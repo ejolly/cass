@@ -19,6 +19,8 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
+from ..apis.canvas.attempts import FINISHED_ATTEMPT_STATES
+
 if TYPE_CHECKING:
     from ..apis.canvas.client import CanvasClient
     from ..apis.canvas.schema import CanvasQuiz, CanvasQuizSubmission
@@ -42,7 +44,6 @@ RESPONSE_COLUMNS = (
 )
 
 _QUESTION_RE = re.compile(r"^(\d+): (.*)$", re.DOTALL)
-_FINISHED_STATES = ("complete", "pending_review")
 
 
 @dataclass
@@ -173,7 +174,7 @@ def add_timing(
     for r in responses:
         sub = latest.get(r.user_id) if r.user_id is not None else None
         if r.attempt is None and sub:
-            if sub.workflow_state in _FINISHED_STATES:
+            if sub.workflow_state in FINISHED_ATTEMPT_STATES:
                 r.attempt = sub.attempt
             elif sub.attempt and sub.attempt > 1:
                 r.attempt = sub.attempt - 1

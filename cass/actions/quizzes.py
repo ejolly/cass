@@ -17,6 +17,13 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ..apis.canvas.attempts import (  # noqa: F401 - re-exported
+    FINISHED_ATTEMPT_STATES,
+    QuizHasAttemptsError,
+    count_finished_attempts,
+    has_finished_attempt,
+    refuse_if_attempted,
+)
 from ..apis.canvas.times import format_when, parse_when, same_instant
 from .config import format_toml_value
 
@@ -28,7 +35,6 @@ if TYPE_CHECKING:
         CanvasQuiz,
         CanvasQuizGroup,
         CanvasQuizQuestion,
-        CanvasQuizSubmission,
     )
 
 QUIZ_TYPES = ("practice_quiz", "assignment", "graded_survey", "survey")
@@ -618,71 +624,6 @@ SCORING_SETTINGS = frozenset(
     {"quiz_type", "points_possible", "allowed_attempts", "scoring_policy"}
 )
 """Quiz settings that change how existing attempts are scored (commitment C2)."""
-
-
-class QuizHasAttemptsError(RuntimeError):
-    """A change cass refuses because students have finished the quiz (C2)."""
-
-    def __init__(self, title: str, attempts: int, change: str) -> None:
-        super().__init__(
-            f"Quiz {title!r} has {attempts} finished student attempt(s), so cass "
-            f"won't {change}. Make this change in the Canvas web app, which "
-            "handles regrading existing attempts."
-        )
-        self.attempts = attempts
-
-
-FINISHED_ATTEMPT_STATES = ("complete", "pending_review")
-
-
-def has_finished_attempt(submission: CanvasQuizSubmission) -> bool:
-    """Return whether a student has finished at least one attempt.
-
-    Canvas lists only each student's latest attempt and sets it back to
-    ``untaken`` when a retake starts, so a later attempt number also means an
-    earlier attempt is finished.
-    """
-    return (
-        submission.workflow_state in FINISHED_ATTEMPT_STATES
-        or (submission.attempt or 0) > 1
-    )
-
-
-def count_finished_attempts(client: CanvasClient, quiz_id: int) -> int:
-    """Count students with a finished attempt on a quiz, including mid-retake.
-
-    Only students on the roster count, so teacher previews and the Test
-    Student never do.
-    """
-    student_ids = {s.id for s in client.list_students()}
-    return sum(
-        1
-        for sub in client.list_quiz_submissions(quiz_id)
-        if sub.user_id in student_ids and has_finished_attempt(sub)
-    )
-
-
-def refuse_if_attempted(
-    client: CanvasClient,
-    quiz: CanvasQuiz,
-    change: str,
-    *,
-    attempts: int | None = None,
-) -> None:
-    """Raise if students have finished the quiz.
-
-    Args:
-        client: Canvas client; only reads.
-        quiz: The quiz about to change.
-        change: What cass was about to do, e.g. ``"delete it"``.
-        attempts: A count already fetched; otherwise it is fetched.
-
-    Raises:
-        QuizHasAttemptsError: At least one finished student attempt exists.
-    """
-    count = count_finished_attempts(client, quiz.id) if attempts is None else attempts
-    if count > 0:
-        raise QuizHasAttemptsError(quiz.title, count, change)
 
 
 def scoring_changes(changes: dict[str, object]) -> list[str]:

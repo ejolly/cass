@@ -17,6 +17,7 @@ from cass.actions.quizzes import (
     QuizSpec,
     QuizState,
     canvas_layout,
+    count_finished_attempts,
     dump_quiz_file,
     fetch_quiz_state,
     file_layout,
@@ -470,6 +471,7 @@ class TestSyncQuizzes:
         )
         client = MagicMock()
         client.list_quizzes.return_value = [live]
+        client.count_quiz_takers.return_value = 0
         specs = [
             QuizSpec(title="New", quiz_type="survey", group="Participation"),
             QuizSpec(title="Existing", quiz_type="survey", attempts=2),
@@ -705,6 +707,7 @@ class TestQuizState:
         client.list_students.return_value = [
             CanvasStudentResponse(id=i, name=f"S{i}") for i in (1, 2, 3)
         ]
+        client.count_quiz_takers.return_value = 0
         state = fetch_quiz_state(client, 20, include_submissions=True)
         assert state.student_attempts == 2
 
@@ -712,6 +715,7 @@ class TestQuizState:
         fetch_quiz_state(plain, 20)
         plain.list_quiz_submissions.assert_not_called()
         plain.list_students.assert_not_called()
+        plain.count_quiz_takers.assert_not_called()
 
 
 class TestQuizAttemptGuard:
@@ -725,6 +729,7 @@ class TestQuizAttemptGuard:
         client.list_quiz_submissions.return_value = [
             CanvasQuizSubmission(id=1, user_id=1, workflow_state="complete")
         ]
+        client.count_quiz_takers.return_value = 0
         return client
 
     def test_sync_refuses_scoring_but_sends_other_changes(self):
@@ -767,13 +772,48 @@ class TestQuizAttemptGuard:
         ],
     )
     def test_count_finished_attempts(self, state, attempt, expected):
-        from cass.actions.quizzes import count_finished_attempts
-
         client = self.attempted_client(CanvasQuiz(id=1, title="Quiz 1"))
         client.list_quiz_submissions.return_value = [
             CanvasQuizSubmission(id=1, user_id=1, attempt=attempt, workflow_state=state)
         ]
         assert count_finished_attempts(client, 1) == expected
+
+    def test_concluded_student_attempt_counts(self):
+        """Canvas lists only current students' attempts; statistics list more."""
+        client = self.attempted_client(CanvasQuiz(id=1, title="Quiz 1"))
+        client.list_quiz_submissions.return_value = []
+        client.count_quiz_takers.return_value = 1
+
+        assert count_finished_attempts(client, 1) == 1
+        client.count_quiz_takers.assert_called_once_with(1)
+
+    def test_retake_in_progress_still_counts(self):
+        """Statistics may leave out a student whose retake is under way."""
+        client = self.attempted_client(CanvasQuiz(id=1, title="Quiz 1"))
+        client.list_quiz_submissions.return_value = [
+            CanvasQuizSubmission(id=1, user_id=1, attempt=2, workflow_state="untaken")
+        ]
+        client.count_quiz_takers.return_value = 0
+
+        assert count_finished_attempts(client, 1) == 1
+
+    def test_statistics_error_refuses(self):
+        live = CanvasQuiz(
+            id=1, title="Existing", quiz_type="survey", allowed_attempts=1
+        )
+        client = self.attempted_client(live)
+        client.list_quiz_submissions.return_value = []
+        client.count_quiz_takers.side_effect = RuntimeError("statistics down")
+
+        with pytest.raises(RuntimeError, match="statistics down"):
+            sync_quizzes(
+                client,
+                [QuizSpec(title="Existing", quiz_type="survey", attempts=2)],
+                {},
+                LA,
+            )
+
+        client.update_quiz.assert_not_called()
 
     def test_refuse_if_attempted(self):
         from cass.actions.quizzes import QuizHasAttemptsError, refuse_if_attempted

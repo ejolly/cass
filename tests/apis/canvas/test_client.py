@@ -1058,6 +1058,37 @@ class TestCanvasClient:
         with pytest.raises(httpx.HTTPStatusError):
             client.list_quiz_questions(20)
 
+    @pytest.mark.parametrize(
+        ("statistics", "expected"),
+        [([{"submission_statistics": {"unique_count": 3}}], 3), ([], 0)],
+    )
+    def test_count_quiz_takers(self, mock_client, statistics, expected):
+        client, transport = mock_client
+        transport.add(json_data={"quiz_statistics": statistics})
+        assert client.count_quiz_takers(20) == expected
+        assert transport.requests[0].url.path.endswith("/quizzes/20/statistics")
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            {},
+            {"quiz_statistics": [{}]},
+            {"quiz_statistics": [{"submission_statistics": {"unique_count": None}}]},
+        ],
+    )
+    def test_count_quiz_takers_rejects_missing_count(self, mock_client, body):
+        # Reading an unknown count as 0 would allow changes to an attempted quiz
+        client, transport = mock_client
+        transport.add(json_data=body)
+        with pytest.raises(msgspec.ValidationError):
+            client.count_quiz_takers(20)
+
+    def test_count_quiz_takers_raises_http_errors(self, mock_client):
+        client, transport = mock_client
+        transport.add(403, json_data={})
+        with pytest.raises(httpx.HTTPStatusError):
+            client.count_quiz_takers(20)
+
     def test_create_quiz_report_requests_student_analysis(self, mock_client):
         client, transport = mock_client
         transport.add(json_data={"id": 5, "report_type": "student_analysis"})

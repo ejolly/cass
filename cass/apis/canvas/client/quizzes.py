@@ -408,6 +408,24 @@ class QuizzesMixin(BaseClient):
         pages = msgspec.convert(data, list[_QuizSubmissionsPage], strict=False)
         return [sub for page in pages for sub in page.quiz_submissions]
 
+    def count_quiz_takers(self, quiz_id: int) -> int:
+        """Count students with a finished attempt, from quiz statistics.
+
+        Covers current, concluded and inactive students; Canvas leaves out the
+        Test Student and students whose enrollment was deleted.
+
+        Returns:
+            Statistics ``unique_count``; 0 when Canvas has no statistics entry.
+
+        Raises:
+            msgspec.ValidationError: Canvas returned no count.
+        """
+        resp = self._client.get(self._course(f"/quizzes/{quiz_id}/statistics"))
+        page = msgspec.convert(resp.json(), _QuizStatisticsPage, strict=False)
+        if not page.quiz_statistics:
+            return 0
+        return page.quiz_statistics[0].submission_statistics.unique_count
+
     def start_quiz_preview(self, quiz_id: int) -> CanvasQuizSubmission:
         """Start a teacher preview attempt on a quiz.
 
@@ -464,6 +482,22 @@ class _QuizSubmissionsPage(msgspec.Struct):
     """``/quizzes/:id/submissions`` wraps each page in an envelope."""
 
     quiz_submissions: list[CanvasQuizSubmission] = []
+
+
+class _SubmissionStatistics(msgspec.Struct):
+    """Attempt counts in quiz statistics; required, so a missing count raises."""
+
+    unique_count: int
+
+
+class _QuizStatistics(msgspec.Struct):
+    submission_statistics: _SubmissionStatistics
+
+
+class _QuizStatisticsPage(msgspec.Struct):
+    """``/quizzes/:id/statistics`` wraps its entry in an envelope."""
+
+    quiz_statistics: list[_QuizStatistics]
 
 
 class _SubmissionQuestionsPage(msgspec.Struct):
