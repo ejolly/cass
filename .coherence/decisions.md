@@ -9,3 +9,4 @@ Complete index of accepted consequential design choices. Each file under `decisi
 | 0003 | [An omitted setting leaves the live value alone](decisions/0003-omitted-settings-leave-live-values.md) | 2026-10-12 | Declaration files send only what they set. |
 | 0004 | [A grade with an unknown baseline is kept as a conflict](decisions/0004-unknown-grade-baselines.md) | 2026-11-23 | Non-blank local grades are kept and need approval; blank ones take Canvas's value. |
 | 0005 | [Grades Canvas may not record as entered are held back](decisions/0005-hold-back-misrecorded-grades.md) | 2026-11-23 | Push checks each grade against the live grading type; letters need a scheme on the assignment or course. |
+| 0006 | [Push releases grades only with separate approval](decisions/0006-release-grades-with-approval.md) | 2026-11-23 | Manual-post assignments only; `--yes` is not that approval. |

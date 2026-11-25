@@ -32,9 +32,11 @@ the score, the number of points Canvas computes from the grade.
 
 ## Pending change
 
-A local edit to a grade or an assignment field in `cass.db` that differs from
-the value Canvas had at the last pull. Pending changes survive restarts, block
-the next pull, and leave cass only through push or revert.
+A local grade or assignment field in `cass.db` that differs from the value
+Canvas had at the last pull, or a non-blank grade whose value at the last pull
+is unknown ([0004](decisions/0004-unknown-grade-baselines.md)). Pending changes
+survive restarts and block the next pull. They end when pushed, reverted, edited
+back to the last pulled value, or deleted with their assignment.
 
 ## Visible to students
 

@@ -15,15 +15,18 @@ A grade whose Canvas value at the last pull is unknown has no row in the
 [0001](0001-pending-changes-as-shadow-diff.md). If it is not blank, it is a
 [pending change](../domain.md#pending-change) and always a conflict. The first
 full pull after the upgrade keeps every differing local grade this way. A blank
-one is not pending, and the next pull replaces it with Canvas's value.
+one is not pending, and the next pull replaces it with Canvas's value. A pull
+counts as full only when Canvas returns both students and assignments.
 
 ## Rationale and trade-offs
 No local grade is overwritten silently, and none replaces a grade on Canvas
 without approval ([C1](../commitments.md#c1)). A blank is not pushed, because it
 may be an absent value rather than a request to remove a grade. The accepted
-costs are that a kept grade blocks the next pull until it is pushed or reverted,
-and that clearing a kept grade takes effect only if it is repeated after the
-next pull and pushed.
+costs are that a kept grade blocks the next pull until it is pushed or reverted;
+that a kept grade Canvas lists no submission for, such as one of a departed
+student or on a deleted assignment, cannot be pushed and is lost on revert; and
+that clearing a kept grade takes effect only if it is repeated after the next
+pull and pushed.
 
 ## Alternatives
 Treating a blank with an unknown baseline as a pending clear, which would

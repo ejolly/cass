@@ -12,10 +12,11 @@ preview wrapper, because agents need to show the instructor a plan before
 changing a live course.
 
 ## Decision
-Every command that writes to Canvas accepts `--dry-run`, which prints the exact
-requests and sends nothing. Multi-step reconcile commands default to a dry run
-and need `--apply`. Deletes need `--yes` and fail fast without it in a
-non-interactive shell. The dry run is implemented once, in the Canvas client.
+Every command that writes to Canvas accepts `--dry-run`, which sends nothing and
+prints the exact requests; `cass push --dry-run` prints a comparison with Canvas
+instead. Multi-step reconcile commands default to a dry run and need `--apply`.
+Deletes need `--yes` and fail fast without it in a non-interactive shell. The
+dry run is implemented once, in the Canvas client.
 
 ## Rationale and trade-offs
 One convention lets a person or agent review every change before it reaches

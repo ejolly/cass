@@ -24,6 +24,10 @@ For this commitment, attempts by people whose student enrollment is concluded or
 inactive also count. Attempts by people whose enrollment was deleted do not,
 because Canvas does not report them.
 
+cass also refuses when it cannot tell whether a quiz has finished attempts. The
+same rule applies to deleting the quiz's assignment or an assignment group that
+holds it.
+
 Exception: `cass canvas api` sends the request the user wrote, for scripting, and
 does not check for attempts.
 
@@ -42,6 +46,9 @@ A pull of grades or a download of quiz responses must include every enrolled
 [student](domain.md#student)'s current grades and [finished attempts](domain.md#finished-attempt), or tell the user exactly what it
 left out. Grading decisions made from silently incomplete or mismatched data are
 wrong in ways no one notices.
+
+Scope: completeness of quiz responses is checked per current student, not per
+attempt; anonymous surveys are checked by count.
 
 ## C5. Nothing becomes visible to students unless the user asked {#c5}
 
