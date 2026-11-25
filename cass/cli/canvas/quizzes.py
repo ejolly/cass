@@ -280,11 +280,17 @@ def quizzes_responses(
 
     Times are in the course time zone. started_at and auto_submitted describe
     only each student's latest attempt, so they are blank while a newer attempt
-    is open.
+    is open. A warning on stderr gives the user IDs of current students with a
+    finished attempt who are not in Canvas's report, or says that could not be
+    checked.
     """
     from pathlib import Path
 
-    from ...actions.quiz_responses import RESPONSE_COLUMNS, fetch_quiz_responses
+    from ...actions.quiz_responses import (
+        RESPONSE_COLUMNS,
+        fetch_quiz_report,
+        fetch_quiz_responses,
+    )
     from .. import report
 
     _common.require_canvas()
@@ -292,9 +298,15 @@ def quizzes_responses(
         q = c.resolve_quiz(id_or_name)
         with err_console.status(f"Generating the Canvas report for {q.title}…"):
             if wide:
-                text = c.download_quiz_report(q.id, all_versions=all_attempts)
+                wide_report = fetch_quiz_report(c, q, all_attempts=all_attempts)
+                text, warnings = wide_report.text, wide_report.warnings
             else:
-                responses = fetch_quiz_responses(c, q, all_attempts=all_attempts)
+                result = fetch_quiz_responses(c, q, all_attempts=all_attempts)
+                responses, warnings = result.responses, result.warnings
+
+    # Before the output, so a closed pipe or failed write can't hide them.
+    for warning in warnings:
+        err_console.print(f"[yellow]Warning:[/yellow] {warning}", soft_wrap=True)
 
     if wide:
         if csv_out:

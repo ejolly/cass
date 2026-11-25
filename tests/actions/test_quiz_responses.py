@@ -6,15 +6,22 @@ __docformat__ = "google"
 
 from unittest.mock import MagicMock
 
+import httpx
+import pytest
+
 from cass.actions.quiz_responses import (
     RESPONSE_COLUMNS,
     add_timing,
+    fetch_quiz_report,
     fetch_quiz_responses,
+    missing_responders,
     parse_student_analysis,
 )
+from cass.apis.canvas.auth import CanvasAuthError
 from cass.apis.canvas.schema import (
     CanvasQuiz,
     CanvasQuizSubmission,
+    CanvasStudentResponse,
     CanvasSubmissionResponse,
 )
 
@@ -225,7 +232,7 @@ class TestFetchQuizResponses:
     def test_graded_quiz_uses_assignment_due_dates(self):
         client = self._client()
         quiz = CanvasQuiz(id=20, title="S", assignment_id=30, due_at=None)
-        responses = fetch_quiz_responses(client, quiz, all_attempts=True)
+        responses = fetch_quiz_responses(client, quiz, all_attempts=True).responses
         client.download_quiz_report.assert_called_once_with(20, all_versions=True)
         client.list_submissions.assert_called_once_with(30)
         assert responses[0].due_at == "2026-09-26T02:00:00Z"
@@ -234,7 +241,169 @@ class TestFetchQuizResponses:
     def test_ungraded_survey_uses_quiz_due_date(self):
         client = self._client()
         quiz = CanvasQuiz(id=20, title="S", due_at="2026-09-25T00:00:00Z")
-        responses = fetch_quiz_responses(client, quiz)
+        responses = fetch_quiz_responses(client, quiz).responses
         client.list_submissions.assert_not_called()
         assert responses[0].due_at == "2026-09-25T00:00:00Z"
         assert responses[0].late is True
+
+
+ANONYMOUS_REPORT = """\
+section,section_id,section_sis_id,submitted,101: Q1,0.0,n correct,n incorrect,score
+Sec A,5,,2026-09-25 23:30:00 UTC,yes,0.0,0,0,0.0
+Sec A,5,,2026-09-26 01:00:00 UTC,no,0.0,0,0,0.0
+"""
+
+ANONYMOUS_ALL_VERSIONS_REPORT = """\
+section,submitted,attempt,101: Q1,0.0
+Sec A,2026-09-25 23:30:00 UTC,1,yes,0.0
+Sec A,2026-09-26 01:00:00 UTC,2,no,0.0
+"""
+
+# A quiz with no questions still has a row per student.
+QUESTIONLESS_REPORT = """\
+name,id,sis_id,section,submitted,n correct,n incorrect,score
+Alice Smith,11,A1,Sec A,2026-09-25 23:30:00 UTC,0,0,0.0
+"""
+
+TEST_STUDENT_ID = 99
+
+
+class TestMissingResponders:
+    """C4: students with a finished attempt but no row in Canvas's report."""
+
+    def test_missing_responder_listed(self):
+        responses = parse_student_analysis(LATEST_REPORT)
+        subs = [_sub(14, 1), _sub(13, 1, workflow_state="pending_review"), _sub(11, 1)]
+        assert missing_responders(responses, subs, {11, 12, 13, 14}) == [13, 14]
+
+    def test_test_student_not_listed(self):
+        subs = [_sub(TEST_STUDENT_ID, 2), _sub(98, 1)]
+        assert missing_responders([], subs, {11, 12}) == []
+
+    def test_unfinished_attempts_not_listed(self):
+        subs = [
+            _sub(11, 1, workflow_state="untaken"),
+            _sub(12, None, workflow_state="settings_only"),
+        ]
+        assert missing_responders([], subs, {11, 12}) == []
+
+    def test_student_mid_retake_listed(self):
+        subs = [_sub(11, 2, workflow_state="untaken")]
+        assert missing_responders([], subs, {11}) == [11]
+
+
+def _report_client(report, finished, *, roster=(11, 12, 13)):
+    """Client whose students in ``finished`` have each finished an attempt."""
+    client = MagicMock()
+    client.time_zone = "UTC"
+    client.download_quiz_report.return_value = report
+    client.list_students.return_value = [
+        CanvasStudentResponse(id=i, name=f"S{i}") for i in roster
+    ]
+    client.list_quiz_submissions.return_value = [_sub(i, 1) for i in finished]
+    return client
+
+
+SURVEY = CanvasQuiz(id=20, title="S")
+
+
+class TestReportWarnings:
+    def _warnings(self, *args, all_attempts=False, **kw):
+        client = _report_client(*args, **kw)
+        return fetch_quiz_report(client, SURVEY, all_attempts=all_attempts).warnings
+
+    def test_complete_report_has_no_warning(self):
+        assert self._warnings(LATEST_REPORT, [11, 12, TEST_STUDENT_ID]) == []
+
+    def test_missing_student_named(self):
+        (warning,) = self._warnings(LATEST_REPORT, [11, 12, 13])
+        assert "1 student(s)" in warning
+        assert "user IDs: 13" in warning
+
+    def test_all_attempts_report_compares_students(self):
+        (warning,) = self._warnings(ALL_VERSIONS_REPORT, [11, 12], all_attempts=True)
+        assert warning.endswith("user IDs: 12.")
+
+    def test_questionless_report_uses_its_rows(self):
+        assert self._warnings(QUESTIONLESS_REPORT, [11]) == []
+
+    def test_empty_report_names_everyone(self):
+        header = LATEST_REPORT.split("Alice")[0]
+        (warning,) = self._warnings(header, [11, 12])
+        assert "user IDs: 11, 12." in warning
+
+    def test_row_without_id_may_be_a_missing_student(self):
+        report = LATEST_REPORT + ",,,Sec A,5,,,x,0.0,A,0.0,0,0,0.0\n"
+        (warning,) = self._warnings(report, [13])
+        assert "user IDs: 13." in warning
+        assert "1 row(s) have no user ID" in warning
+
+    def test_anonymous_report_says_unchecked(self):
+        """All attempts without user IDs: rows can't be counted as students."""
+        (warning,) = self._warnings(
+            ANONYMOUS_ALL_VERSIONS_REPORT, [11, 12], all_attempts=True
+        )
+        assert "could not check" in warning
+        assert "no user IDs" in warning
+
+    def test_anonymous_report_with_extra_rows_says_unchecked(self):
+        """Rows from former students could hide a current student's omission."""
+        (warning,) = self._warnings(ANONYMOUS_REPORT, [11])
+        assert "could not check" in warning
+
+    def test_anonymous_report_compares_counts(self):
+        assert self._warnings(ANONYMOUS_REPORT, [11, 12]) == []
+        (warning,) = self._warnings(ANONYMOUS_REPORT, [11, 12, 13])
+        assert "at least 1 student(s)" in warning
+        assert "13" not in warning
+
+    def test_empty_roster_says_unchecked(self):
+        """A concluded course lists no current students to compare."""
+        (warning,) = self._warnings(LATEST_REPORT, [], roster=())
+        assert "could not check" in warning
+        assert "no current students" in warning
+
+    def test_list_read_before_report_is_requested(self):
+        """A student who finishes while Canvas builds the report isn't missing."""
+        client = _report_client(LATEST_REPORT, [11, 12])
+
+        def download(*args, **kw):
+            client.list_quiz_submissions.return_value = [_sub(13, 1)]
+            return LATEST_REPORT
+
+        client.download_quiz_report.side_effect = download
+        assert fetch_quiz_report(client, SURVEY).warnings == []
+
+    @pytest.mark.parametrize("method", ["list_students", "list_quiz_submissions"])
+    @pytest.mark.parametrize(
+        "error",
+        [
+            httpx.ConnectError("secret detail"),
+            CanvasAuthError("secret detail"),
+            ValueError("secret detail"),
+        ],
+    )
+    def test_failed_check_keeps_report(self, method, error):
+        client = _report_client(LATEST_REPORT, [11, 12])
+        getattr(client, method).side_effect = error
+        report = fetch_quiz_report(client, SURVEY)
+        assert report.text == LATEST_REPORT
+        (warning,) = report.warnings
+        assert "could not check" in warning
+        assert "secret detail" not in warning
+
+    @pytest.mark.parametrize("all_attempts", [False, True])
+    def test_failed_submissions_list_keeps_responses(self, all_attempts):
+        client = _report_client(LATEST_REPORT, [])
+        client.list_quiz_submissions.side_effect = httpx.ConnectError("down")
+        result = fetch_quiz_responses(client, SURVEY, all_attempts=all_attempts)
+        assert len(result.responses) == 4
+        unchecked, blank = result.warnings
+        assert "could not check" in unchecked
+        assert "started_at and auto_submitted are blank" in blank
+        assert ("attempt," in blank) is not all_attempts
+
+    def test_responses_carry_report_warnings(self):
+        client = _report_client(LATEST_REPORT, [13])
+        (warning,) = fetch_quiz_responses(client, SURVEY).warnings
+        assert "user IDs: 13." in warning

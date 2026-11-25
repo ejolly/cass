@@ -12,6 +12,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import httpx
 import pytest
 import sqlite_utils
 import typer.main
@@ -1313,7 +1314,6 @@ class TestCanvasQuizzes:
         result = runner.invoke(app, ["canvas", "quizzes", "responses", "20", "--wide"])
         assert result.exit_code == 0, result.output
         assert result.stdout.endswith(self._REPORT)
-        quiz_client.list_quiz_submissions.assert_not_called()
 
     def test_responses_wide_to_csv(self, quiz_client, tmp_path):
         quiz_client.download_quiz_report.return_value = self._REPORT
@@ -1323,6 +1323,42 @@ class TestCanvasQuizzes:
         )
         assert result.exit_code == 0, result.output
         assert out.read_text() == self._REPORT
+
+    @pytest.mark.parametrize("to_csv", [False, True])
+    @pytest.mark.parametrize("flags", [[], ["--all-attempts"], ["--wide"]])
+    @pytest.mark.parametrize("failing", [False, True])
+    def test_responses_warn_on_stderr_only(
+        self, quiz_client, tmp_path, monkeypatch, flags, to_csv, failing
+    ):
+        """C4: omissions and failed checks never change stdout or the exit code."""
+        from cass.apis.canvas.schema import CanvasQuizSubmission, CanvasStudentResponse
+
+        monkeypatch.chdir(tmp_path)
+        quiz_client.download_quiz_report.return_value = self._REPORT
+        quiz_client.list_students.return_value = [
+            CanvasStudentResponse(id=i, name=f"S{i}") for i in (11, 12)
+        ]
+        quiz_client.list_quiz_submissions.return_value = []
+        command = ["canvas", "quizzes", "responses", "20", *flags]
+        command += ["--csv", "out.csv"] if to_csv else []
+        before = runner.invoke(app, command)
+        assert before.stderr == ""
+
+        if failing:
+            quiz_client.list_students.side_effect = httpx.ConnectError("down")
+        else:
+            quiz_client.list_quiz_submissions.return_value = [
+                CanvasQuizSubmission(
+                    id=2, user_id=12, attempt=1, workflow_state="complete"
+                )
+            ]
+        result = runner.invoke(app, command)
+        assert result.exit_code == 0, result.output
+        assert result.stdout == before.stdout
+        expected = "could not check" if failing else "user IDs: 12."
+        assert result.stderr.startswith("Warning: ")
+        assert expected in result.stderr
+        assert (tmp_path / "out.csv").exists() is to_csv
 
 
 class TestCanvasSync:
