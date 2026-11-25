@@ -284,6 +284,7 @@ class TestPullGrades:
         assert "5" in notice
         assert "cass push" in notice
         assert "cass revert" in notice
+        assert "discards the local grade" in notice
         assert stored_grades(db_conn) == ("9", None)
         assert db.pull_block_reason(db_conn) is not None
         assert db.get_meta("grade_baselines") == "1"

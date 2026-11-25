@@ -131,7 +131,8 @@ def _kept_grade_notice(
     on_canvas = f"has {canvas_grade}" if canvas_grade else "has no grade"
     return (
         f"{name}: kept your local grade, but Canvas {on_canvas}. "
-        "Push or revert it with `cass push` or `cass revert`."
+        "Push it with `cass push`, or revert it with `cass revert`, which discards "
+        "the local grade."
     )
 
 

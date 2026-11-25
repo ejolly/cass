@@ -107,8 +107,8 @@ def revert_changes(
 ) -> int:
     """Revert all pending changes in the DB by restoring baseline values.
 
-    A grade whose baseline is unknown (None) is removed; the next pull restores
-    the Canvas value.
+    A grade whose baseline is unknown (None) is deleted. The next pull stores
+    Canvas's grade if it lists one, never the local one.
 
     Returns:
         Number of field changes reverted.
