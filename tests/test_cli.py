@@ -2300,6 +2300,62 @@ class TestPushHoldsBackUnapproved:
         apply_mock.assert_called_once()
 
 
+class TestPendingTables:
+    """The push preview, status and revert tables print values as they are."""
+
+    @pytest.fixture
+    def bracketed(self, project_dir, monkeypatch):
+        """A renamed assignment and a grade with an unknown baseline."""
+        monkeypatch.chdir(project_dir)
+        sdb = sqlite_utils.Database(str(project_dir / "cass.db"))
+        db.init_schema(sdb)
+        monkeypatch.setattr("cass.db.core._db", sdb)
+        monkeypatch.setattr("cass.db.core._db_path", None)
+        sdb["canvas_assignments"].insert(
+            {"canvas_id": 7, "name": "HW [/red]", "points_possible": 10, "published": 1}
+        )
+        db.snapshot_canvas_synced(sdb)
+        sdb.execute("UPDATE canvas_assignments SET name = 'Essay [/10]'")
+        db.upsert_canvas_grade(sdb, 1, 7, "[bold]9")
+
+    @pytest.mark.parametrize("command", ["status", "revert"])
+    def test_pending_summary(self, bracketed, command):
+        args = [command, "--yes"] if command == "revert" else [command]
+        result = runner.invoke(app, args)
+        assert result.exit_code == 0, result.output
+        for text in ("Essay [/10]", "HW [/red]", "[bold]9", "unknown"):
+            assert text in result.stdout
+        assert "None" not in result.stdout
+
+    def test_push_preview(self, bracketed, monkeypatch):
+        row = {
+            "table": "canvas_grades",
+            "canvas_assignment_id": 7,
+            "canvas_user_id": 1,
+            "name": "Ada — Essay [/10]",
+            "column": "posted_grade",
+            "baseline": None,
+            "current": "[bold]9",
+            "live": "[/8]",
+            "conflict": True,
+        }
+        error = {
+            "table": "canvas_assignments",
+            "canvas_id": 7,
+            "name": "X",
+            "error": "e",
+        }
+        monkeypatch.setattr(
+            "cass.db.canvas_preview",
+            lambda conn, pending: {"ok": True, "changes": [row, error]},
+        )
+        result = runner.invoke(app, ["push", "--dry-run"])
+        assert result.exit_code == 0, result.output
+        for text in ("Ada — Essay [/10]", "[bold]9", "[/8]", "unknown"):
+            assert text in result.stdout
+        assert "None" not in result.stdout
+
+
 class TestPushClearsGrades:
     """#22: a cleared grade reaches Canvas only after explicit approval."""
 
@@ -2439,6 +2495,16 @@ class TestPushReleasesGrades:
         assert graded.call_args.kwargs["preview"] is not None
         assert graded.call_args.kwargs["cover_policy_changes"] is False
         assert ("not released" in result.output) is not posts
+
+    def test_post_flag_shows_count_before_confirmation(self, graded, monkeypatch):
+        monkeypatch.setattr("cass.cli.prompts._stdin_is_tty", lambda: True)
+        result = runner.invoke(
+            app, ["push", "--post", "--allow-over-points"], input="n\n"
+        )
+        count = result.output.index("2 grade(s) will be released to students")
+        assert count < result.output.index("Push these changes")
+        assert "Release 2" not in result.output
+        graded.assert_not_called()
 
     def test_declined_push_sends_nothing(self, graded, monkeypatch):
         monkeypatch.setattr("cass.cli.prompts._stdin_is_tty", lambda: True)

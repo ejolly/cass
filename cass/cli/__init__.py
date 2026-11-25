@@ -74,11 +74,20 @@ def require_canvas() -> None:
         raise typer.Exit(code=1)
 
 
+def _baseline_text(table: str, baseline: object) -> str:
+    """Return a baseline as shown; only a grade's can be unknown (None)."""
+    if table == "canvas_grades" and baseline is None:
+        return "unknown"
+    return str(baseline)
+
+
 def _render_pending_summary(
     pending: dict[str, dict[str, dict[str, dict[str, object]]]],
     *,
     title: str,
 ) -> None:
+    from rich.markup import escape
+
     from ..actions.status import count_pending
 
     table = Table(title=title, show_edge=False, pad_edge=False)
@@ -92,11 +101,11 @@ def _render_pending_summary(
         for pk_key, columns in rows.items():
             for column, values in columns.items():
                 table.add_row(
-                    table_name,
-                    pk_key,
-                    column,
-                    str(values["baseline"]),
-                    str(values["current"]),
+                    escape(table_name),
+                    escape(pk_key),
+                    escape(column),
+                    escape(_baseline_text(table_name, values["baseline"])),
+                    escape(str(values["current"])),
                 )
 
     console.print()
@@ -105,6 +114,8 @@ def _render_pending_summary(
 
 
 def _render_push_preview(preview: dict[str, object]) -> None:
+    from rich.markup import escape
+
     changes_obj = preview.get("changes", [])
     if not isinstance(changes_obj, list):
         return
@@ -120,6 +131,7 @@ def _render_push_preview(preview: dict[str, object]) -> None:
     table.add_column("Status")
 
     for change in changes:
+        table_name = str(change.get("table", ""))
         status = "ok"
         if "error" in change:
             status = "error"
@@ -136,12 +148,12 @@ def _render_push_preview(preview: dict[str, object]) -> None:
         elif bool(change.get("over_points")):
             status = f"over {change.get('points_possible')} pts"
         table.add_row(
-            str(change.get("table", "")),
-            str(change.get("name", "")),
-            str(change.get("column", "")),
-            str(change.get("baseline", "")),
-            str(change.get("current", "")),
-            str(change.get("live", "")),
+            escape(table_name),
+            escape(str(change.get("name", ""))),
+            escape(str(change.get("column", ""))),
+            escape(_baseline_text(table_name, change.get("baseline", ""))),
+            escape(str(change.get("current", ""))),
+            escape(str(change.get("live", ""))),
             status,
         )
 
@@ -646,7 +658,7 @@ def push(
 
     for notice in db.release_notices(to_push, preview):
         err_console.print(notice, soft_wrap=True)
-    if n_postable and (dry_run or yes):
+    if n_postable and (dry_run or yes or post):
         verb = "would" if dry_run else "will"
         outcome = (
             "released to students"

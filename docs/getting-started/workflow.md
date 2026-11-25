@@ -34,7 +34,7 @@ cass push --post   # also release the pushed grades to students
 
 Three kinds of change are held back unless you approve them, and stay pending until you do:
 
-- **Conflicts:** values that changed on Canvas since your last pull, for example a grade a TA entered in SpeedGrader. A grade cass has no last pulled value for also counts, and is listed with its own reason. Pushing would overwrite them.
+- **Conflicts:** values that changed on Canvas since your last pull, for example a grade a TA entered in SpeedGrader. A grade cass has no last pulled value for also counts, with baseline `unknown` and its own reason. Pushing would overwrite them.
 - **Grades above points possible:** usually a typo, sometimes extra credit.
 - **Cleared grades:** a grade you deleted in a cell. Pushing it removes the grade on Canvas.
 
@@ -54,7 +54,7 @@ Sends every other pending change to Canvas. The viewer's **Push** button does th
 
 ### Releasing grades to students
 
-On an assignment that posts grades automatically, students see a grade as soon as you push it. On one that posts manually, pushed grades stay hidden until you release them. `cass push` asks whether to release the grades it is about to push, for those students only; the default is no. In the viewer, tick **Release N pushed grade(s) to students**. `--post` releases them without asking. `--yes` alone releases nothing, and `cass push --dry-run` shows how many grades would be pushed but not released.
+On an assignment that posts grades automatically, students see a grade as soon as you push it. On one that posts manually, pushed grades stay hidden until you release them. `cass push` asks whether to release the grades it is about to push, for those students only; the default is no. In the viewer, tick **Release N pushed grade(s) to students**. `--post` releases them without asking, after saying how many. `--yes` alone releases nothing, and `cass push --dry-run` shows how many grades would be pushed but not released.
 
 - A grade you push without releasing is released later in the Canvas gradebook. `--post` covers only grades in the same push.
 - Cleared and held-back grades are never released.
