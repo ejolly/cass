@@ -19,7 +19,7 @@
 | Grade above points possible | `--allow-over-points` |
 | Cleared grade (blank, `-` or `?`), which removes the grade on Canvas | `--allow-clears` |
 | Grade the assignment doesn't take (next table) | no flag; the user corrects it |
-| Could not be compared with Canvas, such as a student with no submission there, or edited after the preview | no flag |
+| Could not be compared with Canvas, such as a student with no submission there, or added after the preview | no flag |
 | Points of a quiz with finished or uncheckable attempts | no flag; the user changes them in the Canvas web app |
 
 | Grading type | Grades cass pushes |
