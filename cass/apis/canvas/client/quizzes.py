@@ -404,8 +404,14 @@ class QuizzesMixin(BaseClient):
 
         Returns:
             One quiz submission per student who opened the quiz.
+
+        Raises:
+            ValueError: Canvas returned a body that isn't JSON or has no pages.
+            msgspec.ValidationError: Canvas returned a page without the list.
         """
         data = self._get_paginated(self._course(f"/quizzes/{quiz_id}/submissions"))
+        if not data:
+            raise ValueError(f"Canvas returned no list of attempts for quiz {quiz_id}.")
         pages = msgspec.convert(data, list[_QuizSubmissionsPage], strict=False)
         return [sub for page in pages for sub in page.quiz_submissions]
 
@@ -457,12 +463,13 @@ class QuizzesMixin(BaseClient):
             self._course(f"/quizzes/{quiz_id}/submissions"),
             params={"preview": "true"},
         )
-        page = msgspec.convert(resp.json(), _QuizSubmissionsPage, strict=False)
-        if not page.quiz_submissions:
+        try:
+            page = msgspec.convert(resp.json(), _QuizSubmissionsPage, strict=False)
+            return page.quiz_submissions[0]
+        except (msgspec.ValidationError, IndexError):
             raise RuntimeError(
                 f"Canvas returned no preview submission for quiz {quiz_id}."
-            )
-        return page.quiz_submissions[0]
+            ) from None
 
     def list_submission_questions(self, submission_id: int) -> list[CanvasQuizQuestion]:
         """List the questions of one quiz submission in the order it was drawn."""
@@ -497,9 +504,13 @@ def _quiz_form(fields: dict[str, object]) -> dict[str, object]:
 
 
 class _QuizSubmissionsPage(msgspec.Struct):
-    """``/quizzes/:id/submissions`` wraps each page in an envelope."""
+    """``/quizzes/:id/submissions`` wraps each page in an envelope.
 
-    quiz_submissions: list[CanvasQuizSubmission] = []
+    The list is required, so a body without it raises instead of meaning no
+    attempts.
+    """
+
+    quiz_submissions: list[CanvasQuizSubmission]
 
 
 class _SubmissionStatistics(msgspec.Struct):

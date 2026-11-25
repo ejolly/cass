@@ -281,8 +281,8 @@ def quizzes_responses(
     Times are in the course time zone. started_at and auto_submitted describe
     only each student's latest attempt, so they are blank while a newer attempt
     is open. A warning on stderr gives the user IDs of current students with a
-    finished attempt who are not in Canvas's report, or says that could not be
-    checked.
+    finished attempt who are not in Canvas's report (only how many, for an
+    anonymous survey), or says that could not be checked.
     """
     from pathlib import Path
 

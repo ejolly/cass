@@ -4,6 +4,7 @@ from __future__ import annotations
 
 __docformat__ = "google"
 
+import csv
 from unittest.mock import MagicMock
 
 import httpx
@@ -15,9 +16,11 @@ from cass.actions.quiz_responses import (
     fetch_quiz_report,
     fetch_quiz_responses,
     missing_responders,
+    parse_report_rows,
     parse_student_analysis,
 )
 from cass.apis.canvas.auth import CanvasAuthError
+from cass.apis.canvas.client import CanvasClient
 from cass.apis.canvas.schema import (
     CanvasQuiz,
     CanvasQuizSubmission,
@@ -391,6 +394,67 @@ class TestReportWarnings:
         (warning,) = report.warnings
         assert "could not check" in warning
         assert "secret detail" not in warning
+
+    @pytest.mark.parametrize(
+        ("status", "body"),
+        [
+            (200, b"{}"),
+            (200, b"[]"),
+            (200, b'{"message": "secret detail"}'),
+            (204, b""),
+        ],
+    )
+    @pytest.mark.parametrize("unread", ["users", "submissions"])
+    def test_unread_list_keeps_report(self, monkeypatch, unread, status, body):
+        """A body that isn't the list must not pass as a clean check."""
+        bodies = {
+            "users": b'[{"id": 11, "name": "A"}]',
+            "submissions": b'{"quiz_submissions": []}',
+        }
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            endpoint = request.url.path.rsplit("/", 1)[-1]
+            if endpoint == unread:
+                return httpx.Response(status, content=body)
+            return httpx.Response(200, content=bodies[endpoint])
+
+        monkeypatch.setattr(
+            CanvasClient, "download_quiz_report", lambda *_, **__: LATEST_REPORT
+        )
+        with CanvasClient(
+            "https://canvas.example.com",
+            token="t",
+            course_id=1,
+            transport=httpx.MockTransport(handler),
+        ) as client:
+            report = fetch_quiz_report(client, SURVEY)
+        assert report.text == LATEST_REPORT
+        (warning,) = report.warnings
+        assert "could not check" in warning
+        assert "secret detail" not in warning
+
+    def test_unparseable_report_is_kept(self):
+        text = "name,id,101: Q\nAlice,11,one\rtwo\n"
+        report = fetch_quiz_report(_report_client(text, [11]), SURVEY)
+        assert report.text == text
+        (warning,) = report.warnings
+        assert "could not check" in warning
+        assert "could not read the report" in warning
+
+    def test_long_answer_is_read(self):
+        limit = csv.field_size_limit()
+        answer = "x" * (limit + 1)
+        text = f"name,id,submitted,101: Q,0.0\nAlice,11,,{answer},0.0\n"
+        result = fetch_quiz_responses(_report_client(text, [11]), SURVEY)
+        assert result.warnings == []
+        assert result.responses[0].answer == answer
+        assert csv.field_size_limit() == limit
+
+    def test_field_limit_restored_after_error(self):
+        limit = csv.field_size_limit()
+        with pytest.raises(csv.Error):
+            parse_report_rows("a,b\n" + "x" * (limit + 1) + "\ry\n")
+        assert csv.field_size_limit() == limit
 
     @pytest.mark.parametrize("all_attempts", [False, True])
     def test_failed_submissions_list_keeps_responses(self, all_attempts):

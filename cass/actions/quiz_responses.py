@@ -122,6 +122,21 @@ class _CurrentAttempts:
     quiz_submissions: list[CanvasQuizSubmission]
 
 
+def _read_rows(text: str) -> list[list[str]]:
+    """Read a report's CSV rows, with fields of any length.
+
+    Raises:
+        csv.Error: The report is not valid CSV.
+    """
+    # Python stops at 131,072 characters, which a long essay answer can pass.
+    previous_limit = csv.field_size_limit()
+    csv.field_size_limit(max(previous_limit, len(text)))
+    try:
+        return list(csv.reader(io.StringIO(text.removeprefix("\ufeff"))))
+    finally:
+        csv.field_size_limit(previous_limit)
+
+
 def parse_report_rows(text: str) -> tuple[list[ReportRow], bool]:
     """List a student analysis report's rows, whatever questions it has.
 
@@ -132,7 +147,7 @@ def parse_report_rows(text: str) -> tuple[list[ReportRow], bool]:
         The rows, and whether the report identifies students. It doesn't when
         it has no user ID column, or has rows and none of them has a user ID.
     """
-    rows = list(csv.reader(io.StringIO(text.removeprefix("\ufeff"))))
+    rows = _read_rows(text)
     if not rows:
         return [], False
     header = [h.strip().lower() for h in rows[0]]
@@ -189,7 +204,7 @@ def parse_student_analysis(text: str) -> list[QuizResponse]:
     Returns:
         Responses in report order, questions in report column order.
     """
-    rows = list(csv.reader(io.StringIO(text.removeprefix("\ufeff"))))
+    rows = _read_rows(text)
     if not rows:
         return []
     header, body = rows[0], rows[1:]
@@ -373,7 +388,10 @@ def _omission_warning(
     text: str, attempts: _CurrentAttempts, *, all_attempts: bool
 ) -> str | None:
     """Say which students the report leaves out, or that it can't be checked."""
-    rows, identified = parse_report_rows(text)
+    try:
+        rows, identified = parse_report_rows(text)
+    except csv.Error:
+        return _unchecked("cass could not read the report")
     if identified:
         missing = missing_responders(
             rows, attempts.quiz_submissions, attempts.student_ids

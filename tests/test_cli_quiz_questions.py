@@ -592,6 +592,43 @@ def test_statistics_failure_is_a_clean_refusal(
     assert canvas.writes == []
 
 
+@pytest.mark.parametrize(
+    "response",
+    [
+        httpx.Response(204),
+        httpx.Response(200, json={}),
+        httpx.Response(200, json=[]),
+        httpx.Response(200, json={"message": "private"}),
+    ],
+    ids=["204", "no-key", "no-pages", "message"],
+)
+@pytest.mark.parametrize(
+    "args", ATTEMPT_GUARDED_COMMANDS, ids=["delete", "update", "questions", "sync"]
+)
+def test_unread_attempt_list_is_a_clean_refusal(
+    canvas, quiz_file, tmp_path, monkeypatch, capsys, args, response
+):
+    quiz_file(("attempts = 1", "attempts = 3"))
+    (tmp_path / "cass.toml").write_text(
+        CASS_TOML + '[[canvas.quizzes]]\nfile = "q.toml"\n'
+    )
+    reset_config()
+    canvas.routes[f"{QUIZ_PATH}/submissions"] = response
+    group = ["canvas"] if args[0] == "sync" else ["canvas", "quizzes"]
+    monkeypatch.setattr("sys.argv", ["cass", *group, *args])
+
+    with pytest.raises(SystemExit) as caught:
+        run()
+
+    assert caught.value.code == 1
+    error = capsys.readouterr().err
+    assert "could not check quiz 20 for student attempts" in error
+    assert "Canvas returned no list of attempts" in error
+    assert "Traceback" not in error
+    assert "private" not in error
+    assert canvas.writes == []
+
+
 def test_sync_stopped_by_unknown_attempts_lists_earlier_quizzes(
     canvas, quiz_file, tmp_path
 ):

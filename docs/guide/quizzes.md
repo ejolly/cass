@@ -152,8 +152,8 @@ The check has limits:
 
 - Canvas lists attempts for current students only, so a missing concluded, inactive, or removed student can't be detected.
 - It checks that each student is in the report, not that each of their attempts is.
-- Anonymous surveys have no user IDs in the report. cass then compares the number of rows with the number of current students who finished, and warns with the number missing. Equal numbers give no warning, though a former student's row could stand in for a missing student. With more rows than finished students, or with `--all-attempts`, it warns that it could not check.
-- If the roster or attempt list can't be read, or the course has no current students (as when it has concluded), cass warns that it could not check. If the attempt list can't be read after the report, `started_at`, `auto_submitted`, and `attempt` (except with `--all-attempts`) are blank, and a warning says so.
+- Anonymous surveys have no user IDs in the report. cass then compares the number of rows with the number of current students who finished, and warns with the number missing. Equal numbers give no warning, though a row from a former student, or from a student who finished while Canvas built the report, could stand in for a missing student. Such rows can also make the number missing too low. With more rows than finished students, or with `--all-attempts`, it warns that it could not check.
+- If the roster, attempt list, or report can't be read, or the course has no current students (as when it has concluded), cass warns that it could not check. If the attempt list can't be read after the report, `started_at`, `auto_submitted`, and `attempt` (except with `--all-attempts`) are blank, and a warning says so.
 
 ### Limitations
 

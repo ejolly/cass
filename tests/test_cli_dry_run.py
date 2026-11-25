@@ -89,6 +89,7 @@ GET_ROUTES: dict[str, object] = {
     "/courses/1/assignment_groups/9": GROUP,
     "/courses/1/quizzes": [QUIZ],
     "/courses/1/quizzes/3": QUIZ,
+    "/courses/1/quizzes/3/submissions": {"quiz_submissions": []},
     "/courses/1/quizzes/3/statistics": {
         "quiz_statistics": [{"submission_statistics": {"unique_count": 0}}]
     },

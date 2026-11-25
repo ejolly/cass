@@ -894,6 +894,13 @@ class TestCanvasClient:
         with pytest.raises(RuntimeError, match="no preview submission for quiz 20"):
             client.start_quiz_preview(20)
 
+    def test_start_quiz_preview_wrong_shape_raises(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data={})
+
+        with pytest.raises(RuntimeError, match="no preview submission for quiz 20"):
+            client.start_quiz_preview(20)
+
     def test_list_submission_questions(self, mock_client):
         client, transport = mock_client
         transport.add(json_data={"quiz_submission_questions": [{"id": 13}, {"id": 11}]})
@@ -1216,6 +1223,41 @@ class TestCanvasClient:
         subs = client.list_quiz_submissions(20)
         assert [s.user_id for s in subs] == [11, 12]
         assert subs[0].end_at == "2026-09-26T00:00:00Z"
+
+    def test_list_quiz_submissions_without_attempts(self, mock_client):
+        client, transport = mock_client
+        transport.add(json_data={"quiz_submissions": []})
+        assert client.list_quiz_submissions(20) == []
+
+    @pytest.mark.parametrize(
+        ("status", "body"),
+        [
+            (200, b"{}"),
+            (200, b"[]"),
+            (200, b'{"message": "x"}'),
+            (200, b'{"quiz_submissions": null}'),
+            (204, b""),
+        ],
+    )
+    def test_list_quiz_submissions_rejects_unread_list(self, mock_client, status, body):
+        """C2 and C4: a body without the list must not mean no attempts."""
+        client, transport = mock_client
+        transport.add(status, content=body)
+        with pytest.raises((msgspec.ValidationError, ValueError)):
+            client.list_quiz_submissions(20)
+
+    def test_list_quiz_submissions_rejects_unread_later_page(self, mock_client):
+        client, transport = mock_client
+        transport.add(
+            json_data={"quiz_submissions": []},
+            headers={
+                "link": "<https://canvas.example.com/api/v1/courses/1/quizzes/20"
+                '/submissions?page=2>; rel="next"'
+            },
+        )
+        transport.add(json_data={"message": "x"})
+        with pytest.raises(msgspec.ValidationError):
+            client.list_quiz_submissions(20)
 
     def test_create_assignment_group_sends_top_level_params(self, mock_client):
         """The Assignment Groups API takes name/position/group_weight unnested."""
