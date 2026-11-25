@@ -158,6 +158,9 @@ class QuizzesMixin(BaseClient):
 
         Returns:
             ``(questions, used_statistics_fallback)``.
+
+        Raises:
+            RuntimeError: Canvas gave neither questions nor statistics.
         """
         try:
             data = self.get_all(
@@ -172,6 +175,11 @@ class QuizzesMixin(BaseClient):
             return questions, False
 
         resp = self._client.get(self._course(f"/quizzes/{quiz_id}/statistics"))
+        if resp.status_code == 204:
+            raise RuntimeError(
+                f"Canvas does not list the questions of quiz {quiz_id} and "
+                "returned no statistics to rebuild them from"
+            )
         stats = resp.json().get("quiz_statistics") or []
         raw_questions = stats[0].get("question_statistics", []) if stats else []
         questions = [

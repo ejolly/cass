@@ -1031,6 +1031,13 @@ class TestCanvasClient:
         params = transport.requests[0].url.params
         assert params.get_list("include[]") == ["plain_html"]
 
+    def test_list_quiz_questions_fallback_without_statistics(self, mock_client):
+        client, transport = mock_client
+        transport.add(403, json_data={"status": "unauthorized"})
+        transport.add(204)
+        with pytest.raises(RuntimeError, match=r"quiz 20.*no statistics"):
+            client.list_quiz_questions(20)
+
     def test_list_quiz_questions_falls_back_to_statistics_on_403(self, mock_client):
         client, transport = mock_client
         transport.add(403, json_data={"status": "unauthorized"})

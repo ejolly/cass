@@ -109,10 +109,17 @@ def canvas_guide(heading: str, commands: list[tuple[str, str]]) -> None:
         err_console.print(f"    [green]{cmd:<32s}[/green] [dim]{desc}[/dim]")
 
 
-def group_id_for(c: CanvasClient, name: str, *, create: bool) -> int | None:
+def group_id_for(
+    c: CanvasClient,
+    name: str,
+    *,
+    create: bool,
+    hint: str = "pass --create-groups to create it",
+) -> int | None:
     """Resolve an assignment group by name, creating it when asked.
 
     Only a missing group is created; an ambiguous name raises ``RuntimeError``.
+    ``hint`` tells the user what to do about a missing group.
     """
     from ...apis.canvas.errors import CanvasNotFoundError
 
@@ -123,8 +130,8 @@ def group_id_for(c: CanvasClient, name: str, *, create: bool) -> int | None:
     except CanvasNotFoundError:  # an ambiguous name propagates to run()
         if not create:
             err_console.print(
-                f"[red]Assignment group not found: {name}[/red] "
-                "(pass --create-groups to create it)"
+                f"[red]Assignment group not found: {name}[/red] ({hint})",
+                soft_wrap=True,
             )
             raise typer.Exit(code=1) from None
     group = c.create_assignment_group(name)

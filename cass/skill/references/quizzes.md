@@ -12,7 +12,7 @@ cass canvas quizzes preview "Survey 1"               # one student-style draw; t
 cass canvas quizzes export "Survey 1" -o quizzes/survey-1.toml
 cass canvas quizzes create --from quizzes/survey-1.toml --dry-run
 cass canvas quizzes create --from quizzes/survey-1.toml --create-groups --dry-run   # missing assignment group
-cass canvas quizzes update "Survey 1" --from quizzes/survey-1.toml               # settings plan, sends nothing
+cass canvas quizzes update "Survey 1" --from quizzes/survey-1.toml               # settings plan, sends nothing; a missing group: `cass canvas assignments groups create`
 cass canvas quizzes update "Survey 1" --from quizzes/survey-1.toml --apply
 cass canvas quizzes update "Survey 1" --from quizzes/survey-1.toml --questions     # settings and question plan
 cass canvas quizzes update "Survey 1" --from quizzes/survey-1.toml --questions --apply

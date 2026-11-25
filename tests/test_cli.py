@@ -1181,6 +1181,29 @@ class TestCanvasQuizzes:
         assert kwargs["assignment_group_id"] == 9
         assert "id=20" in result.stdout
 
+    @pytest.mark.parametrize("flags", [[], ["--questions"]])
+    def test_update_missing_group_names_a_real_command(
+        self, quiz_client, tmp_path, monkeypatch, flags
+    ):
+        from cass.apis.canvas.errors import CanvasNotFoundError
+
+        quiz_client.resolve_assignment_group.side_effect = CanvasNotFoundError(
+            "Assignment group not found: Nope"
+        )
+        for name in ("fetch_quiz_state", "plan_quiz_questions"):
+            module = "quizzes" if name == "fetch_quiz_state" else "quiz_plan"
+            monkeypatch.setattr(f"cass.actions.{module}.{name}", MagicMock())
+        path = tmp_path / "q.toml"
+        path.write_text('title = "S"\ntype = "survey"\ngroup = "Nope"\n')
+        result = runner.invoke(
+            app, ["canvas", "quizzes", "update", "20", "--from", str(path), *flags]
+        )
+        assert result.exit_code == 1
+        assert "Assignment group not found: Nope" in result.output
+        assert "cass canvas assignments groups create" in result.output
+        assert "--create-groups" not in result.output
+        quiz_client.update_quiz.assert_not_called()
+
     def test_create_from_file_missing_group_errors(self, quiz_client, tmp_path):
         from cass.apis.canvas.errors import CanvasNotFoundError
 

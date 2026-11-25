@@ -14,6 +14,8 @@ from ._common import console, due, err_console, pub, when
 if TYPE_CHECKING:
     from ...apis.canvas.schema import CanvasQuizQuestion
 
+_MISSING_GROUP_HINT = "create it with `cass canvas assignments groups create`"
+
 quizzes_app = typer.Typer(
     invoke_without_command=True,
     no_args_is_help=False,
@@ -457,7 +459,9 @@ def quizzes_update(
     spec = load_quiz_file(Path(from_file))
     with _common.client(dry_run=not apply) as c:
         q = c.resolve_quiz(id_or_name)
-        group_id = _common.group_id_for(c, spec.group, create=False)
+        group_id = _common.group_id_for(
+            c, spec.group, create=False, hint=_MISSING_GROUP_HINT
+        )
         changes = quiz_settings_diff(spec, q, c.time_zone, group_id=group_id)
         if not changes:
             err_console.print(f"[dim]No changes for {q.title}.[/dim]")
@@ -501,7 +505,9 @@ def _update_with_questions(
         q = c.resolve_quiz(id_or_name)
         state = fetch_quiz_state(c, q.id, include_submissions=True)
         plan = plan_quiz_questions(spec, state, prune=prune)
-        group_id = _common.group_id_for(c, spec.group, create=False)
+        group_id = _common.group_id_for(
+            c, spec.group, create=False, hint=_MISSING_GROUP_HINT
+        )
         changes = quiz_settings_diff(spec, q, c.time_zone, group_id=group_id)
 
         lines = format_question_plan(plan)
