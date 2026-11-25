@@ -34,7 +34,7 @@ cass push --post   # also release the pushed grades to students
 
 Three kinds of change are held back unless you approve them, and stay pending until you do:
 
-- **Conflicts:** values that changed on Canvas since your last pull, for example a grade a TA entered in SpeedGrader. A grade cass has no last pulled value for also counts. Pushing would overwrite them.
+- **Conflicts:** values that changed on Canvas since your last pull, for example a grade a TA entered in SpeedGrader. A grade cass has no last pulled value for also counts, and is listed with its own reason. Pushing would overwrite them.
 - **Grades above points possible:** usually a typo, sometimes extra credit.
 - **Cleared grades:** a grade you deleted in a cell. Pushing it removes the grade on Canvas.
 
@@ -59,9 +59,9 @@ On an assignment that posts grades automatically, students see a grade as soon a
 - A grade you push without releasing is released later in the Canvas gradebook. `--post` covers only grades in the same push.
 - Cleared and held-back grades are never released.
 - A student whose grade was already released sees a changed or cleared grade as soon as you push it. cass counts these separately before you confirm, and says so if it can't tell whether a grade is released.
-- After pushing, cass reads the grades back and releases only those Canvas shows as pushed. A grade that Canvas ignored or removed, or that someone else has changed, is not released, and `cass push` says how many and exits 1. If cass can't read the grades back, it releases none. cass can't tell when someone else enters the same letter during a push, and can't prevent a change between reading the grades back and releasing them.
-- cass reads the posting policy from Canvas at the preview and again when it pushes. If an assignment started posting automatically in between and you did not approve releasing its grades, nothing is sent for it. If it started posting manually, its grades are pushed but not released, unless you passed `--post`. If the policy can't be read, nothing is sent. A policy that changes in the moment between the last read and the push can't be caught.
-- If releasing fails, the grades are still pushed but may not be released. cass tells you to check them in Canvas and exits 1.
+- After pushing grades to an assignment that posts manually, cass reads them back, whether or not you release them, and releases only those Canvas shows as pushed. A grade or clear that Canvas ignored, or that someone else has changed, is not released and stays pending. `cass push` names the students and exits 1. Check them in Canvas, then push again or revert; a grade Canvas now shows differently from the last pull is a conflict. If cass can't read the grades back, it releases none, and they are no longer pending. Pushes that only clear grades are not read back. cass can't tell when someone else enters the same letter during a push, and can't prevent a change between reading the grades back and releasing them.
+- cass reads the posting policy from Canvas at the preview and again when it pushes. If an assignment started posting automatically in between, nothing is sent for it unless you approved releasing every grade in it. An approval does not count grades whose release cass could not check. If it started posting manually, its grades are pushed but not released, unless you passed `--post`. If the policy can't be read, nothing is sent. A policy that changes in the moment between the last read and the push can't be caught.
+- If releasing fails, the grades Canvas shows as pushed are no longer pending but may not be released. cass tells you to check them in Canvas and exits 1.
 
 ## Revert
 

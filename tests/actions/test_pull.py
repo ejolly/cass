@@ -198,7 +198,7 @@ def stored_grades(conn) -> tuple[str | None, str | None]:
 def set_baselined_grade(conn, grade: str) -> None:
     """Store a grade for Alice with the same baseline."""
     db.upsert_canvas_grade(conn, 100, 42, grade)
-    db.mark_synced_grades(conn, [(100, 42)])
+    db.mark_synced_grades(conn, {(100, 42): grade})
 
 
 class TestPullGrades:

@@ -323,6 +323,7 @@ class TestPush:
                 "changes": [
                     {
                         "table": "canvas_assignments",
+                        "canvas_id": canvas_id,
                         "name": "Assignment",
                         "column": "name",
                         "baseline": "hw-01",
@@ -363,6 +364,7 @@ class TestPush:
                 "changes": [
                     {
                         "table": "canvas_assignments",
+                        "canvas_id": 7,
                         "name": "Assignment",
                         "column": "name",
                         "baseline": "HW1",
@@ -398,6 +400,7 @@ class TestPush:
                 "changes": [
                     {
                         "table": "canvas_assignments",
+                        "canvas_id": canvas_id,
                         "name": "Assignment",
                         "column": "name",
                         "baseline": "hw-01",
@@ -443,7 +446,12 @@ class TestPush:
             lambda conn, pending: {
                 "ok": True,
                 "changes": [
-                    {"table": "canvas_assignments", "name": "A", "column": "name"}
+                    {
+                        "table": "canvas_assignments",
+                        "canvas_id": 7,
+                        "name": "A",
+                        "column": "name",
+                    }
                 ],
                 "has_conflicts": True,
                 "has_errors": True,
@@ -2351,7 +2359,7 @@ class TestPushReleasesGrades:
         rows = []
         for uid, grade in ((1, "9"), (2, "95")):
             db.upsert_canvas_grade(sdb, uid, 7, "8")
-            db.mark_synced_grades(sdb, [(uid, 7)])
+            db.mark_synced_grades(sdb, {(uid, 7): "8"})
             db.upsert_canvas_grade(sdb, uid, 7, grade)
             rows.append(
                 {

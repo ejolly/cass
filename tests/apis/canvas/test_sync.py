@@ -768,7 +768,7 @@ class TestReleaseGrades:
 
         def _edit(uid: int, aid: int, grade: str) -> None:
             db.upsert_canvas_grade(db_conn, uid, aid, "5")
-            db.mark_synced_grades(db_conn, [(uid, aid)])
+            db.mark_synced_grades(db_conn, {(uid, aid): "5"})
             db.upsert_canvas_grade(db_conn, uid, aid, grade)
 
         return _edit
@@ -1008,9 +1008,106 @@ class TestReleaseGrades:
         pushed, posted, failed = self.rows(result)
         assert pushed["ok"] is True
         assert posted["ok"] is True
-        assert (failed["ok"], failed["action"]) == (False, "posted_to_students")
-        assert "2 grade(s) not released" in str(failed["error"])
+        assert failed["ok"] is False
+        assert pushed["count"] == 1
+        assert failed["unconfirmed_ids"] == [2, 3]
         assert "Canvas does not show the pushed grade" in str(failed["error"])
+        assert self.pending_users(db_conn) == [2, 3]
+
+    @staticmethod
+    def pending_users(conn) -> list[int]:
+        pending = db.get_pending_changes(conn).get("canvas_grades", {})
+        return sorted(json.loads(key)["canvas_user_id"] for key in pending)
+
+    @pytest.mark.parametrize("post_grades", [True, False])
+    @pytest.mark.parametrize("released", [True, False])
+    def test_unconfirmed_grade_stays_pending(
+        self, client, live, edit, db_conn, post_grades, released
+    ):
+        db.save_canvas_students([db.CanvasStudent(canvas_id=1, name="Ada")])
+        if released:
+            live[1, 1]["posted_at"] = "2026-10-01T00:00:00Z"
+        for uid in (1, 2, 3):
+            edit(uid, 1, "9")
+
+        def partly(aid, grades):
+            live[1, 1].update(entered_grade="7", entered_score=7.0)
+            live[1, 2].update(entered_grade=None, entered_score=None)
+            live[1, 3].update(entered_grade="9", entered_score=9.0)
+            return SimpleNamespace(id=42)
+
+        client.bulk_push_grades.side_effect = partly
+        pending = db.get_pending_changes(db_conn)
+        result = canvas_apply(
+            db_conn,
+            pending,
+            post_grades=post_grades,
+            preview=canvas_preview(db_conn, pending),
+        )
+        assert result["ok"] is False
+        failed = self.rows(result)[-1]
+        assert failed["unconfirmed_ids"] == [1, 2]
+        assert "Ada, User 2" in str(failed["error"])
+        assert self.pending_users(db_conn) == [1, 2]
+        assert len(pending["canvas_grades"]) == 2
+        assert db.count_unreleased(result) == (0 if post_grades else 1)
+        preview = canvas_preview(db_conn, db.get_pending_changes(db_conn))
+        changes = cast(list[dict[str, object]], preview["changes"])
+        assert [c["conflict"] for c in changes] == [True, True]
+
+    def test_unconfirmed_clear_stays_pending(self, client, live, edit, db_conn):
+        edit(1, 1, "9")
+        edit(2, 1, "")
+
+        def ignore_clear(aid, grades):
+            live[1, 1].update(entered_grade="9", entered_score=9.0)
+            return SimpleNamespace(id=42)
+
+        client.bulk_push_grades.side_effect = ignore_clear
+        result = canvas_apply(db_conn, db.get_pending_changes(db_conn))
+        assert self.rows(result)[-1]["unconfirmed_ids"] == [2]
+        assert self.pending_users(db_conn) == [2]
+
+    def test_failed_scheme_read_keeps_grades_pushed(
+        self, client, edit, db_conn, monkeypatch
+    ):
+        def fail(*args):
+            raise RuntimeError("no scheme")
+
+        monkeypatch.setattr("cass.apis.canvas.sync.get_scheme", fail)
+        edit(1, 1, "9")
+        result = canvas_apply(db_conn, db.get_pending_changes(db_conn))
+        assert result["ok"] is True
+        assert "could not tell" in db.push_notices(result)[0]
+        assert db.get_pending_changes(db_conn) == {}
+
+    @pytest.mark.parametrize("sent", ["9", ""])
+    def test_grade_edited_during_push_stays_pending(self, client, edit, db_conn, sent):
+        edit(1, 1, sent)
+        record = client.bulk_push_grades.side_effect
+
+        def edit_meanwhile(aid, grades):
+            db.upsert_canvas_grade(db_conn, 1, 1, "7")
+            return record(aid, grades)
+
+        client.bulk_push_grades.side_effect = edit_meanwhile
+        assert canvas_apply(db_conn, db.get_pending_changes(db_conn))["ok"]
+        (change,) = db.get_pending_changes(db_conn)["canvas_grades"].values()
+        assert change["posted_grade"] == {"baseline": sent, "current": "7"}
+
+    def test_assignment_edited_during_push_stays_pending(self, client, db_conn):
+        db.save_canvas_assignments([CanvasAssignment(canvas_id=1, name="HW")])
+        db.snapshot_canvas_synced(db_conn)
+        db_conn.execute("UPDATE canvas_assignments SET name = 'HW 1'")
+
+        def edit_meanwhile(aid, **kwargs):
+            db_conn.execute("UPDATE canvas_assignments SET name = 'HW one'")
+
+        client.update_assignment.side_effect = edit_meanwhile
+        assert canvas_apply(db_conn, db.get_pending_changes(db_conn))["ok"]
+        assert db.get_pending_changes(db_conn)["canvas_assignments"]["1"] == {
+            "name": {"baseline": "HW 1", "current": "HW one"}
+        }
 
     def test_grade_changed_by_someone_else_is_not_posted(
         self, client, live, edit, db_conn

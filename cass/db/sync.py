@@ -23,6 +23,7 @@ from ..apis.canvas.sync import (
     push_assignments,
     push_grades,
     resolve_row_name,
+    student_name,
     values_equal,
 )
 from .catalog import CANVAS_PUSHABLE, PULL_GUARDED_TABLES
@@ -37,7 +38,7 @@ from .core import (
 from .schema import CanvasAssignment, CanvasGrade
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Mapping
 
     from ..apis.canvas.client import CanvasClient
     from ..apis.canvas.schema import CanvasAssignmentResponse
@@ -90,43 +91,43 @@ def mark_synced_assignments(
 
 
 def mark_synced_assignment_columns(
-    sdb: sqlite_utils.Database, canvas_id: int, columns: Iterable[str]
+    sdb: sqlite_utils.Database, canvas_id: int, values: Mapping[str, object]
 ) -> None:
-    """Update synced shadow for the pushed columns of one assignment.
+    """Store the pushed values of one assignment as its baseline.
 
-    Edits to its other columns stay pending.
+    Edits to its other columns, or made since the push began, stay pending.
     """
-    for column in sorted(CANVAS_PUSHABLE["canvas_assignments"].intersection(columns)):
+    for column in sorted(CANVAS_PUSHABLE["canvas_assignments"].intersection(values)):
         sdb.execute(
-            f"""
-            UPDATE _canvas_assignments_synced
-            SET {column} = (
-                SELECT {column} FROM canvas_assignments WHERE canvas_id = ?
-            )
-            WHERE canvas_id = ?
-            """,
-            [canvas_id, canvas_id],
+            f"UPDATE _canvas_assignments_synced SET {column} = ? WHERE canvas_id = ?",
+            [values[column], canvas_id],
         )
     _connection(sdb).commit()
 
 
 def mark_synced_grades(
     sdb: sqlite_utils.Database,
-    keys: list[tuple[int, int]],
+    grades: Mapping[tuple[int, int], str],
 ) -> None:
-    """Update synced shadow for specific grade rows after push."""
-    for uid, aid in keys:
+    """Store grades as baselines after a push.
+
+    An edit made since the push began stays pending.
+
+    Args:
+        sdb: Local database.
+        grades: Pushed grade, as stored locally, by ``(canvas_user_id,
+            canvas_assignment_id)``.
+    """
+    for (uid, aid), grade in grades.items():
         sdb.execute(
             """
             INSERT OR REPLACE INTO _canvas_grades_synced
                 (canvas_user_id, canvas_assignment_id, posted_grade)
-            SELECT canvas_user_id, canvas_assignment_id, posted_grade
-            FROM canvas_grades
-            WHERE canvas_user_id = ? AND canvas_assignment_id = ?
+            VALUES (?, ?, ?)
             """,
-            [uid, aid],
+            [uid, aid, grade],
         )
-    if keys:
+    if grades:
         _connection(sdb).commit()
 
 
@@ -609,11 +610,7 @@ def preview_grades(
             live_subs = client.list_submissions(aid)
             live_by_user = {submission.user_id: submission for submission in live_subs}
             for uid, columns in student_changes:
-                student_row = conn.execute(
-                    "SELECT name FROM canvas_students WHERE canvas_id = ?",
-                    [uid],
-                ).fetchone()
-                student_name = str(student_row[0]) if student_row else f"User {uid}"
+                row_name = f"{student_name(conn, uid)} — {assignment_name}"
                 live_sub = live_by_user.get(uid)
                 if live_sub is None:
                     results.append(
@@ -621,7 +618,7 @@ def preview_grades(
                             "table": "canvas_grades",
                             "canvas_assignment_id": aid,
                             "canvas_user_id": uid,
-                            "name": f"{student_name} — {assignment_name}",
+                            "name": row_name,
                             "post_manually": post_manually,
                             "error": "Canvas lists no submission for this student",
                         }
@@ -644,7 +641,7 @@ def preview_grades(
                             "table": "canvas_grades",
                             "canvas_assignment_id": aid,
                             "canvas_user_id": uid,
-                            "name": f"{student_name} — {assignment_name}",
+                            "name": row_name,
                             "column": col,
                             "baseline": vals["baseline"],
                             "current": vals["current"],
@@ -790,8 +787,9 @@ def canvas_apply(
 
     ``push_assignments`` checks quiz attempts again just before each points
     change, and a refusal fails that assignment only. ``push_grades`` reads each
-    posting policy again and compares it with the preview. Grades that were
-    pushed but could not be released to students still count as synced.
+    posting policy again and compares it with the preview. Grades Canvas does
+    not show as sent stay pending. Grades that were pushed but could not be read
+    back, or could not be released to students, still count as synced.
 
     Args:
         conn: Local database.
@@ -816,8 +814,15 @@ def canvas_apply(
 
     results: list[dict[str, object]] = []
     overall_ok = True
-    synced_assignment_columns: dict[int, set[str]] = {}
-    synced_grade_keys: list[tuple[int, int]] = []
+    synced_assignments: dict[int, dict[str, object]] = {}
+    synced_grades: dict[tuple[int, int], str] = {}
+
+    def settle_grade(pk_key: str) -> None:
+        change = grade_changes.pop(pk_key)["posted_grade"]
+        pk = json.loads(pk_key)
+        key = (pk["canvas_user_id"], pk["canvas_assignment_id"])
+        synced_grades[key] = cast(str, change["current"])
+
     with CanvasClient() as client:
         if assignment_changes:
             updates = _extract_assignment_updates(assignment_changes)
@@ -829,16 +834,12 @@ def canvas_apply(
                 if result.get("ok"):
                     canvas_id = int(result["canvas_id"])  # type: ignore[arg-type]
                     assignment_changes.pop(str(canvas_id), None)
-                    synced_assignment_columns[canvas_id] = set(updates[canvas_id])
+                    synced_assignments[canvas_id] = updates[canvas_id]
 
         if grade_changes:
             grade_data, pk_keys, noop_keys = _extract_grade_data(grade_changes)
             for pk_key in noop_keys:
-                grade_changes.pop(pk_key, None)
-                pk = json.loads(pk_key)
-                synced_grade_keys.append(
-                    (pk["canvas_user_id"], pk["canvas_assignment_id"])
-                )
+                settle_grade(pk_key)
             grade_results = push_grades(
                 client,
                 conn,
@@ -848,26 +849,30 @@ def canvas_apply(
                 previewed=None if preview is None else _posting_previews(preview),
             )
             results.extend(grade_results)
+            unconfirmed = {
+                (uid, result["canvas_assignment_id"])
+                for result in grade_results
+                for uid in cast(list[int], result.get("unconfirmed_ids", []))
+            }
             for result in grade_results:
                 if not result.get("ok"):
                     overall_ok = False
                 if result.get("ok") and "action" not in result:
                     aid: int = result["canvas_assignment_id"]  # type: ignore[assignment]
                     for pk_key in pk_keys.get(aid, []):
-                        grade_changes.pop(pk_key, None)
-                        pk = json.loads(pk_key)
-                        synced_grade_keys.append(
-                            (pk["canvas_user_id"], pk["canvas_assignment_id"])
-                        )
+                        if (
+                            json.loads(pk_key)["canvas_user_id"],
+                            aid,
+                        ) not in unconfirmed:
+                            settle_grade(pk_key)
 
     if not assignment_changes:
         pending.pop("canvas_assignments", None)
     if not grade_changes:
         pending.pop("canvas_grades", None)
-    for canvas_id, columns in synced_assignment_columns.items():
-        mark_synced_assignment_columns(conn, canvas_id, columns)
-    if synced_grade_keys:
-        mark_synced_grades(conn, synced_grade_keys)
+    for canvas_id, values in synced_assignments.items():
+        mark_synced_assignment_columns(conn, canvas_id, values)
+    mark_synced_grades(conn, synced_grades)
     return {"ok": overall_ok, "results": results}
 
 
@@ -936,6 +941,7 @@ def count_pending(pending: PendingChanges) -> int:
 
 
 HELD_CONFLICT = "changed on Canvas since your last pull"
+HELD_UNKNOWN_BASELINE = "cass has no grade from your last pull to compare with Canvas"
 HELD_OVER_POINTS = "above the assignment's points possible"
 HELD_CLEAR = "would remove the grade on Canvas"
 HELD_NOT_COMPARED = "could not be compared with Canvas"
@@ -959,13 +965,14 @@ def hold_back_unapproved(
 ) -> tuple[PendingChanges, list[dict[str, object]]]:
     """Split pending changes into those safe to push and those held back.
 
-    A change is held back when its Canvas value changed since the last pull
-    (unless ``overwrite_conflicts``), when a grade is above the assignment's
-    points possible (unless ``allow_over_points``), or when it removes a grade
-    from Canvas (unless ``allow_clears``). A change the preview could not
-    compare with Canvas, a grade Canvas would not record as entered, or a
-    points change on a quiz that has or may have finished attempts, is always
-    held back. Held-back changes stay pending locally.
+    A change is held back when its Canvas value changed since the last pull or
+    its baseline is unknown (unless ``overwrite_conflicts``), when a grade is
+    above the assignment's points possible (unless ``allow_over_points``), or
+    when it removes a grade from Canvas (unless ``allow_clears``). Always held
+    back are a change the preview has no row for or could not compare with
+    Canvas, a grade Canvas would not record as entered, and a points change on
+    a quiz that has or may have finished attempts. Held-back changes stay
+    pending locally.
 
     Args:
         pending: Pending changes from ``get_pending_changes``.
@@ -975,13 +982,15 @@ def hold_back_unapproved(
         allow_clears: The user approved removing grades from Canvas.
 
     Returns:
-        A copy of ``pending`` without held-back changes, and the preview rows
-        that were held back, each with a ``held`` reason.
+        A copy of ``pending`` without held-back changes, and a row for each
+        preview row or unpreviewed change held back, with a ``held`` reason.
     """
     to_push: PendingChanges = json.loads(json.dumps(pending))
     held: list[dict[str, object]] = []
     changes = cast(list[dict[str, object]], preview.get("changes", []))
+    unpreviewed: PendingChanges = json.loads(json.dumps(pending))
     for change in changes:
+        remove_previewed_change(unpreviewed, change)
         reason = held_reason(
             change,
             overwrite_conflicts=overwrite_conflicts,
@@ -992,7 +1001,31 @@ def hold_back_unapproved(
             continue
         held.append({**change, "held": reason})
         remove_previewed_change(to_push, change)
+    for change in _unpreviewed_rows(unpreviewed):
+        held.append({**change, "held": HELD_NOT_COMPARED})
+        remove_previewed_change(to_push, change)
     return to_push, held
+
+
+def _unpreviewed_rows(pending: PendingChanges) -> list[dict[str, object]]:
+    """Return a row like the preview's for each change the preview left out."""
+    rows: list[dict[str, object]] = []
+    for table, table_changes in pending.items():
+        for pk_key, columns in table_changes.items():
+            if table == "canvas_assignments":
+                target: dict[str, object] = {"canvas_id": int(pk_key)}
+                name = f"Assignment {pk_key}"
+            else:
+                target = json.loads(pk_key)
+                name = (
+                    f"User {target['canvas_user_id']} — "
+                    f"Assignment {target['canvas_assignment_id']}"
+                )
+            rows.extend(
+                {"table": table, **target, "name": name, "column": column, **values}
+                for column, values in columns.items()
+            )
+    return rows
 
 
 def _posting_previews(preview: dict[str, object]) -> dict[int, PostingPreview]:
@@ -1133,7 +1166,10 @@ def held_reason(
     if change.get("quiz_attempts_unknown"):
         return HELD_QUIZ_ATTEMPTS_UNKNOWN
     if change.get("conflict") and not overwrite_conflicts:
-        return HELD_CONFLICT
+        unknown = change.get("table") == "canvas_grades" and (
+            "baseline" in change and change["baseline"] is None
+        )
+        return HELD_UNKNOWN_BASELINE if unknown else HELD_CONFLICT
     if change.get("over_points") and not allow_over_points:
         return HELD_OVER_POINTS
     if change.get("clears") and not allow_clears:

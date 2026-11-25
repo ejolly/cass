@@ -29,6 +29,7 @@ from cass.db.sync import (
     HELD_OVER_POINTS,
     HELD_QUIZ_ATTEMPTS,
     HELD_QUIZ_ATTEMPTS_UNKNOWN,
+    HELD_UNKNOWN_BASELINE,
     can_be_approved,
 )
 
@@ -84,15 +85,63 @@ class TestExceedsPoints:
         assert exceeds_points(grade, points) is expected
 
 
+def full_preview(*flagged: dict[str, object]) -> dict[str, object]:
+    """Return a preview of the ``pending`` fixture; given rows replace plain ones."""
+    rows: list[dict[str, object]] = [
+        {
+            "table": "canvas_assignments",
+            "canvas_id": 7,
+            "name": "HW1",
+            "column": "name",
+        },
+        grade_change(7, 1),
+        grade_change(7, 2),
+        grade_change(8, 1),
+    ]
+
+    def target(row: dict[str, object]) -> tuple[object, ...]:
+        keys = ("table", "canvas_id", "canvas_assignment_id", "canvas_user_id")
+        return tuple(row.get(key) for key in keys)
+
+    replaced = {target(row) for row in flagged}
+    return {
+        "changes": [row for row in rows if target(row) not in replaced] + list(flagged)
+    }
+
+
 class TestHoldBackUnapproved:
+    def test_change_without_preview_row_is_held(self, pending):
+        preview = full_preview()
+        pending["canvas_grades"][grade_key(7, 3)] = {
+            "posted_grade": {"baseline": "", "current": "9"}
+        }
+        pending["canvas_assignments"]["7"]["due_at"] = {
+            "baseline": None,
+            "current": "2026-12-01",
+        }
+        to_push, held = hold_back_unapproved(
+            pending,
+            preview,
+            overwrite_conflicts=True,
+            allow_over_points=True,
+            allow_clears=True,
+        )
+        assert [(h["table"], h["column"], h["held"]) for h in held] == [
+            ("canvas_assignments", "due_at", HELD_NOT_COMPARED),
+            ("canvas_grades", "posted_grade", HELD_NOT_COMPARED),
+        ]
+        assert list(to_push["canvas_assignments"]["7"]) == ["name"]
+        assert grade_key(7, 3) not in to_push["canvas_grades"]
+        assert len(to_push["canvas_grades"]) == 3
+
     def test_nothing_flagged_pushes_everything(self, pending):
-        preview = {"changes": [grade_change(7, 1)]}
+        preview = full_preview()
         to_push, held = hold_back_unapproved(pending, preview)
         assert to_push == pending
         assert held == []
 
     def test_conflict_is_held_unless_approved(self, pending):
-        preview = {"changes": [grade_change(7, 1, conflict=True)]}
+        preview = full_preview(grade_change(7, 1, conflict=True))
         to_push, held = hold_back_unapproved(pending, preview)
         assert grade_key(7, 1) not in to_push["canvas_grades"]
         assert grade_key(7, 2) in to_push["canvas_grades"]
@@ -103,7 +152,7 @@ class TestHoldBackUnapproved:
         assert held == []
 
     def test_over_points_is_held_unless_approved(self, pending):
-        preview = {"changes": [grade_change(7, 2, over_points=True)]}
+        preview = full_preview(grade_change(7, 2, over_points=True))
         to_push, held = hold_back_unapproved(pending, preview)
         assert grade_key(7, 2) not in to_push["canvas_grades"]
         assert [h["held"] for h in held] == [HELD_OVER_POINTS]
@@ -112,11 +161,9 @@ class TestHoldBackUnapproved:
         assert grade_key(7, 2) in to_push["canvas_grades"]
 
     def test_preview_error_holds_the_whole_assignment(self, pending):
-        preview = {
-            "changes": [
-                {"table": "canvas_grades", "canvas_assignment_id": 7, "error": "x"}
-            ]
-        }
+        preview = full_preview(
+            {"table": "canvas_grades", "canvas_assignment_id": 7, "error": "x"}
+        )
         to_push, held = hold_back_unapproved(
             pending, preview, overwrite_conflicts=True, allow_over_points=True
         )
@@ -124,24 +171,22 @@ class TestHoldBackUnapproved:
         assert [h["held"] for h in held] == [HELD_NOT_COMPARED]
 
     def test_assignment_conflict_is_held(self, pending):
-        preview = {
-            "changes": [
-                {
-                    "table": "canvas_assignments",
-                    "canvas_id": 7,
-                    "name": "HW1",
-                    "column": "name",
-                    "conflict": True,
-                }
-            ]
-        }
+        preview = full_preview(
+            {
+                "table": "canvas_assignments",
+                "canvas_id": 7,
+                "name": "HW1",
+                "column": "name",
+                "conflict": True,
+            }
+        )
         to_push, held = hold_back_unapproved(pending, preview)
         assert "canvas_assignments" not in to_push
         assert len(held) == 1
 
     def test_does_not_mutate_pending(self, pending):
         before = json.dumps(pending, sort_keys=True)
-        hold_back_unapproved(pending, {"changes": [grade_change(7, 1, conflict=True)]})
+        hold_back_unapproved(pending, full_preview(grade_change(7, 1, conflict=True)))
         assert json.dumps(pending, sort_keys=True) == before
 
 
@@ -215,7 +260,7 @@ class TestClearedGrades:
         assert noops == [grade_key(7, 2)]
 
     def test_clear_is_held_unless_approved(self, pending):
-        preview = {"changes": [grade_change(7, 1, clears=True)]}
+        preview = full_preview(grade_change(7, 1, clears=True))
         to_push, held = hold_back_unapproved(pending, preview)
         assert grade_key(7, 1) not in to_push["canvas_grades"]
         assert held[0]["held"] == HELD_CLEAR
@@ -267,7 +312,7 @@ class TestGradeBaselines:
         from cass import db
 
         db.upsert_canvas_grade(conn, 1, 7, baseline)
-        db.mark_synced_grades(conn, [(1, 7)])
+        db.mark_synced_grades(conn, {(1, 7): baseline})
         db.upsert_canvas_grade(conn, 1, 7, current)
 
     def test_clear_after_pull_is_a_pending_clear(self, db_conn):
@@ -295,6 +340,12 @@ class TestGradeBaselines:
         live = CanvasSubmissionResponse(user_id=1, entered_grade=live_grade)
         (row,) = self.preview(db_conn, live)
         assert row["conflict"] is True
+        _, held = hold_back_unapproved(pending, {"changes": [row]})
+        assert [h["held"] for h in held] == [HELD_UNKNOWN_BASELINE]
+        to_push, _ = hold_back_unapproved(
+            pending, {"changes": [row]}, overwrite_conflicts=True
+        )
+        assert to_push == pending
 
     def test_blank_grade_without_baseline_is_not_pending(self, db_conn):
         from cass import db
@@ -307,7 +358,7 @@ class TestGradeBaselines:
 
         db.upsert_canvas_grade(db_conn, 1, 7, "9")
         db.upsert_canvas_grade(db_conn, 2, 7, "8")
-        db.mark_synced_grades(db_conn, [(2, 7)])
+        db.mark_synced_grades(db_conn, {(2, 7): "8"})
 
         assert db.revert_changes(db_conn, db.get_pending_changes(db_conn)) == 1
         assert [g.canvas_user_id for g in db.load_canvas_grades()] == [2]
@@ -330,7 +381,7 @@ class TestGradeBaselines:
 
         self.baselined(db_conn, "", "9")
         db.upsert_canvas_grade(db_conn, 2, 7, "")
-        db.mark_synced_grades(db_conn, [(2, 7)])
+        db.mark_synced_grades(db_conn, {(2, 7): ""})
         db.upsert_canvas_grade(db_conn, 2, 7, "6")
         rows = self.preview(db_conn, CanvasSubmissionResponse(user_id=2))
         to_push, held = hold_back_unapproved(

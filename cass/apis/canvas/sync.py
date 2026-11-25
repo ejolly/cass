@@ -45,6 +45,7 @@ __all__ = [
     "resolve_row_name",
     "same_instant",
     "shows_pushed_grade",
+    "student_name",
     "values_equal",
 ]
 
@@ -85,6 +86,14 @@ def resolve_row_name(
             return f"{row[0]} — {row[1]}"
         return pk_key
     return pk_key
+
+
+def student_name(conn: sqlite_utils.Database, user_id: int) -> str:
+    """Return a student's name, or ``User <id>`` if not stored locally."""
+    row = conn.execute(
+        "SELECT name FROM canvas_students WHERE canvas_id = ?", [user_id]
+    ).fetchone()
+    return str(row[0]) if row else f"User {user_id}"
 
 
 # ---------------------------------------------------------------------------
@@ -334,13 +343,19 @@ def push_grades(
     posting policy is read live just before each push; a change between that
     read and the push itself cannot be prevented.
 
+    On an assignment that posts manually, the grades are read back after a push
+    that includes any grade (clears alone are not). Those Canvas does not show
+    as sent are unconfirmed, and the caller must keep them pending. If they
+    cannot be read back, all count as pushed.
+
     An assignment that posts automatically now but did not at the preview, or
     without a preview as last pulled, fails without being sent unless the
     release of every grade in it was approved or already done at the preview.
 
     Args:
         client: Authenticated Canvas API client.
-        conn: SQLite database connection, for the last pulled posting policy.
+        conn: SQLite database connection, for the last pulled posting policy
+            and student names.
         grade_data_by_aid: ``{assignment_id: {user_id: grade_string}}``. An
             empty grade removes the grade on Canvas and is never released.
         post_grades: The user approved releasing the pushed grades. With
@@ -356,6 +371,8 @@ def push_grades(
         but not visible to students, whose release was not approved) and
         ``release_unknown`` (those cass could not tell about). A release has
         the ``action`` ``posted_to_students``. Failures have an ``error``.
+        Unconfirmed grades are left out of those counts and have a failure of
+        their own, with their students in ``unconfirmed_ids``.
     """
     results: list[dict[str, object]] = []
     for aid, grade_data in grade_data_by_aid.items():
@@ -415,24 +432,43 @@ def push_grades(
             approved_ids = set()
         try:
             live = {s.user_id: s for s in client.list_submissions(aid)}
+            scheme = get_scheme(client, assignment)
         except Exception as e:
             pushed["release_unknown"] = len(graded) - len(approved_ids)
             if approved_ids:
                 results.append(_unread_release(aid, len(approved_ids), e))
             continue
+        unconfirmed = [
+            uid
+            for uid, grade in grade_data.items()
+            if not _shows_sent(grade, live.get(uid), assignment, scheme)
+        ]
+        pushed["count"] = len(grade_data) - len(unconfirmed)
         posted_at = {
-            uid: live[uid].posted_at if uid in live else msgspec.UNSET for uid in graded
+            uid: live[uid].posted_at for uid in graded if uid not in unconfirmed
         }
-        rest = [uid for uid in graded if uid not in approved_ids]
+        rest = [uid for uid in posted_at if uid not in approved_ids]
         pushed["unreleased"] = sum(posted_at[uid] is None for uid in rest)
         pushed["release_unknown"] = sum(posted_at[uid] is msgspec.UNSET for uid in rest)
-        to_release = {
-            uid: grade
-            for uid, grade in graded.items()
+        to_release = [
+            uid
+            for uid in posted_at
             if uid in approved_ids and not isinstance(posted_at[uid], str)
-        }
+        ]
         if to_release:
-            results.extend(_release_grades(client, assignment, to_release, live))
+            results.append(_release_grades(client, aid, to_release))
+        if unconfirmed:
+            names = ", ".join(student_name(conn, uid) for uid in unconfirmed)
+            results.append(
+                {
+                    "canvas_assignment_id": aid,
+                    "ok": False,
+                    "unconfirmed_ids": unconfirmed,
+                    "error": f"Canvas does not show the pushed grade for {names}. "
+                    "cass kept these pending and did not release them. Check them "
+                    "in the Canvas gradebook, then push again or revert.",
+                }
+            )
     return results
 
 
@@ -455,61 +491,51 @@ def _unread_release(aid: int, count: int, error: Exception) -> dict[str, object]
     }
 
 
-def _release_grades(
-    client: CanvasClient,
+def _shows_sent(
+    sent: str,
+    submission: CanvasSubmissionResponse | None,
     assignment: CanvasAssignmentResponse,
-    grades: dict[int, str],
-    live: Mapping[int, CanvasSubmissionResponse],
-) -> list[dict[str, object]]:
-    """Post the pushed grades that Canvas shows as sent; returns result rows.
+    scheme: list[CanvasGradingSchemeEntry],
+) -> bool:
+    """Return whether Canvas shows what was sent: the grade, or none for a clear.
 
     Canvas can complete a push yet ignore or remove a student's grade, and
-    someone else may have changed it since. Posting would then release a grade
-    the user did not push.
+    someone else may have changed it since. Releasing it would then show the
+    student a grade the user did not push.
     """
+    if not is_valid_grade(sent):
+        return submission is None or not is_valid_grade(submission.entered_grade)
+    return submission is not None and shows_pushed_grade(
+        sent,
+        submission,
+        assignment.grading_type,
+        assignment.points_possible,
+        scheme,
+    )
+
+
+def _release_grades(
+    client: CanvasClient, aid: int, user_ids: list[int]
+) -> dict[str, object]:
+    """Post the students' grades; returns the result row."""
     result: dict[str, object] = {
-        "canvas_assignment_id": assignment.id,
+        "canvas_assignment_id": aid,
         "action": "posted_to_students",
     }
     try:
-        scheme = get_scheme(client, assignment)
+        progress = client.post_assignment_grades(
+            aid, graded_only=True, only_student_ids=user_ids
+        )
+        if progress is None:
+            raise RuntimeError("Canvas did not start posting")
+        client.wait_for_progress(progress.id)
     except Exception as e:
-        return [_unread_release(assignment.id, len(grades), e)]
-    confirmed = [
-        uid
-        for uid, grade in grades.items()
-        if uid in live
-        and shows_pushed_grade(
-            grade,
-            live[uid],
-            assignment.grading_type,
-            assignment.points_possible,
-            scheme,
-        )
-    ]
-    results: list[dict[str, object]] = []
-    if confirmed:
-        try:
-            progress = client.post_assignment_grades(
-                assignment.id, graded_only=True, only_student_ids=confirmed
-            )
-            if progress is None:
-                raise RuntimeError("Canvas did not start posting")
-            client.wait_for_progress(progress.id)
-            results.append({**result, "ok": True})
-        except Exception as e:
-            error = (
-                f"{len(confirmed)} grade(s) pushed but may not be released to "
-                f"students: {e}. Check the Canvas gradebook and post them there."
-            )
-            results.append({**result, "ok": False, "error": error})
-    if n_unconfirmed := len(grades) - len(confirmed):
         error = (
-            f"{n_unconfirmed} grade(s) not released to students, because Canvas "
-            "does not show the pushed grade. Check them in the Canvas gradebook."
+            f"{len(user_ids)} grade(s) pushed but may not be released to "
+            f"students: {e}. Check the Canvas gradebook and post them there."
         )
-        results.append({**result, "ok": False, "error": error})
-    return results
+        return {**result, "ok": False, "error": error}
+    return {**result, "ok": True}
 
 
 def resolve_group_ids(

@@ -329,7 +329,7 @@ class TestSyncedShadowTables:
         )
         assert db.get_pending_changes(db_conn) != {}
 
-        db.mark_synced_grades(db_conn, [(100, 1)])
+        db.mark_synced_grades(db_conn, {(100, 1): "9"})
         assert db.get_pending_changes(db_conn) == {}
 
 

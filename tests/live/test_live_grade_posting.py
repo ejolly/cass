@@ -111,7 +111,7 @@ def edit_grade(
 ) -> tuple[db.PendingChanges, dict[str, object]]:
     """Store a grade as pulled, change it, and preview the push."""
     db.upsert_canvas_grade(conn, user_id, assignment_id, old)
-    db.mark_synced_grades(conn, [(user_id, assignment_id)])
+    db.mark_synced_grades(conn, {(user_id, assignment_id): old})
     db.upsert_canvas_grade(conn, user_id, assignment_id, new)
     pending = db.get_pending_changes(conn)
     preview = db.canvas_preview(conn, pending)
@@ -236,6 +236,7 @@ def test_grade_canvas_ignores_is_not_released(
             )
             assert results[0]["ok"]
         assert "does not show the pushed grade" in str(results[-1]["error"])
+        assert results[-1]["unconfirmed_ids"] == [student_id]
         assert grade_and_posted_at(practice, created.id, student_id) == (
             "complete",
             None,
