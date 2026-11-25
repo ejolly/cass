@@ -16,6 +16,7 @@ import sqlite_utils
 from live_course import get_test_student_id
 
 from cass import db
+from cass.actions.assignments import push_new_assignment
 from cass.actions.config import get_config
 from cass.apis.canvas.client import CanvasClient
 from cass.apis.canvas.schema import CanvasAssignmentResponse
@@ -170,6 +171,46 @@ def test_posting_needs_approval_and_names_students(
     assert db.push_notices(result) == []
     assert posting_requests == [[student_id]]
     assert live() == ("7", posted_at)
+
+
+def test_grade_on_a_new_assignment_is_not_a_conflict(
+    practice: CanvasClient,
+    db_conn: sqlite_utils.Database,
+    student_id: int,
+    posting_requests: list[list[int]],
+):
+    """A grade typed before or after creation is compared with a blank."""
+    db.save_canvas_students([db.CanvasStudent(canvas_id=student_id, name="Test")])
+    for typed_first in (False, True):
+        local_id = db.create_local_assignment(
+            db_conn,
+            name=f"cass-live posting {uuid4().hex[:8]}",
+            points_possible=10,
+            published=True,
+        )
+        if typed_first:
+            db.upsert_canvas_grade(db_conn, student_id, local_id, "8")
+        result = push_new_assignment(db_conn, local_id, practice)
+        assert result["ok"], result
+        assignment_id = int(str(result["canvas_id"]))
+        try:
+            set_post_manually(practice, assignment_id, True)
+            grade_and_posted_at(practice, assignment_id, student_id)
+            db.upsert_canvas_grade(db_conn, student_id, assignment_id, "8")
+            pending = db.get_pending_changes(db_conn)
+            preview = db.canvas_preview(db_conn, pending)
+            (row,) = preview["changes"]  # ty: ignore[not-iterable]
+            assert (row["baseline"], row["live"], row["conflict"]) == ("", None, False)
+            to_push, held = db.hold_back_unapproved(pending, preview)
+            assert held == []
+            assert db.canvas_apply(db_conn, to_push, preview=preview)["ok"]
+            assert grade_and_posted_at(practice, assignment_id, student_id) == (
+                "8",
+                None,
+            )
+            assert db.get_pending_changes(db_conn) == {}
+        finally:
+            practice.delete_assignment(assignment_id)
 
 
 def test_clear_only_push_posts_nothing(

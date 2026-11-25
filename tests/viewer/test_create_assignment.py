@@ -15,39 +15,27 @@ from cass.apis.canvas.schema import CanvasAssignmentGroup, CanvasAssignmentRespo
 from cass.db import (
     create_local_assignment,
     get_pending_changes,
+    init_schema,
     replace_local_id,
     update_cell,
+    upsert_canvas_grade,
 )
 
 
 @pytest.fixture
 def ca_conn() -> sqlite_utils.Database:
-    """In-memory SQLite with canvas_assignments table."""
+    """In-memory database with two assignments and two students."""
     conn = sqlite_utils.Database(memory=True)
+    init_schema(conn)
     conn.execute(
-        "CREATE TABLE canvas_assignments ("
-        "  canvas_id INTEGER PRIMARY KEY,"
-        "  name TEXT NOT NULL,"
-        "  points_possible DOUBLE NOT NULL DEFAULT 0,"
-        "  due_at TEXT,"
-        "  published BOOLEAN NOT NULL DEFAULT false,"
-        "  assignment_group TEXT NOT NULL DEFAULT '',"
-        "  post_manually BOOLEAN NOT NULL DEFAULT false"
-        ")"
+        "INSERT INTO canvas_assignments "
+        "(canvas_id, name, points_possible, published, assignment_group) VALUES "
+        "(101, 'Homework 1', 10.0, true, 'Assignments'),"
+        "(102, 'Homework 2', 20.0, true, 'Assignments')"
     )
-    conn.execute(
-        "INSERT INTO canvas_assignments VALUES "
-        "(101, 'Homework 1', 10.0, NULL, true, 'Assignments', false),"
-        "(102, 'Homework 2', 20.0, NULL, true, 'Assignments', false)"
-    )
-    conn.execute(
-        "CREATE TABLE _canvas_assignments_synced ("
-        "  canvas_id INTEGER PRIMARY KEY,"
-        "  name TEXT NOT NULL,"
-        "  points_possible DOUBLE NOT NULL DEFAULT 0,"
-        "  due_at TEXT,"
-        "  published BOOLEAN NOT NULL DEFAULT false"
-        ")"
+    conn["canvas_students"].insert_all(
+        {"canvas_id": uid, "name": name, "sortable_name": name}
+        for uid, name in ((1, "Ada"), (2, "Bo"))
     )
     return conn
 
@@ -260,6 +248,63 @@ class TestPushNewAssignment:
         assert get_pending_changes(ca_conn)["canvas_assignments"]["500"] == {
             "name": {"baseline": "Quiz 3", "current": "Quiz 3b"}
         }
+
+    @staticmethod
+    def create(conn, local_id: int) -> dict[str, object]:
+        client = MagicMock()
+        client.create_assignment.return_value = _make_canvas_assignment(500, "Quiz 3")
+        return push_new_assignment(conn, local_id, client)
+
+    @staticmethod
+    def baselines(conn) -> list[tuple]:
+        return conn.execute(
+            "SELECT canvas_user_id, canvas_assignment_id, posted_grade "
+            "FROM _canvas_grades_synced ORDER BY 2, 1"
+        ).fetchall()
+
+    def test_grade_typed_after_create_has_blank_baseline(self, ca_conn):
+        assert self.create(ca_conn, create_local_assignment(ca_conn, name="Quiz 3"))[
+            "ok"
+        ]
+        assert self.baselines(ca_conn) == [(1, 500, ""), (2, 500, "")]
+        assert get_pending_changes(ca_conn) == {}
+        assert ca_conn["canvas_grades"].count == 0
+
+        upsert_canvas_grade(ca_conn, 1, 500, "9")
+        (change,) = get_pending_changes(ca_conn)["canvas_grades"].values()
+        assert change["posted_grade"] == {"baseline": "", "current": "9"}
+
+    def test_grade_typed_before_create_stays_pending(self, ca_conn):
+        local_id = create_local_assignment(ca_conn, name="Quiz 3")
+        upsert_canvas_grade(ca_conn, 1, local_id, "9")
+        assert self.create(ca_conn, local_id)["ok"]
+        assert get_pending_changes(ca_conn)["canvas_grades"] == {
+            '{"canvas_assignment_id": 500, "canvas_user_id": 1}': {
+                "posted_grade": {"baseline": "", "current": "9"}
+            }
+        }
+
+    def test_existing_baseline_is_kept(self, ca_conn):
+        ca_conn["_canvas_grades_synced"].insert(
+            {"canvas_user_id": 1, "canvas_assignment_id": 500, "posted_grade": "7"}
+        )
+        self.create(ca_conn, create_local_assignment(ca_conn, name="Quiz 3"))
+        assert self.baselines(ca_conn) == [(1, 500, "7"), (2, 500, "")]
+
+    def test_failed_id_change_rolls_back(self, ca_conn):
+        local_id = create_local_assignment(ca_conn, name="Quiz 3")
+        upsert_canvas_grade(ca_conn, 1, local_id, "9")
+        ca_conn.execute(
+            "CREATE TRIGGER fail BEFORE INSERT ON _canvas_grades_synced "
+            "BEGIN SELECT RAISE(ABORT, 'no baselines'); END"
+        )
+        result = self.create(ca_conn, local_id)
+        assert (result["ok"], result["error"]) == (False, "no baselines")
+        ids = [row["canvas_id"] for row in ca_conn["canvas_assignments"].rows]
+        assert sorted(ids) == [local_id, 101, 102]
+        assert [r["canvas_assignment_id"] for r in ca_conn["canvas_grades"].rows] == [
+            local_id
+        ]
 
     def test_push_resolves_group_name_to_id(self, ca_conn):
         local_id = create_local_assignment(

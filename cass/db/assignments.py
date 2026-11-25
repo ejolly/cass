@@ -6,6 +6,8 @@ __docformat__ = "google"
 
 import sqlite_utils
 
+from .core import write_transaction
+
 
 def commit_if_open(conn: sqlite_utils.Database) -> None:
     """Commit the connection's open transaction, if it has one."""
@@ -72,23 +74,42 @@ def replace_local_id(
     local_id: int,
     real_id: int,
 ) -> None:
-    """Replace a local (negative) canvas_id with the real Canvas-assigned ID."""
-    row = conn.execute(
-        "SELECT name, points_possible, due_at, published, assignment_group, "
-        "post_manually FROM canvas_assignments WHERE canvas_id = ?",
-        [local_id],
-    ).fetchone()
-    if row is None:
-        return
-    conn.execute("DELETE FROM canvas_assignments WHERE canvas_id = ?", [local_id])
-    conn.execute(
-        "INSERT INTO canvas_assignments "
-        "(canvas_id, name, points_possible, due_at, published, "
-        "assignment_group, post_manually) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        [real_id, *row],
-    )
-    commit_if_open(conn)
+    """Replace a local (negative) canvas_id with the real Canvas-assigned ID.
+
+    Grades typed under the local ID move with it. Every student on the roster
+    gets a blank grade baseline, because Canvas has no grades on an assignment
+    it just created; existing baselines are kept.
+    """
+    with write_transaction(conn) as transaction:
+        row = transaction.execute(
+            "SELECT name, points_possible, due_at, published, assignment_group, "
+            "post_manually FROM canvas_assignments WHERE canvas_id = ?",
+            [local_id],
+        ).fetchone()
+        if row is None:
+            return
+        transaction.execute(
+            "DELETE FROM canvas_assignments WHERE canvas_id = ?", [local_id]
+        )
+        transaction.execute(
+            "INSERT INTO canvas_assignments "
+            "(canvas_id, name, points_possible, due_at, published, "
+            "assignment_group, post_manually) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [real_id, *row],
+        )
+        # A grade already stored under the real ID is never overwritten.
+        transaction.execute(
+            "UPDATE OR IGNORE canvas_grades SET canvas_assignment_id = ? "
+            "WHERE canvas_assignment_id = ?",
+            [real_id, local_id],
+        )
+        transaction.execute(
+            "INSERT OR IGNORE INTO _canvas_grades_synced "
+            "(canvas_user_id, canvas_assignment_id, posted_grade) "
+            "SELECT canvas_id, ?, '' FROM canvas_students",
+            [real_id],
+        )
 
 
 def delete_local_assignment(

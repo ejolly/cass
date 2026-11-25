@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from nicegui import ui
 
 from ...actions.assignments import push_new_assignment, validate_assignment_fields
-from ...db import create_local_assignment, get_assignment_groups
+from ...db import create_local_assignment, get_assignment_groups, refresh_pending
 from ..grid import notify
 
 if TYPE_CHECKING:
@@ -142,6 +142,9 @@ class CreateAssignmentModal:
         result = await loop.run_in_executor(None, _do_push)
 
         if result["ok"]:
+            # Grades typed under the local ID now have the Canvas ID.
+            refresh_pending(p.pending, p.conn)
+            p.update_pending_display()
             self.dialog.close()
             notify(
                 f"Created assignment: {name_val.strip()} "
