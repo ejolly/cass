@@ -114,12 +114,19 @@ def test_pull_edit_push_round_trip(
         practice.delete_assignment(assignment.id)
 
 
-def test_roster_matches_enrollments(real_course: CanvasClient):
-    roster_ids = {student.id for student in real_course.list_students()}
+def _count_roster_mismatches(client: CanvasClient) -> tuple[int, int]:
+    """Count enrolled people missing from the roster, and roster people not enrolled."""
+    roster_ids = {student.id for student in client.list_students()}
     enrollment_ids = {
         enrollment.user_id
-        for enrollment in real_course.list_enrollments(
+        for enrollment in client.list_enrollments(
             states=("active", "invited"), include_scores=False
         )
     }
-    assert roster_ids == enrollment_ids
+    return len(enrollment_ids - roster_ids), len(roster_ids - enrollment_ids)
+
+
+def test_roster_matches_enrollments(real_course: CanvasClient):
+    # Only counts are compared, so a failure never prints student IDs.
+    n_missing, n_extra = _count_roster_mismatches(real_course)
+    assert (n_missing, n_extra) == (0, 0)
